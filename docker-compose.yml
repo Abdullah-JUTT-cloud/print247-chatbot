@@ -20,8 +20,11 @@ services:
 
   mongo:
     image: mongo:8
+    # Host port is 27018 on purpose: many dev machines already run a local
+    # Mongo on 27017, and two services cannot share one host port.
+    # Inside the Docker network the API still talks to mongo:27017.
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongo_data:/data/db
 
