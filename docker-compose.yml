@@ -1,0 +1,38 @@
+# Print247 new chatbot — local dev stack.
+# Run: docker compose up --build
+# Stop: docker compose down
+# Data lives in named volumes (mongo_data, qdrant_data) so stopping
+# containers does NOT delete chats or the vector index.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017/print247_chatbot
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      - mongo
+      - qdrant
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  mongo:
+    image: mongo:8
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  mongo_data:
+  qdrant_data:

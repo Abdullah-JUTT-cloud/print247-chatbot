@@ -1,0 +1,99 @@
+"""OKF -> Qdrant ingest.
+
+How it works (this is the whole RAG 'training' step — there is no
+fine-tuning here):
+  1. Read every kb/**/*.md file.
+  2. Split off the YAML frontmatter (id, title, source, last_reviewed).
+  3. One file = one chunk, wherever possible. Splitting a fact across
+     chunks is how a bot quotes half a MOQ rule, so we do NOT split
+     small files. Only files over ~4000 chars are split on headings.
+  4. Embed each chunk with OpenAI, upsert into Qdrant collection
+     'print247_kb' with the file path + source as payload, so every
+     answer can later say where it came from.
+
+Run:  python scripts/ingest.py [--dry-run]
+Dry-run prints what WOULD be indexed, without calling OpenAI/Qdrant.
+Re-running is safe: same point id overwrites the old vector, so an
+edited OKF file replaces (never duplicates) its old embedding.
+"""
+import argparse
+import glob
+import hashlib
+import os
+import re
+import sys
+
+FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
+COLLECTION = "print247_kb"
+
+
+def parse_okf(path: str):
+    text = open(path, encoding="utf-8").read()
+    m = FRONTMATTER.match(text)
+    meta, body = (m.group(1), m.group(2)) if m else ("", text)
+    return meta.strip(), body.strip()
+
+
+def chunks_for(body: str):
+    if len(body) <= 4000:
+        return [body]
+    # Large file only: split on level-2 headings, keep each section whole.
+    parts = re.split(r"(?m)^## ", body)
+    return [("## " + p).strip() for p in parts if p.strip()]
+
+
+def point_id(source: str, index: int) -> str:
+    # Stable id: editing a file re-embeds over the same point, no duplicates.
+    return hashlib.md5(f"{source}#{index}".encode()).hexdigest()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    # kb/README.md is the rulebook, not a fact — never index it.
+    files = sorted(p for p in glob.glob("kb/**/*.md", recursive=True)
+                   if not p.endswith("/README.md"))
+    if not files:
+        print("No kb/**/*.md files found. Run from the repo root.")
+        return 1
+
+    rows = []
+    for path in files:
+        meta, body = parse_okf(path)
+        for i, chunk in enumerate(chunks_for(body)):
+            rows.append((point_id(path, i), path, meta, chunk))
+    print(f"{len(files)} OKF files -> {len(rows)} chunks")
+    for pid, path, meta, chunk in rows:
+        print(f"  {path} [{pid[:8]}] {len(chunk)} chars")
+
+    if args.dry_run:
+        print("Dry-run: nothing sent to OpenAI or Qdrant.")
+        return 0
+
+    # Live path only (needs OPENAI_API_KEY + QDRANT_URL in .env).
+    from dotenv import load_dotenv
+    from openai import OpenAI
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+
+    load_dotenv()
+    client = OpenAI()
+    qdrant = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"))
+    model = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+    dim = 1536  # text-embedding-3-small default; change only with the model.
+    if not qdrant.collection_exists(COLLECTION):
+        qdrant.create_collection(COLLECTION, vectors_config=VectorParams(size=dim, distance=Distance.COSINE))
+
+    texts = [c for _, _, _, c in rows]
+    embeddings = [e.embedding for e in
+                  client.embeddings.create(input=texts, model=model).data]
+    qdrant.upsert(COLLECTION, [PointStruct(id=pid, vector=vec, payload={"source": path, "meta": meta, "text": chunk})
+                               for (pid, path, meta, chunk), vec in zip(rows, embeddings)])
+    print(f"Upserted {len(rows)} points into {COLLECTION}.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
