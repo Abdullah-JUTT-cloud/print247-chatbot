@@ -126,8 +126,16 @@ def _clean_fact_text(text: str) -> str:
     if t.startswith("---\n"):
         end = t.find("\n---", 4)
         if end != -1:
-            return t[end + 4:].strip()[:800]
-    return t[:800]
+            t = t[end + 4:].strip()
+    if len(t) > 800:
+        # Never cut mid-word: the old 800-char cut left replies
+        # ending in "bu" for "but". Back off to the last space.
+        cut = t[:800]
+        last_space = cut.rfind(" ")
+        if last_space > 600:
+            cut = cut[:last_space]
+        return cut
+    return t
 
 
 def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: list[str]) -> str:
