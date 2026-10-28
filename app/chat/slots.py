@@ -18,6 +18,9 @@ Three guards from real old-bot failures, all in code:
 """
 import re
 
+from .finishes_norm import finish_in, normalise_finish
+from .quantity_parse import spelled_number_in
+
 FIELDS = ["product", "material", "sizes", "finishes", "quantity", "extras", "skus"]
 DEFAULTS = {"skus": "1", "extras": "none"}
 
@@ -114,6 +117,9 @@ def _quantity_in(text: str) -> str | None:
     "15 thousand" = 15000, "2 million" = 2000000, "2k" = 2000.
     """
     low = text.lower()
+    # Links and addresses are not quantities (an ad link's digits were
+    # once read as an order of thousands).
+    low = re.sub(r"https?://\S+|www\.\S+|\S+@\S+", " ", low)
     # Strip design-count spans first, so their numbers can never leak
     # into the quantity search below.
     cleaned = _DESIGN_COUNT.sub(" ", low)
@@ -133,18 +139,23 @@ def _quantity_in(text: str) -> str | None:
         elif mult == "million":
             n *= 1000000
         return str(int(n))
-    m = re.search(r"\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|fifty)\s+(thousand|million)\b", low)
-    if m:
-        return str(int(_SPELLED[m.group(1)] * (1000 if m.group(2) == "thousand" else 1000000)))
-    for word, n in _WORD_NUM.items():
-        if word in low:
-            return str(n)
+    # Full spelled-number algorithm first: the old single regex matched
+    # "five thousand" inside "twenty five thousand" and returned 5000.
+    spelled = spelled_number_in(cleaned)
+    if spelled is not None:
+        return str(spelled)
     return None
+
+
+_WORD_SKUS = {"single": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 
 def _skus_in(text: str) -> str | None:
     m = re.search(r"\b(\d+)\s*(?:different\s+)?(?:designs?|skus?|variants?|artworks?|types?)\b", text.lower())
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    m = re.search(r"\b(single|one|two|three|four|five)\s+(?:designs?|skus?|variants?|artworks?)\b", text.lower())
+    return str(_WORD_SKUS[m.group(1)]) if m else None
 
 
 def extract_from_message(text: str) -> dict:
@@ -168,7 +179,11 @@ def extract_from_message(text: str) -> dict:
         out["sizes"] = size.group(0).strip()
     finish = _find(low, _FINISHES)
     if finish:
-        out["finishes"] = finish
+        out["finishes"] = normalise_finish(finish)
+    else:
+        slip = finish_in(low)
+        if slip:
+            out["finishes"] = slip
     qty = _quantity_in(text)
     if qty:
         out["quantity"] = qty
