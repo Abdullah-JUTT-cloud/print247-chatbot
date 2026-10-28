@@ -68,6 +68,11 @@ def approve_okf(file_id: str) -> dict:
         if meta.get("id") == file_id:
             if meta.get("status") == "verified":
                 return {"ok": True, "path": path, "status": "verified", "note": "already verified"}
+            # Safety: a draft-from-chat file still holding its
+            # placeholder cannot be approved — the admin must write
+            # the verified fact first, or it would be trained on.
+            if "VERIFIED FACT — admin must write" in body:
+                return {"ok": False, "error": "write the verified fact first — this draft still has the placeholder"}
             text = open(path, encoding="utf-8").read()
             text = text.replace("status: draft", "status: verified", 1)
             today = datetime.date.today().isoformat()
