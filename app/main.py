@@ -115,9 +115,34 @@ def admin_create_okf(payload: OkfIn):
                                 payload.source, payload.body)
 
 
+@app.get("/api/admin/kb/{file_id}")
+def admin_get_kb(file_id: str):
+    return admin_api.get_kb_file(file_id)
+
+
+class SaveOkfIn(BaseModel):
+    body: str
+
+
+@app.post("/api/admin/okf/{file_id}/save")
+def admin_save_okf(file_id: str, payload: SaveOkfIn):
+    return admin_api.save_kb_file(file_id, payload.body)
+
+
 @app.post("/api/admin/okf/{file_id}/approve")
 def admin_approve_okf(file_id: str):
     return admin_api.approve_okf(file_id)
+
+
+class DraftFromLogIn(BaseModel):
+    message: str
+    reply: str = ""
+    sources: list[str] = []
+
+
+@app.post("/api/admin/draft-from-log")
+def admin_draft_from_log(payload: DraftFromLogIn):
+    return admin_api.draft_from_chat(payload.message, payload.reply, payload.sources)
 
 
 @app.post("/api/admin/ingest")
@@ -142,7 +167,8 @@ def admin_logs():
         docs = list(col.find().sort("created_at", -1).limit(100))
         unanswered = [d for d in docs if not d.get("sources") or d.get("handoff")]
         chosen = unanswered[:25] if unanswered else docs[:25]
-        return [{"message": d.get("message"), "sources": d.get("sources", []),
+        return [{"id": str(d.get("_id")), "message": d.get("message"),
+                 "reply": d.get("reply", ""), "sources": d.get("sources", []),
                  "handoff": d.get("handoff")} for d in chosen]
     except Exception:
         return []
