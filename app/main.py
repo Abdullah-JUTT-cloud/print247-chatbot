@@ -77,9 +77,56 @@ def chat_ui():
     return CHAT_HTML
 
 
+def _kb_rows_html() -> str:
+    """Server-rendered KB table (SSR). The old admin relied only on
+    JS fetches: if JS never ran in the browser, the page sat on
+    Loading forever even though the server was healthy (proven by
+    the user's own logs: GET /admin 200, but no /api/* request ever
+    arrived). SSR rows mean the data is visible even with JS dead;
+    the JS loads then overwrite them with fresh data when it runs."""
+    import html as _html
+    try:
+        files = admin_api.list_kb()
+    except Exception:
+        return "<p class='warn'>KB list server par nahi ban saki.</p>"
+    if not files:
+        return "<p>No KB files found.</p>"
+    rows = "".join(
+        f"<tr><td>{_html.escape(f['path'])}</td><td>{_html.escape(f['status'])}</td>"
+        f"<td><button onclick=\"viewKb('{_html.escape(f['id'])}')\">View</button>"
+        + (f"<button onclick=\"approve('{_html.escape(f['id'])}')\">Approve</button>"
+           if f['status'] == 'draft' else "") + "</td></tr>"
+        for f in files)
+    return ("<table><tr><th>File</th><th>Status</th><th>Action</th></tr>"
+            + rows + "</table>")
+
+
+def _session_rows_html() -> str:
+    import html as _html
+    try:
+        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
+                             serverSelectionTimeoutMS=2000)
+        col = client.get_default_database()["chat_logs"]
+        docs = list(col.find().sort("created_at", -1).limit(500))
+        sessions = _group_sessions(docs)[:25]
+    except Exception:
+        return "<p class='warn'>Chats server par nahi ban sake (Mongo down ho sakta hai).</p>"
+    if not sessions:
+        return "<p>No chats yet — send a chat from the chat page first.</p>"
+    rows = ""
+    for s in sessions:
+        rows += (f"<tr><td>{_html.escape(str(s['first_message']))}"
+                 f"<br><small>{_html.escape(s['session_id'])}</small></td>"
+                 f"<td>{s['count']}</td>"
+                 f"<td><button onclick=\"draftSession('{_html.escape(s['session_id'])}')\">Draft KB</button></td></tr>")
+    return ("<table><tr><th>Chat (pehla message)</th><th>Messages</th><th>Action</th></tr>"
+            + rows + "</table>")
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_ui():
-    return ADMIN_HTML
+    return (ADMIN_HTML.replace("{{KB_ROWS}}", _kb_rows_html())
+                      .replace("{{SESSION_ROWS}}", _session_rows_html()))
 
 
 @app.get("/health")
