@@ -53,7 +53,8 @@ def _qdrant_ok() -> bool:
         return False
 
 
-def _log_chat(payload_message: str, session_id: str | None, result: dict) -> None:
+def _log_chat(payload_message: str, session_id: str | None, result: dict,
+              reply_to: str | None = None) -> None:
     """Fail-soft: a logging failure must never break the chat."""
     try:
         client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
@@ -61,6 +62,8 @@ def _log_chat(payload_message: str, session_id: str | None, result: dict) -> Non
         client.get_default_database()["chat_logs"].insert_one({
             "session_id": session_id, "message": payload_message,
             "reply": result.get("reply"), "sources": result.get("sources", []),
+            "suggestions": result.get("suggestions", []),
+            "reply_to": reply_to,
             "handoff": result.get("handoff"), "llm_used": result.get("llm_used"),
             "language": result.get("language"),
             "created_at": datetime.datetime.now(datetime.timezone.utc),
@@ -87,13 +90,34 @@ def health():
 class ChatIn(BaseModel):
     message: str
     session_id: str | None = None
+    reply_to: str | None = None
 
 
 @app.post("/chat")
 def chat(payload: ChatIn):
-    result = handle_message(payload.message, payload.session_id, _store)
-    _log_chat(payload.message, payload.session_id, result)
+    result = handle_message(payload.message, payload.session_id, _store,
+                            reply_to=payload.reply_to)
+    _log_chat(payload.message, payload.session_id, result, payload.reply_to)
     return result
+
+
+@app.get("/api/chat/history")
+def chat_history(session_id: str):
+    """Saved chat for one session, oldest first. This is what makes
+    a refresh keep the conversation: the UI restores these rows
+    instead of starting from an empty screen. A New chat uses a
+    new session_id, so its history starts empty on purpose."""
+    try:
+        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
+                             serverSelectionTimeoutMS=2000)
+        col = client.get_default_database()["chat_logs"]
+        docs = list(col.find({"session_id": session_id}).sort("created_at", 1).limit(200))
+        return [{"message": d.get("message"), "reply": d.get("reply", ""),
+                 "sources": d.get("sources", []),
+                 "suggestions": d.get("suggestions", []),
+                 "reply_to": d.get("reply_to")} for d in docs]
+    except Exception:
+        return []
 
 
 @app.get("/api/admin/kb")
