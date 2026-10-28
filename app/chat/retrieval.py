@@ -138,7 +138,15 @@ def retrieve(text: str, top_k: int = 3) -> list[dict]:
                     p = h.payload or {}
                     out.append({"source": p.get("source", "qdrant"), "text": p.get("text", "")[:1500]})
                 if out:
-                    return out
+                    # Hybrid: vector hits first, keyword hits fill gaps
+                    # (deduped by source). Vector alone misses exact
+                    # product names; keyword alone misses synonyms.
+                    seen = {o["source"] for o in out}
+                    for k in _keyword_search(text, rows):
+                        if k["source"] not in seen:
+                            out.append(k)
+                            seen.add(k["source"])
+                    return out[:top_k]
         except Exception:
             pass  # Fall through to keyword search — never fail the chat.
 
