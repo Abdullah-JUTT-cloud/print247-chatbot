@@ -23,6 +23,7 @@ is down, the chat still works for this message (state just does not
 persist). A missing database must never break a visitor's chat.
 """
 import os
+import re
 
 from . import guards
 from .language import detect_language
@@ -182,12 +183,33 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
             text = "Yes — " + (text[0].lower() + text[1:] if text else text)
         return text
     if missing:
+        # Multi-design order: quantity is PER DESIGN (the question the
+        # competitor's human rep asks: "How much quantity per design?").
+        if missing[0] == "quantity":
+            try:
+                if int(slots.get("skus", "1")) > 1:
+                    return "How many units do you need per design?"
+            except (TypeError, ValueError):
+                pass
         return QUESTIONS[missing[0]]
     # Quote complete and no fact question: ask for confirmation, not
     # a raw KB chunk. (The old fallback returned facts[0] here, which
     # was a whole file including its frontmatter — the ugliest reply
     # in the live transcript's no-LLM path.)
     if not missing:
+        try:
+            n_designs = int(slots.get("skus", "1"))
+        except (TypeError, ValueError):
+            n_designs = 1
+        if n_designs > 1:
+            try:
+                total = int(slots.get("quantity", "0")) * n_designs
+            except (TypeError, ValueError):
+                total = slots.get("quantity")
+            return (f"Just to confirm — do you want {slots.get('quantity')} "
+                    f"{slots.get('product')} per design, {n_designs} designs "
+                    f"(total {total} units), size {slots.get('sizes')}, "
+                    f"with {slots.get('extras', 'none')} extras?")
         return (f"Just to confirm — do you want {slots.get('quantity')} "
                 f"{slots.get('product')}, size {slots.get('sizes')}, "
                 f"{slots.get('skus', '1')} SKU with {slots.get('extras', 'none')} extras?")
@@ -218,7 +240,9 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
                      if reply_to else "")
         system = (
             "You are a Print247 sales assistant. Reply in the visitor's "
-            f"language ({language}). Use ONLY the facts below and the "
+            f"language ({language}). If skus is more than 1, quantity means "
+            "PER DESIGN: ask for quantity per design and, when confirming, "
+            "state quantity per design and the total. Use ONLY the facts below and the "
             "collected order details. If a fact is not in them, say you "
             "will confirm with the team — never guess, never invent a "
             "price, policy, or date. Copy numbers verbatim. Keep it short, "
@@ -238,6 +262,28 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
         return None
 
 
+def _perfect_reply(slots: dict) -> str:
+    """Quote-ready message. Multi-design orders state per-design
+    quantity and total, or the confirmation lies by omission."""
+    try:
+        n = int(slots.get("skus", "1"))
+    except (TypeError, ValueError):
+        n = 1
+    if n > 1:
+        try:
+            total = int(slots.get("quantity", "0")) * n
+        except (TypeError, ValueError):
+            total = slots.get("quantity")
+        return (f"Perfect — your quote request is ready: {slots.get('product')}, "
+                f"{slots.get('sizes')}, {slots.get('quantity')} units per design, "
+                f"{n} designs (total {total} units), extras {slots.get('extras', 'none')}. "
+                f"A team member will confirm the price and turnaround shortly.")
+    return (f"Perfect — your quote request is ready: {slots.get('product')}, "
+            f"{slots.get('sizes')}, {slots.get('quantity')} units, "
+            f"{slots.get('skus', '1')} SKU, extras {slots.get('extras', 'none')}. "
+            f"A team member will confirm the price and turnaround shortly.")
+
+
 def handle_message(message: str, session_id: str | None = None, store=None,
                    reply_to: str | None = None) -> dict:
     """reply_to is the bot message the visitor tapped Reply on. It
@@ -247,8 +293,30 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     (shipping, SKU) mid-quote never wipes the collected order."""
     language = detect_language(message)
     prior = _load_session(store, session_id)
-    slots = merge_slots(prior, extract_from_message(message))
     low = message.lower().strip()
+    # Employment enquiry? Deflect at once, before any slot work.
+    # (Live failure: "hi i need job" got a product question.)
+    _JOB = (r"\bneed (a )?job\b", r"\blooking for (a )?job\b",
+            r"\bjob application\b", r"\bjob opening\b", r"\bcareers?\b",
+            r"\bvacanc", r"\bhiring\b", r"\bwork (for|with) (you|print247|us)\b",
+            r"\bemployment\b", r"\bapply(ing)? (for|to) (a )?job\b")
+    if any(re.search(pat, low) for pat in _JOB):
+        return {
+            "reply": ("Thanks for getting in touch! This chat is only for custom "
+                      "packaging and printing orders, so I can't help with job "
+                      "applications here. If it's about working with us, please "
+                      "email Support@print247.us and the right team will pick it up."),
+            "language": language, "slots": prior, "missing": missing_fields(prior),
+            "sources": [], "handoff": None, "llm_used": False, "suggestions": [],
+        }
+    # Extraction must never crash the chat: a parser bug used to turn
+    # into a 500 and the visitor saw "Message didn't send" (the
+    # "15 thousand" case: float("15 thousand") raised ValueError).
+    try:
+        extracted = extract_from_message(message)
+    except Exception:
+        extracted = {}
+    slots = merge_slots(prior, extracted)
     if low in ("start over", "new order", "start again", "reset",
                "new quote", "start fresh"):
         _save_session(store, session_id, {})
@@ -286,16 +354,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             and guards.is_complete(slots):
         _save_session(store, session_id, slots)
         return {
-            "reply": (f"Perfect — your quote request is ready: {slots.get('product')}, "
-                      f"{slots.get('sizes')}, {slots.get('quantity')} units, "
-                      f"{slots.get('skus', '1')} SKU, extras {slots.get('extras', 'none')}. "
-                      "A team member will confirm the price and turnaround shortly."),
-            "language": language, "slots": slots, "missing": [],
-            "sources": _slot_sources(slots), "handoff": "complete", "llm_used": False,
-            "suggestions": ["What is the minimum order?", "Is shipping free?",
-                            "What is your refund policy?"],
+            "reply": _perfect_reply(slots),
+            "language": language, "slots": slots,
+            "missing": missing_fields(slots), "sources": _slot_sources(slots),
+            "handoff": "complete", "llm_used": False,
+            "suggestions": [],
         }
-
     reason = guards.handoff_reason(message, slots)
     facts: list[dict] = []
     if reason == "policy_question":
