@@ -138,6 +138,25 @@ def _clean_fact_text(text: str) -> str:
     return t
 
 
+def _fact_reply_text(text: str) -> str:
+    """One-paragraph answer when the file opens with a real answer
+    (bottle labels open with 'Yes — we print…'), otherwise the
+    full cleaned text. This kills the old 'whole file dump' reply
+    without losing facts from summary-style files."""
+    cleaned = _clean_fact_text(text)
+    first = cleaned.split("\n\n")[0].strip()
+    # Only a first paragraph that IS an answer (starts with Yes, or
+    # carries a number) wins. Quote-flow's first paragraph is a
+    # flow description with no number — its answer ("2 to 3 business
+    # days") lives in paragraph 2, so that file must fall back to
+    # the full text, or the golden case for it breaks.
+    if (150 <= len(first) <= 800
+            and (first.lower().startswith("yes")
+                 or any(ch.isdigit() for ch in first))):
+        return first
+    return cleaned
+
+
 def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: list[str]) -> str:
     """No-LLM reply. Only uses OKF text and slot questions — it can
     never invent a price, a policy, or a fact.
@@ -153,7 +172,15 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
         return ("I don't want to give you a wrong answer on that — that detail "
                 "is not in our published facts, so I will confirm with the team.")
     if facts and is_fact_question:
-        return _clean_fact_text(facts[0]["text"])
+        text = _fact_reply_text(facts[0]["text"])
+        # Capability question about a real product ("Can you print
+        # boxes?") deserves a Yes first, not a bare list. Restricted
+        # to kb/products files, so a turnaround/policy question can
+        # never be falsely turned into a Yes.
+        is_capability = low.startswith(("can you", "do you", "can i", "could you"))
+        if is_capability and "/products/" in facts[0]["source"] and not text.lower().startswith("yes"):
+            text = "Yes — " + (text[0].lower() + text[1:] if text else text)
+        return text
     if missing:
         return QUESTIONS[missing[0]]
     # Quote complete and no fact question: ask for confirmation, not
@@ -165,7 +192,7 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
                 f"{slots.get('product')}, size {slots.get('sizes')}, "
                 f"{slots.get('skus', '1')} SKU with {slots.get('extras', 'none')} extras?")
     if facts:
-        return _clean_fact_text(facts[0]["text"])
+        return _fact_reply_text(facts[0]["text"])
     return "Thanks — I have your details. A team member will confirm the quote shortly."
 
 
@@ -222,6 +249,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     prior = _load_session(store, session_id)
     slots = merge_slots(prior, extract_from_message(message))
     low = message.lower().strip()
+    if low in ("start over", "new order", "start again", "reset",
+               "new quote", "start fresh"):
+        _save_session(store, session_id, {})
+        return {
+            "reply": "Sure — starting fresh. What product are you looking for?",
+            "language": language, "slots": {}, "missing": ["product"],
+            "sources": [], "handoff": None, "llm_used": False,
+            "suggestions": ["I need mylar bags", "I need custom boxes",
+                            "I need labels", "What do you offer?"],
+        }
 
     # Confirmation chips must actually work: "Change quantity" clears
     # that slot and re-asks it, instead of the bot treating the tap
@@ -293,17 +330,11 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # MOQ question because no quantity was ever collected. Instead,
     # offer the MOQ as a starting point (quantity) or a common size
     # (sizes), so the visitor can move forward in one tap.
+    # ORDER FIX: sizes must be checked BEFORE quantity. Slot order is
+    # product -> sizes -> quantity, so after "Not sure about size"
+    # both sizes AND quantity are missing — the old quantity-first
+    # check fired and offered quantity chips for a size question.
     if "not sure" in low and missing:
-        if "quantity" in missing:
-            _save_session(store, session_id, slots)
-            return {
-                "reply": ("No problem — most orders start at the minimum of 1000 units "
-                          "per size. Would you like to start with 1000, or a rough range?"),
-                "language": language, "slots": slots, "missing": missing,
-                "sources": _slot_sources(slots) or sources,
-                "handoff": None, "llm_used": False,
-                "suggestions": ["1000 units", "5000 units", "More than 5000"],
-            }
         if "sizes" in missing:
             _save_session(store, session_id, slots)
             return {
@@ -314,6 +345,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "handoff": None, "llm_used": False,
                 "suggestions": ["Size 4x6 inches", "Size 100x150mm",
                                 "I will send artwork later"],
+            }
+        if "quantity" in missing:
+            _save_session(store, session_id, slots)
+            return {
+                "reply": ("No problem — most orders start at the minimum of 1000 units "
+                          "per size. Would you like to start with 1000, or a rough range?"),
+                "language": language, "slots": slots, "missing": missing,
+                "sources": _slot_sources(slots) or sources,
+                "handoff": None, "llm_used": False,
+                "suggestions": ["1000 units", "5000 units", "More than 5000"],
             }
 
     if not moq["ok"]:
