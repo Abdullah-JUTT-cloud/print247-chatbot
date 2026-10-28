@@ -15,38 +15,38 @@ CHAT_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Print247 Chat</title>
 <style>
-*{box-sizing:border-box}body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#eef1f5;color:#1f2937}
+*{box-sizing:border-box}body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#0a0a0a;color:#e5e7eb}
 html,body{height:100%}body{height:100vh;overflow:hidden}
 .wrap{max-width:680px;margin:0 auto;padding:20px 14px 12px;height:100vh;display:flex;flex-direction:column}
-header{background:#111827;color:#fff;border-radius:16px;padding:18px 20px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px}
-header h1{margin:0 0 4px;font-size:22px}header p{margin:0;color:#d1d5db;font-size:14px}
+header{background:#111111;color:#fff;border:1px solid #262626;border-radius:16px;padding:18px 20px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+header h1{margin:0 0 4px;font-size:22px}header p{margin:0;color:#9ca3af;font-size:14px}
 header .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e;margin-right:6px}
-header button{background:#374151;color:#fff;border:1px solid #4b5563;border-radius:999px;padding:8px 14px;cursor:pointer;white-space:nowrap}
-#log{background:#fff;border-radius:16px;padding:16px;flex:1;overflow-y:auto;min-height:0;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+header button{background:#1f2937;color:#fff;border:1px solid #374151;border-radius:999px;padding:8px 14px;cursor:pointer;white-space:nowrap}
+#log{background:#111111;border:1px solid #262626;border-radius:16px;padding:16px;flex:1;overflow-y:auto;min-height:0}
 header,form,.note{flex-shrink:0}
 .row{display:flex;margin:10px 0}.row.me{justify-content:flex-end}
 .bubble{max-width:82%;padding:11px 14px;border-radius:16px;line-height:1.5;font-size:15px;white-space:pre-wrap;word-wrap:break-word}
-.bot .bubble{background:#f3f4f6;border-bottom-left-radius:4px}
-.me .bubble{background:#2563eb;color:#fff;border-bottom-right-radius:4px}
-.avatar{width:32px;height:32px;border-radius:50%;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;margin-right:8px;flex-shrink:0}
-.src{font-size:12px;color:#6b7280;margin:2px 0 2px 40px}
-.replybtn{font-size:12px;color:#2563eb;background:none;border:none;cursor:pointer;padding:2px 0 0 40px}
+.bot .bubble{background:#1f2937;color:#e5e7eb;border-bottom-left-radius:4px}
+.me .bubble{background:#f97316;color:#111827;font-weight:600;border-bottom-right-radius:4px}
+.avatar{width:32px;height:32px;border-radius:50%;background:#f97316;color:#111827;display:flex;align-items:center;justify-content:center;font-weight:700;margin-right:8px;flex-shrink:0}
+.src{font-size:12px;color:#9ca3af;margin:2px 0 2px 40px}
+.replybtn{font-size:12px;color:#fb923c;background:none;border:none;cursor:pointer;padding:2px 0 0 40px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 6px 40px}
-.chip{border:1px solid #2563eb;color:#2563eb;background:#fff;border-radius:999px;padding:7px 13px;cursor:pointer;font-size:13px}
-.chip:hover{background:#2563eb;color:#fff}
-.quote{background:#e5e7eb;border-left:3px solid #9ca3af;padding:6px 10px;margin-bottom:6px;font-size:13px;color:#374151;white-space:pre-wrap}
-.me .quote{background:rgba(255,255,255,.2);border-color:#bfdbfe;color:#dbeafe}
-#replybar{display:none;background:#fef3c7;border-radius:12px;padding:10px 14px;margin-top:14px;font-size:13px}
+.chip{border:1px solid #f97316;color:#fb923c;background:#111111;border-radius:999px;padding:7px 13px;cursor:pointer;font-size:13px}
+.chip:hover{background:#f97316;color:#111827}
+.quote{background:#1f2937;border-left:3px solid #f97316;padding:6px 10px;margin-bottom:6px;font-size:13px;color:#d1d5db;white-space:pre-wrap}
+.me .quote{background:rgba(0,0,0,.15);border-color:#111827;color:#111827}
+#replybar{display:none;background:#1f2937;border:1px solid #f97316;color:#e5e7eb;border-radius:12px;padding:10px 14px;margin-top:14px;font-size:13px}
 #replybar button{float:right;background:none;border:none;cursor:pointer;font-size:15px}
-.typing{display:flex;gap:4px;align-items:center}.typing span{width:8px;height:8px;border-radius:50%;background:#9ca3af;animation:b 1s infinite}
+.typing{display:flex;gap:4px;align-items:center}.typing span{width:8px;height:8px;border-radius:50%;background:#f97316;animation:b 1s infinite}
 .typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
 @keyframes b{0%,100%{transform:translateY(0);opacity:.5}50%{transform:translateY(-4px);opacity:1}}
 form{display:flex;gap:10px;margin-top:14px}
-input{flex:1;padding:13px 16px;border-radius:999px;border:1px solid #d1d5db;font-size:15px;outline:none}
-input:focus{border-color:#2563eb}
-button.send{background:#2563eb;color:#fff;border:none;border-radius:999px;padding:13px 22px;font-size:15px;cursor:pointer}
+input{flex:1;padding:13px 16px;border-radius:999px;border:1px solid #374151;background:#1f2937;color:#e5e7eb;font-size:15px;outline:none}
+input:focus{border-color:#f97316}
+button.send{background:#f97316;color:#111827;font-weight:700;border:none;border-radius:999px;padding:13px 22px;font-size:15px;cursor:pointer}
 button.send:disabled{opacity:.5;cursor:default}
-.note{text-align:center;color:#6b7280;font-size:12px;margin-top:10px}
+.note{text-align:center;color:#9ca3af;font-size:12px;margin-top:10px}
 </style></head>
 <body><div class="wrap">
 <header><div><h1>Print247</h1><p><span class="dot"></span>Online — replies from our packaging assistant</p></div>
@@ -99,18 +99,20 @@ if(!restoreLocal())greet();})();
 ADMIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Print247 Admin</title>
-<style>body{font-family:system-ui,sans-serif;max-width:960px;margin:30px auto;padding:0 16px;color:#1f2937}
-table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px;text-align:left;vertical-align:top}
-button{padding:7px 14px;margin:2px;cursor:pointer}input,textarea,select{width:100%;padding:8px;margin:4px 0}
-pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid #d1d5db;border-radius:12px;padding:16px;margin:16px 0}
-.help{color:#4b5563;font-size:14px}.warn{color:#b45309}h2{margin-top:32px}</style></head>
-<body><h1>Print247 Admin</h1><p id="serverstatus" class="help">Server check ho raha hai…</p>
+<style>body{font-family:system-ui,sans-serif;max-width:960px;margin:30px auto;padding:0 16px;background:#0a0a0a;color:#e5e7eb}
+h1,h2{color:#f9fafb}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #374151;padding:8px;text-align:left;vertical-align:top}
+th{background:#1f2937}
+button{padding:7px 14px;margin:2px;cursor:pointer;background:#f97316;color:#111827;border:none;border-radius:8px;font-weight:700}input,textarea,select{width:100%;padding:8px;margin:4px 0;background:#1f2937;border:1px solid #374151;color:#e5e7eb;border-radius:8px}
+pre{background:#1f2937;color:#e5e7eb;padding:12px;white-space:pre-wrap}.card{border:1px solid #374151;background:#111111;border-radius:12px;padding:16px;margin:16px 0}
+.help{color:#9ca3af;font-size:14px}.warn{color:#fbbf24}h2{margin-top:32px}</style></head>
+<body><h1>Print247 Admin</h1><p id="serverstatus" class="help">Server check ho raha hai…</p><noscript><p class="warn">JavaScript band hai is browser mein — neeche wali lists server se aayi hain, buttons ke liye JavaScript chahiye.</p></noscript>
 <p class="help"><b>Sirf 3 kaam hain:</b> 1) Neeche wali chat mein se <b>Draft KB</b> dabao — poori chat ki ek file ban jaye gi. 2) Us file ko parho, sahi fact likho, <b>Approve</b> karo. 3) <b>Re-ingest</b> dabao — tab bot seekhe ga. Bas.</p>
 
 <h2>1. Chats — har session ek hi chat hai</h2>
 <p class="help">Har row poori baat-cheet hai, har message alag row nahi. <b>Chat dekho</b> par poori conversation khulti hai, <b>Draft KB</b> par us poori chat ki ek file ban jati hai.</p>
 <button onclick="autoDraftAll()">Sab chats se auto-draft banao</button>
-<div id="sessions">Loading…</div>
+<div id="sessions">{{SESSION_ROWS}}</div>
 <div class="card" id="sessionDetail" style="display:none"><h3>Poori chat</h3><pre id="stranscript"></pre>
 <button onclick="draftCurrentSession()">Is chat se Draft KB banao</button><button onclick="closeSession()">Band karo</button></div>
 
@@ -121,7 +123,7 @@ pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid 
 
 <h2>2. Approve karo — drafts sab se upar hain</h2>
 <p class="help">Draft wali files upar hain. <b>View</b> par file khulti hai, wahan fact likho, <b>Save</b> karo, <b>Approve</b> karo. Verified files neeche hain, un ko kuch karne ki zaroorat nahi.</p>
-<div id="kb">Loading…</div>
+<div id="kb">{{KB_ROWS}}</div>
 
 <h2>3. Deploy — bot ko sikhana</h2>
 <button onclick="ingest()">Re-ingest KB into Qdrant</button>
