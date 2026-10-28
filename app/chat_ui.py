@@ -1388,6 +1388,14 @@ const toastEl = document.getElementById('toast');
 let sessionId;
 try { sessionId = localStorage.getItem('p247_session') || 'web-ui'; localStorage.setItem('p247_session', sessionId); }
 catch (e) { sessionId = 'web-ui'; }
+// Sales-rep persona: the exact 10 human rep names from the old-chats
+// JSON (repName field, 32,469 chats). 'Support Ecommerce' (1 chat)
+// is a generic account, not a person, so it is excluded. The rep is
+// picked per session (hash of sessionId), so a refresh keeps the
+// same rep and a New chat can get another — like the old bot,
+// where each chat belonged to one rep.
+const REP_NAMES = ['Frank Castle', 'Jessica Joe', 'Alex Kane', 'Max Carter', 'Harry Brook', 'Ethan Wilson', 'Paul Smith', 'Brian Tylar', 'Hazel Grace', 'Nancy Wilson'];
+function repName() { let h = 0; for (const ch of sessionId) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return REP_NAMES[h % REP_NAMES.length]; }
 let pendingReply = null;
 let busy = false;
 let unread = 0;
@@ -1770,7 +1778,7 @@ function greet() {
   log.innerHTML = `<section class="welcome" aria-label="Start a conversation">` +
     `<div class="welcome-kicker">${icon('i-spark')}Print247 concierge</div>` +
     `<h2>What are we <em>packing</em> today?</h2>` +
-    `<p>Tell me what’s going inside, the size and quantity. I’ll pull the right spec and walk you to a quote — no guesswork.</p>` +
+    `<p>Hi, I’m ${repName()} from Print247. Tell me what’s going inside, the size and quantity. I’ll pull the right spec and walk you to a quote — no guesswork.</p>` +
     `<div class="welcome-rule">Pick a starting point</div>` +
     `<div class="starters">` +
       starter('i-bag', 'Mylar bags', 'Barrier bags & pouches', 'I need mylar bags', 0) +
