@@ -20,6 +20,16 @@ _EXACT_TOPICS = {
     "turnaround": ["turnaround", "how long", "delivery time", "lead time"],
     "shipping": ["shipping", "ship"],
     "samples": ["sample"],
+    "refund": ["refund", "return", "cancel"],
+    "privacy": ["privacy", "personal data"],
+    "terms": ["terms and conditions", "terms"],
+    "payments": ["payment", "pay", "visa", "paypal", "ach", "zelle"],
+    "support-hours": ["support hours", "office hours", "open", "working hours"],
+    "artwork": ["artwork", "file format", "bleed"],
+    "proof-approval": ["proof", "approve", "approval"],
+    "quote-flow": ["quote", "get a quote"],
+    "contact": ["contact", "address", "phone", "location"],
+    "pricing-approach": ["price", "cost", "pricing"],
 }
 
 _COLLECTION = "print247_kb"
