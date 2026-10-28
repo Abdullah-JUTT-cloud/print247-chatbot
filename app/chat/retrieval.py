@@ -22,6 +22,21 @@ _EXACT_TOPICS = {
     # Product topics BEFORE overview: "what finishes do you offer?"
     # must hit finishes.md, not the general overview. Overview keys
     # are general phrases only, so a specific product still wins.
+    # Campaign-specific topics FIRST: a generic "pouches" or "boxes"
+    # question must not land on a campaign file just because its
+    # name contains the word, and a specific mylar/jerky/box question
+    # must land on its campaign file, not the general one.
+    "pouches-mylar-sizes": ["mylar size", "mylar sizes", "mylar pouch size",
+                            "mylar pouch sizes"],
+    "beef-jerky-bags": ["beef jerky", "jerky bag", "jerky bags"],
+    "boxes-campaign-materials": ["box material", "box materials", "box board"],
+    "pouches-mylar-styles": ["mylar style", "mylar styles", "mylar pouch style"],
+    "pouches-mylar-materials-finishes": ["mylar finish", "mylar finishes",
+                                         "mylar material", "mylar materials"],
+    "pouches-mylar-filling-use": ["seal a mylar", "seal mylar", "heat-seal",
+                                  "heat seal", "oxygen absorber"],
+    "boxes-campaign-styles": ["box styles", "types of boxes", "box style"],
+    "sku": ["sku", "skus", "stock keeping unit"],
     "finishes": ["finish", "finishes", "lamination"],
     "pouches": ["pouch", "pouches", "mylar"],
     "boxes": ["box", "boxes", "carton"],
@@ -83,8 +98,16 @@ def retrieve(text: str, top_k: int = 3) -> list[dict]:
     rows = _read_kb_files()
 
     # Step 1: exact topic — the file whose name IS the topic wins.
+    # Exact basename first, substring second: with campaign files
+    # like pouches-mylar-sizes.md in the tree, a plain substring
+    # match would return the campaign file for a general "pouches"
+    # question (facts/ sorts before products/, and
+    # pouches-mylar-campaign-context.md would win over pouches.md).
     for topic, keys in _EXACT_TOPICS.items():
         if any(k in low for k in keys):
+            for row in rows:
+                if row["source"].split("/")[-1] == f"{topic}.md":
+                    return [{"source": row["source"], "text": row["text"][:1500]}]
             for row in rows:
                 if topic in row["source"]:
                     return [{"source": row["source"], "text": row["text"][:1500]}]
