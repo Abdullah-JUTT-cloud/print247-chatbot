@@ -21,8 +21,8 @@ breaks a chat: if Mongo is down, the chat still answers.
 import datetime
 import os
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
@@ -91,10 +91,13 @@ def _kb_rows_html() -> str:
         return "<p class='warn'>KB list server par nahi ban saki.</p>"
     if not files:
         return "<p>No KB files found.</p>"
+    btn = ("style=\"background:#f97316;color:#111827;padding:7px 14px;border-radius:8px;"
+           "text-decoration:none;font-weight:700;display:inline-block\"" )
     rows = "".join(
         f"<tr><td>{_html.escape(f['path'])}</td><td>{_html.escape(f['status'])}</td>"
-        f"<td><button onclick=\"viewKb('{_html.escape(f['id'])}')\">View</button>"
-        + (f"<button onclick=\"approve('{_html.escape(f['id'])}')\">Approve</button>"
+        f"<td><a href=\"/admin/kb/{_html.escape(f['id'])}\" {btn}>View</a>"
+        + (f" <form method=\"post\" action=\"/admin/kb/{_html.escape(f['id'])}/approve\" "
+           f"style=\"display:inline\"><button>Approve</button></form>"
            if f['status'] == 'draft' else "") + "</td></tr>"
         for f in files)
     return ("<table><tr><th>File</th><th>Status</th><th>Action</th></tr>"
@@ -113,20 +116,183 @@ def _session_rows_html() -> str:
         return "<p class='warn'>Chats server par nahi ban sake (Mongo down ho sakta hai).</p>"
     if not sessions:
         return "<p>No chats yet — send a chat from the chat page first.</p>"
+    btn = ("style=\"background:#f97316;color:#111827;padding:7px 14px;border-radius:8px;"
+           "text-decoration:none;font-weight:700;display:inline-block\"" )
     rows = ""
     for s in sessions:
+        sid = _html.escape(s['session_id'])
         rows += (f"<tr><td>{_html.escape(str(s['first_message']))}"
-                 f"<br><small>{_html.escape(s['session_id'])}</small></td>"
+                 f"<br><small>{sid}</small></td>"
                  f"<td>{s['count']}</td>"
-                 f"<td><button onclick=\"draftSession('{_html.escape(s['session_id'])}')\">Draft KB</button></td></tr>")
+                 f"<td><a href=\"/admin/session/{sid}\" {btn}>Chat dekho</a> "
+                 f"<form method=\"post\" action=\"/admin/draft-from-session\" "
+                 f"style=\"display:inline\"><input type=\"hidden\" name=\"session_id\" "
+                 f"value=\"{sid}\"><button>Draft KB</button></form></td></tr>")
     return ("<table><tr><th>Chat (pehla message)</th><th>Messages</th><th>Action</th></tr>"
             + rows + "</table>")
 
 
+def _admin_shell(title: str, body: str) -> str:
+    """Full no-JS page: black theme, back link, escaped body."""
+    return (f"<!doctype html><html><head><meta charset=\"utf-8\">"
+            f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            f"<title>{title}</title><style>body{{font-family:system-ui,sans-serif;"
+            f"max-width:960px;margin:30px auto;padding:0 16px;background:#0a0a0a;"
+            f"color:#e5e7eb}}h1,h2{{color:#f9fafb}}a{{color:#fb923c}}"
+            f"button{{padding:7px 14px;margin:2px;cursor:pointer;background:#f97316;"
+            f"color:#111827;border:none;border-radius:8px;font-weight:700}}"
+            f"textarea,input{{width:100%;padding:8px;margin:4px 0;background:#1f2937;"
+            f"border:1px solid #374151;color:#e5e7eb;border-radius:8px}}"
+            f"pre{{background:#1f2937;color:#e5e7eb;padding:12px;white-space:pre-wrap}}"
+            f".warn{{color:#fbbf24}}.help{{color:#9ca3af}}</style></head>"
+            f"<body><h1>{title}</h1>{body}"
+            f"<p><a href=\"/admin\">Wapas Admin par</a></p></body></html>")
+
+
+def _mongo_docs(session_id: str | None = None) -> list:
+    client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
+                         serverSelectionTimeoutMS=2000)
+    col = client.get_default_database()["chat_logs"]
+    if session_id:
+        return list(col.find({"session_id": session_id}).sort("created_at", 1))
+    return list(col.find().sort("created_at", -1).limit(500))
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_ui():
-    return (ADMIN_HTML.replace("{{KB_ROWS}}", _kb_rows_html())
+    import re as _re
+    html = (ADMIN_HTML.replace("{{KB_ROWS}}", _kb_rows_html())
                       .replace("{{SESSION_ROWS}}", _session_rows_html()))
+    try:
+        mongo, qdrant = _mongo_ok(), _qdrant_ok()
+        health = (f"Server: {'OK' if mongo and qdrant else 'MASLA'} "
+                  f"(api=ok, mongo={mongo}, qdrant={qdrant}) — "
+                  f"ye server se likha hua hai, JS ke baghair.")
+    except Exception:
+        health = "Server: check nahi ho saka."
+    return _re.sub(r'<p id="serverstatus"[^>]*>.*?</p>',
+                   f'<p id="serverstatus" class="help">{health}</p>',
+                   html, count=1)
+
+
+@app.get("/admin/kb/{file_id}", response_class=HTMLResponse)
+def admin_kb_page(file_id: str):
+    import html as _html
+    d = admin_api.get_kb_file(file_id)
+    if not d.get("ok"):
+        return _admin_shell("File nahi mili",
+                            f"<p class=\"warn\">{_html.escape(d.get('error', 'not found'))}</p>")
+    body = _html.escape(d["body"])
+    return _admin_shell(f"KB file: {d['path']}",
+        f"<p class=\"help\">Status: {d['status']} | Source: {_html.escape(d['source'])}</p>"
+        f"<pre>{body}</pre>"
+        f"<h2>Fact likho / Save karo</h2>"
+        f"<form method=\"post\" action=\"/admin/kb/{file_id}/save\">"
+        f"<textarea name=\"body\" rows=\"16\">{body}</textarea><br>"
+        f"<button>Save edits</button></form>"
+        f"<form method=\"post\" action=\"/admin/kb/{file_id}/approve\">"
+        f"<button>Approve this file</button></form>"
+        f"<p class=\"help\">Approve tabhi karo jab placeholder (VERIFIED FACT) "
+        f"ki jagah asal fact likh diya ho. Approve ke baad Re-ingest dabao.</p>")
+
+
+@app.post("/admin/kb/{file_id}/save")
+def admin_kb_save(file_id: str, body: str = Form(...)):
+    admin_api.save_kb_file(file_id, body)
+    return RedirectResponse(url=f"/admin/kb/{file_id}", status_code=303)
+
+
+@app.post("/admin/kb/{file_id}/approve", response_class=HTMLResponse)
+def admin_kb_approve(file_id: str):
+    import html as _html
+    r = admin_api.approve_okf(file_id)
+    if not r.get("ok"):
+        return _admin_shell("Approve nahi hua",
+            f"<p class=\"warn\">{_html.escape(r.get('error', 'unknown'))}</p>"
+            f"<p><a href=\"/admin/kb/{file_id}\">Wapas file par</a></p>")
+    return RedirectResponse(url=f"/admin/kb/{file_id}", status_code=303)
+
+
+@app.post("/admin/kb/create")
+def admin_kb_create(id: str = Form(...), title: str = Form(...),
+                    category: str = Form(...), source: str = Form(...),
+                    body: str = Form(...)):
+    r = admin_api.create_okf(id, title, category, source, body)
+    if not r.get("ok"):
+        import html as _html
+        return _admin_shell("Create nahi hua",
+            f"<p class=\"warn\">{_html.escape(r.get('error', 'unknown'))}</p>")
+    return RedirectResponse(url=f"/admin/kb/{r.get('id', id)}", status_code=303)
+
+
+@app.get("/admin/session/{session_id}", response_class=HTMLResponse)
+def admin_session_page(session_id: str):
+    import html as _html
+    try:
+        docs = _mongo_docs(session_id)
+    except Exception as e:
+        return _admin_shell("Chat nahi mili", f"<p class=\"warn\">{_html.escape(str(e))}</p>")
+    if not docs:
+        return _admin_shell("Chat nahi mili", "<p>No chats found for this session.</p>")
+    lines = []
+    for d in docs:
+        lines.append(f"Visitor: {_html.escape(str(d.get('message', '')))}")
+        lines.append(f"Bot: {_html.escape(str(d.get('reply', '')))}")
+        lines.append("")
+    return _admin_shell(f"Poori chat: {session_id}",
+        f"<pre>{chr(10).join(lines)}</pre>"
+        f"<form method=\"post\" action=\"/admin/draft-from-session\">"
+        f"<input type=\"hidden\" name=\"session_id\" value=\"{_html.escape(session_id)}\">"
+        f"<button>Is chat se Draft KB banao</button></form>")
+
+
+@app.post("/admin/draft-from-session", response_class=HTMLResponse)
+def admin_draft_from_session_page(session_id: str = Form(...)):
+    import html as _html
+    try:
+        docs = _mongo_docs(session_id)
+        msgs = [{"message": d.get("message"), "reply": d.get("reply", ""),
+                 "sources": d.get("sources", [])} for d in docs]
+        r = admin_api.draft_from_session(session_id, msgs)
+    except Exception as e:
+        r = {"ok": False, "error": str(e)}
+    if not r.get("ok"):
+        return _admin_shell("Draft nahi bana",
+            f"<p class=\"warn\">{_html.escape(r.get('error', 'unknown'))}</p>")
+    return RedirectResponse(url=f"/admin/kb/{r['id']}", status_code=303)
+
+
+@app.post("/admin/auto-draft-all", response_class=HTMLResponse)
+def admin_auto_draft_all_page():
+    import html as _html
+    try:
+        sessions = _group_sessions(_mongo_docs())
+        created, skipped = [], []
+        for s in sessions:
+            r = admin_api.draft_from_session(s["session_id"], s["messages"])
+            (created if r.get("ok") else skipped).append(s["session_id"])
+        body = (f"<p>Ban gaye: {len(created)}</p><pre>{_html.escape(chr(10).join(created))}</pre>"
+                f"<p>Pehle se drafted (skip): {len(skipped)}</p>"
+                f"<pre>{_html.escape(chr(10).join(skipped))}</pre>")
+    except Exception as e:
+        body = f"<p class=\"warn\">{_html.escape(str(e))}</p>"
+    return _admin_shell("Auto-draft result", body)
+
+
+@app.post("/admin/ingest", response_class=HTMLResponse)
+def admin_ingest_page():
+    import html as _html
+    r = admin_api.run_ingest()
+    return _admin_shell("Re-ingest result",
+        f"<p>{'OK' if r.get('ok') else 'FAIL'}</p><pre>{_html.escape(r.get('output', ''))}</pre>")
+
+
+@app.post("/admin/test", response_class=HTMLResponse)
+def admin_test_page():
+    import html as _html
+    r = admin_api.run_tests()
+    return _admin_shell("Tests result",
+        f"<p>{'OK' if r.get('ok') else 'FAIL'}</p><pre>{_html.escape(r.get('output', ''))}</pre>")
 
 
 @app.get("/health")
