@@ -1778,7 +1778,7 @@ function greet() {
   log.innerHTML = `<section class="welcome" aria-label="Start a conversation">` +
     `<div class="welcome-kicker">${icon('i-spark')}Print247 concierge</div>` +
     `<h2>What are we <em>packing</em> today?</h2>` +
-    `<p>Hi, I’m ${repName()} from Print247. Tell me what’s going inside, the size and quantity. I’ll pull the right spec and walk you to a quote — no guesswork.</p>` +
+    `<p>Hi, I’m ${repName().split(' ')[0]} from Print247. Tell me what’s going inside, the size and quantity. I’ll pull the right spec and walk you to a quote — no guesswork.</p>` +
     `<div class="welcome-rule">Pick a starting point</div>` +
     `<div class="starters">` +
       starter('i-bag', 'Mylar bags', 'Barrier bags & pouches', 'I need mylar bags', 0) +
