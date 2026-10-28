@@ -104,7 +104,7 @@ table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8p
 button{padding:7px 14px;margin:2px;cursor:pointer}input,textarea,select{width:100%;padding:8px;margin:4px 0}
 pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid #d1d5db;border-radius:12px;padding:16px;margin:16px 0}
 .help{color:#4b5563;font-size:14px}.warn{color:#b45309}h2{margin-top:32px}</style></head>
-<body><h1>Print247 Admin</h1>
+<body><h1>Print247 Admin</h1><p id="serverstatus" class="help">Server check ho raha hai…</p>
 <p class="help"><b>Sirf 3 kaam hain:</b> 1) Neeche wali chat mein se <b>Draft KB</b> dabao — poori chat ki ek file ban jaye gi. 2) Us file ko parho, sahi fact likho, <b>Approve</b> karo. 3) <b>Re-ingest</b> dabao — tab bot seekhe ga. Bas.</p>
 
 <h2>1. Chats — har session ek hi chat hai</h2>
@@ -140,10 +140,12 @@ pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid 
 <p class="help">Ye sirf draft banata hai. Bot tabhi seekhe ga jab Approve + Re-ingest ho.</p>
 <script>
 let curId=null,curSession=null;
-async function loadKb(){let d;try{const r=await fetch('/api/admin/kb');d=await r.json();}
-catch(e){document.getElementById('kb').innerHTML='<p class="warn">KB list load nahi hui — server chal raha hai? Container up hai ya nahi check karo, phir <button onclick="loadKb()">Retry</button> dabao.</p>';return;}
+async function loadKb(){try{const c=new AbortController();setTimeout(()=>c.abort(),8000);
+const r=await fetch('/api/admin/kb',{signal:c.signal});const d=await r.json();
+if(!Array.isArray(d))throw new Error('Server ne list nahi bheji (status '+r.status+')');
 document.getElementById('kb').innerHTML='<table><tr><th>File</th><th>Status</th><th>Action</th></tr>'+d.map(f=>
 `<tr><td>${f.path}</td><td>${f.status}</td><td><button onclick="viewKb('${f.id}')">View</button>${f.status==='draft'?`<button onclick="approve('${f.id}')">Approve</button>`:''}</td></tr>`).join('')+'</table>';}
+catch(e){document.getElementById('kb').innerHTML='<p class="warn">KB list load nahi hui ('+e.message+'). Server down ho sakta hai ya purana code chal raha hai — pehle pull + rebuild karo, phir <button onclick="loadKb()">Retry</button> dabao.</p>';}}
 async function viewKb(id){const r=await fetch('/api/admin/kb/'+encodeURIComponent(id));const d=await r.json();
 if(!d.ok){document.getElementById('out').textContent=JSON.stringify(d);return;}
 curId=id;document.getElementById('detail').style.display='block';
@@ -164,11 +166,13 @@ document.getElementById('out').textContent=d.ok?('Approved '+id+' — now press 
 async function createOkf(e){e.preventDefault();const b={id:fid.value,title:ftitle.value,category:fcat.value,source:fsource.value,body:fbody.value};
 const r=await fetch('/api/admin/okf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const d=await r.json();document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();return false;}
-async function loadSessions(){let d;try{const r=await fetch('/api/admin/logs');d=await r.json();}
-catch(e){document.getElementById('sessions').innerHTML='<p class="warn">Chats load nahi hui — server chal raha hai? Container up hai ya nahi check karo, phir <button onclick="loadSessions()">Retry</button> dabao.</p>';return;}
+async function loadSessions(){try{const c=new AbortController();setTimeout(()=>c.abort(),8000);
+const r=await fetch('/api/admin/logs',{signal:c.signal});const d=await r.json();
+if(!Array.isArray(d))throw new Error('Server ne chats nahi bheji (status '+r.status+')');
 window._sessions=d;
 document.getElementById('sessions').innerHTML=d.length?'<table><tr><th>Chat (pehla message)</th><th>Messages</th><th>Action</th></tr>'+d.map((s,i)=>
 `<tr><td>${s.first_message}<br><small>${s.session_id} • ${s.started_at||''}</small></td><td>${s.count}</td><td><button onclick="viewSession(${i})">Chat dekho</button><button onclick="draftSession('${s.session_id}')">Draft KB</button></td></tr>`).join('')+'</table>':'No chats yet — send a chat from the chat page first.';}
+catch(e){document.getElementById('sessions').innerHTML='<p class="warn">Chats load nahi hui ('+e.message+'). Server down ho sakta hai ya purana code chal raha hai — pehle pull + rebuild karo, phir <button onclick="loadSessions()">Retry</button> dabao.</p>';}}
 function viewSession(i){const s=window._sessions[i];curSession=s.session_id;
 document.getElementById('sessionDetail').style.display='block';
 document.getElementById('stranscript').textContent=s.messages.map(m=>'Visitor: '+m.message+'\nBot: '+m.reply).join('\n\n');}
@@ -180,4 +184,4 @@ async function autoDraftAll(){const r=await fetch('/api/admin/auto-draft-all',{m
 document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();}
 async function ingest(){const r=await fetch('/api/admin/ingest',{method:'POST'});document.getElementById('out').textContent=await r.text();}
 async function runtests(){const r=await fetch('/api/admin/test',{method:'POST'});document.getElementById('out').textContent=await r.text();}
-loadKb();loadSessions();</script></body></html>"""
+loadKb();loadSessions();(async()=>{try{const r=await fetch('/health');const h=await r.json();document.getElementById('serverstatus').textContent='Server: OK (api='+h.api+', mongo='+h.mongo+', qdrant='+h.qdrant+') — agar upar Loading hi rahe to page ko hard refresh karo (Ctrl+Shift+R).';}catch(e){document.getElementById('serverstatus').textContent='Server: NAHI MIL RAHA — API container down hai. docker compose ps aur docker compose logs api check karo.';}})();</script></body></html>"""
