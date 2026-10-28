@@ -35,6 +35,25 @@ QUESTIONS = {
     "quantity": "How many units do you need?",
 }
 
+def _suggestions(slots: dict, missing: list[str]) -> list[str]:
+    """Clickable next steps shown under every bot reply.
+
+    They follow the quote flow, not a random list: if the product
+    is missing, suggest products; if sizes are missing, suggest
+    sizes; if quantity is missing, suggest quantities; otherwise
+    suggest the most-asked fact questions. The UI renders these as
+    chips, so a visitor can continue in one tap instead of typing.
+    """
+    if "product" in missing:
+        return ["I need mylar bags", "I need custom boxes", "I need labels"]
+    if "sizes" in missing:
+        return ["Size 4x6 inches", "Size 100x150mm", "Not sure about size"]
+    if "quantity" in missing:
+        return ["1000 units", "5000 units", "Not sure about quantity"]
+    return ["What is the minimum order?", "Is shipping free?",
+            "What is your refund policy?"]
+
+
 _POLICY_BEYOND_HANDOFF = (
     "That is a good question, and I do not want to give you a wrong "
     "answer: that detail is not in our published policy, so I am "
@@ -140,6 +159,7 @@ def handle_message(message: str, session_id: str | None = None, store=None) -> d
                 "reply": _POLICY_BEYOND_HANDOFF, "language": language,
                 "slots": slots, "missing": missing_fields(slots),
                 "sources": [], "handoff": reason, "llm_used": False,
+                "suggestions": _suggestions(slots, missing_fields(slots)),
             }
     if reason and reason != "policy_question":
         _save_session(store, session_id, slots)
@@ -148,6 +168,7 @@ def handle_message(message: str, session_id: str | None = None, store=None) -> d
             "language": language, "slots": slots,
             "missing": missing_fields(slots), "sources": [],
             "handoff": reason, "llm_used": False,
+            "suggestions": _suggestions(slots, missing_fields(slots)),
         }
 
     moq = guards.moq_check(slots)
@@ -162,6 +183,7 @@ def handle_message(message: str, session_id: str | None = None, store=None) -> d
             "reply": moq["message"], "language": language, "slots": slots,
             "missing": missing, "sources": sources,
             "handoff": None, "llm_used": False,
+            "suggestions": _suggestions(slots, missing),
         }
 
     reply = _llm_reply(message, language, slots, facts)
@@ -175,5 +197,6 @@ def handle_message(message: str, session_id: str | None = None, store=None) -> d
         "missing": missing, "sources": sources,
         "handoff": "complete" if guards.is_complete(slots) else None,
         "llm_used": llm_used,
+        "suggestions": _suggestions(slots, missing),
     }
     return result
