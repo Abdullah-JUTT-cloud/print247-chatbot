@@ -19,6 +19,21 @@ _EXACT_TOPICS = {
     # Order matters: specific topics first. "How long do samples
     # take?" contains "how long", so samples must be checked BEFORE
     # the generic turnaround keys, or it always loses to turnaround.
+    # Product topics BEFORE overview: "what finishes do you offer?"
+    # must hit finishes.md, not the general overview. Overview keys
+    # are general phrases only, so a specific product still wins.
+    "finishes": ["finish", "finishes", "lamination"],
+    "pouches": ["pouch", "pouches", "mylar"],
+    "boxes": ["box", "boxes", "carton"],
+    "labels": ["label", "labels", "sticker"],
+    "banners": ["banner", "banners"],
+    "business-cards": ["business card", "business cards"],
+    "print-products": ["flyer", "brochure", "postcard"],
+    # "What do you offer" in general maps to the overview file, not
+    # to a single category — a general question answered with one
+    # category only was the bug in the first UI demo.
+    "overview": ["what things", "what do you offer", "what do you sell",
+                 "what products do you"],
     "moq": ["minimum", "moq", "minimum order", "minimum quantity"],
     "samples": ["sample"],
     "turnaround": ["turnaround", "how long", "delivery time", "lead time"],
