@@ -73,13 +73,18 @@ addBot("Hi! I'm the Print247 assistant. I can help with products, sizes, quantit
 ADMIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Print247 Admin — KB Approval</title>
-<style>body{font-family:system-ui,sans-serif;max-width:900px;margin:30px auto;padding:0 16px}
-table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px;text-align:left}
-button{padding:6px 12px;margin:2px}input,textarea,select{width:100%;padding:8px;margin:4px 0}
-pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}</style></head>
+<style>body{font-family:system-ui,sans-serif;max-width:960px;margin:30px auto;padding:0 16px;color:#1f2937}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px;text-align:left;vertical-align:top}
+button{padding:6px 12px;margin:2px;cursor:pointer}input,textarea,select{width:100%;padding:8px;margin:4px 0}
+pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid #d1d5db;border-radius:12px;padding:16px;margin:16px 0}
+.help{color:#4b5563;font-size:14px}.ok{color:#15803d}.warn{color:#b45309}</style></head>
 <body><h1>Print247 Admin (dev only — no login yet)</h1>
-<p>Workflow: new question appears in Unanswered → write an OKF file → Approve it → Re-ingest → Run golden tests. Nothing reaches the bot until it is approved AND re-ingested.</p>
+<p class="help">How it works: a new question appears in Unanswered chats → press <b>Draft KB</b> → a draft file is ready → <b>View</b> it, read it, write the verified fact → <b>Approve</b> → <b>Re-ingest</b>. Only after Re-ingest does the bot learn it. A draft alone trains nothing.</p>
 <h2>Knowledge base files</h2><div id="kb">Loading…</div>
+<div class="card" id="detail" style="display:none"><h3 id="dtitle"></h3><p id="dmeta"></p>
+<textarea id="dbody" rows="12"></textarea><br>
+<button onclick="saveDetail()">Save edits</button><button onclick="approveDetail()">Approve this file</button>
+<button onclick="closeDetail()">Close</button><span id="dmsg"></span></div>
 <h2>Create a new OKF file</h2>
 <form onsubmit="return createOkf(event)">
 <input id="fid" placeholder="id, e.g. fact-samples-custom" required>
@@ -88,23 +93,41 @@ pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}</style></head>
 <input id="fsource" placeholder="Source, e.g. print247.us/faq" required>
 <textarea id="fbody" rows="6" placeholder="Facts, one concept only. Source + context on every fact." required></textarea>
 <button>Create as draft</button></form>
-<h2>Unanswered / handed-off chats (latest first)</h2><div id="logs">Loading…</div>
+<p class="help"><b>Create as draft</b> only writes a draft file. It does not train the bot. You must Approve it, then Re-ingest.</p>
+<h2>Previous chats — turn one into a KB file</h2><div id="logs">Loading…</div>
+<p class="help"><b>Draft KB</b> on a chat row creates a ready draft file from that chat: visitor question, bot reply and sources are pre-filled, and the verified fact is left as a placeholder for you to write. View it, verify it, approve it — only then does it count.</p>
 <h2>Deploy: re-ingest + golden tests</h2>
 <button onclick="ingest()">Re-ingest KB into Qdrant</button>
 <button onclick="runtests()">Run golden + chat tests</button>
+<p class="help"><b>Re-ingest KB into Qdrant</b> runs the ingest script: every OKF file gets a new embedding and is saved in Qdrant. This is the actual "training" step — after this, the bot answers from the new file. <b>Run golden + chat tests</b> runs the 15 golden questions and 11 chat rules; if any fail, do not treat the deploy as good — fix first.</p>
 <pre id="out"></pre>
 <script>
+let curId=null;
 async function loadKb(){const r=await fetch('/api/admin/kb');const d=await r.json();
 document.getElementById('kb').innerHTML='<table><tr><th>File</th><th>Status</th><th>Action</th></tr>'+d.map(f=>
-`<tr><td>${f.path}</td><td>${f.status}</td><td>${f.status==='draft'?`<button onclick="approve('${f.id}')">Approve</button>`:''}</td></tr>`).join('')+'</table>';}
+`<tr><td>${f.path}</td><td>${f.status}</td><td><button onclick="viewKb('${f.id}')">View</button>${f.status==='draft'?`<button onclick="approve('${f.id}')">Approve</button>`:''}</td></tr>`).join('')+'</table>';}
+async function viewKb(id){const r=await fetch('/api/admin/kb/'+encodeURIComponent(id));const d=await r.json();
+if(!d.ok){document.getElementById('out').textContent=JSON.stringify(d);return;}
+curId=id;document.getElementById('detail').style.display='block';
+document.getElementById('dtitle').textContent=d.title+' ('+d.path+')';
+document.getElementById('dmeta').textContent='Status: '+d.status+' • Source: '+d.source;
+document.getElementById('dbody').value=d.body;document.getElementById('dmsg').textContent='';}
+function closeDetail(){document.getElementById('detail').style.display='none';curId=null;}
+async function saveDetail(){const r=await fetch('/api/admin/okf/'+encodeURIComponent(curId)+'/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:document.getElementById('dbody').value})});
+document.getElementById('dmsg').textContent='Saved. Now Approve, then Re-ingest.';}
+async function approveDetail(){await approve(curId);viewKb(curId);}
 async function approve(id){await fetch('/api/admin/okf/'+encodeURIComponent(id)+'/approve',{method:'POST'});
 document.getElementById('out').textContent='Approved '+id+' — now press Re-ingest.';loadKb();}
 async function createOkf(e){e.preventDefault();const b={id:fid.value,title:ftitle.value,category:fcat.value,source:fsource.value,body:fbody.value};
 const r=await fetch('/api/admin/okf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const d=await r.json();document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();return false;}
 async function loadLogs(){const r=await fetch('/api/admin/logs');const d=await r.json();
-document.getElementById('logs').innerHTML=d.length?'<table><tr><th>Message</th><th>Sources</th><th>Handoff</th></tr>'+d.map(l=>
-`<tr><td>${l.message}</td><td>${(l.sources||[]).join(', ')}</td><td>${l.handoff||''}</td></tr>`).join('')+'</table>':'No logged chats yet — send a chat from the chat page first.';}
+document.getElementById('logs').innerHTML=d.length?'<table><tr><th>Message</th><th>Sources</th><th>Handoff</th><th>Action</th></tr>'+d.map((l,i)=>
+`<tr><td>${l.message}</td><td>${(l.sources||[]).join(', ')}</td><td>${l.handoff||''}</td><td><button onclick="draftLog(${i})">Draft KB</button></td></tr>`).join('')+'</table>':'No logged chats yet — send a chat from the chat page first.';
+window._logs=d;}
+async function draftLog(i){const l=window._logs[i];
+const r=await fetch('/api/admin/draft-from-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:l.message,reply:l.reply||'',sources:l.sources||[]})});
+const d=await r.json();document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();if(d.id)viewKb(d.id);}
 async function ingest(){const r=await fetch('/api/admin/ingest',{method:'POST'});document.getElementById('out').textContent=await r.text();}
 async function runtests(){const r=await fetch('/api/admin/test',{method:'POST'});document.getElementById('out').textContent=await r.text();}
 loadKb();loadLogs();</script></body></html>"""
