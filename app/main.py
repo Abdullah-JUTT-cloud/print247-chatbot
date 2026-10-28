@@ -179,20 +179,90 @@ def admin_test():
     return admin_api.run_tests()
 
 
+def _group_sessions(docs: list) -> list[dict]:
+    """One row per session (one conversation), not one row per
+    message. Messages inside a session stay in order, oldest first."""
+    sessions: dict[str, dict] = {}
+    order: list[str] = []
+    for d in sorted(docs, key=lambda x: x.get("created_at") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)):
+        sid = d.get("session_id") or "unknown"
+        if sid not in sessions:
+            sessions[sid] = {"session_id": sid, "messages": [], "sources": [],
+                             "has_handoff": False, "started_at": str(d.get("created_at", ""))}
+            order.append(sid)
+        sessions[sid]["messages"].append({
+            "message": d.get("message"), "reply": d.get("reply", ""),
+            "sources": d.get("sources", []), "handoff": d.get("handoff")})
+        for s in d.get("sources", []) or []:
+            if s not in sessions[sid]["sources"]:
+                sessions[sid]["sources"].append(s)
+        if d.get("handoff") and d.get("handoff") != "complete":
+            sessions[sid]["has_handoff"] = True
+    out = []
+    for sid in reversed(order):  # latest session first
+        s = sessions[sid]
+        msgs = s["messages"]
+        out.append({"session_id": sid, "count": len(msgs),
+                    "first_message": msgs[0]["message"] if msgs else "",
+                    "last_message": msgs[-1]["message"] if msgs else "",
+                    "started_at": s["started_at"], "sources": s["sources"],
+                    "has_handoff": s["has_handoff"], "messages": msgs})
+    return out
+
+
 @app.get("/api/admin/logs")
 def admin_logs():
-    """Latest chats with no sources or with a handoff first — the
-    questions the KB does not answer yet. Falls back to latest 25
-    chats if Mongo is empty or down."""
+    """Sessions, not messages: one row per conversation. The old
+    version returned one row per message, which made one chat look
+    like dozens of separate chats."""
     try:
         client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
                              serverSelectionTimeoutMS=2000)
         col = client.get_default_database()["chat_logs"]
-        docs = list(col.find().sort("created_at", -1).limit(100))
-        unanswered = [d for d in docs if not d.get("sources") or d.get("handoff")]
-        chosen = unanswered[:25] if unanswered else docs[:25]
-        return [{"id": str(d.get("_id")), "message": d.get("message"),
-                 "reply": d.get("reply", ""), "sources": d.get("sources", []),
-                 "handoff": d.get("handoff")} for d in chosen]
+        docs = list(col.find().sort("created_at", -1).limit(500))
+        return _group_sessions(docs)[:25]
     except Exception:
         return []
+
+
+class DraftFromSessionIn(BaseModel):
+    session_id: str
+
+
+@app.post("/api/admin/draft-from-session")
+def admin_draft_from_session(payload: DraftFromSessionIn):
+    """Automatically draft ONE KB file from a whole session: the
+    server pulls the session's chat from Mongo, so the admin does
+    not paste or type anything — just Approve after writing the fact."""
+    try:
+        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
+                             serverSelectionTimeoutMS=2000)
+        col = client.get_default_database()["chat_logs"]
+        docs = list(col.find({"session_id": payload.session_id}).sort("created_at", 1))
+        if not docs:
+            return {"ok": False, "error": "no chats found for this session"}
+        msgs = [{"message": d.get("message"), "reply": d.get("reply", ""),
+                 "sources": d.get("sources", [])} for d in docs]
+        return admin_api.draft_from_session(payload.session_id, msgs)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/admin/auto-draft-all")
+def admin_auto_draft_all():
+    """One draft per session, automatically, skipping sessions
+    that already have a draft. The admin then approves each draft
+    in the KB list — no per-message work at all."""
+    try:
+        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
+                             serverSelectionTimeoutMS=2000)
+        col = client.get_default_database()["chat_logs"]
+        docs = list(col.find().sort("created_at", -1).limit(500))
+        sessions = _group_sessions(docs)
+        created, skipped = [], []
+        for s in sessions:
+            r = admin_api.draft_from_session(s["session_id"], s["messages"])
+            (created if r.get("ok") else skipped).append(s["session_id"])
+        return {"ok": True, "created": created, "skipped_already_drafted": skipped}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
