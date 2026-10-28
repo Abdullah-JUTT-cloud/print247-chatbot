@@ -5,7 +5,10 @@
   3. Code guards: MOQ arithmetic, handoff triggers.
   4. RAG retrieval: exact topic first, then vector, then keyword.
   5. Answer:
-       - handoff needed  -> say so, do not invent (esp. policies).
+       - handoff needed  -> say so, do not invent. POLICY RULE
+         (narrowed, Oct 2026): a policy question is answered from
+         the policy OKF file when retrieval finds one; handoff
+         happens ONLY when no policy file covers the question.
        - MOQ failed     -> state the minimum, do not accept silently.
        - OPENAI key set -> gpt-5-mini writes the reply, using ONLY
          the retrieved OKF facts + slots + guard verdicts. It is told
@@ -32,10 +35,10 @@ QUESTIONS = {
     "quantity": "How many units do you need?",
 }
 
-_POLICY_HANDOFF = (
+_POLICY_BEYOND_HANDOFF = (
     "That is a good question, and I do not want to give you a wrong "
-    "answer: our refund / return / cancellation policy is not published "
-    "yet, so I am passing this to our team. They will confirm it directly. "
+    "answer: that detail is not in our published policy, so I am "
+    "passing this to our team. They will confirm it directly. "
     "In the meantime, is there anything else about your order I can help with?"
 )
 
@@ -126,14 +129,19 @@ def handle_message(message: str, session_id: str | None = None, store=None) -> d
     slots = merge_slots(prior, extract_from_message(message))
 
     reason = guards.handoff_reason(message, slots)
+    facts: list[dict] = []
     if reason == "policy_question":
-        _save_session(store, session_id, slots)
-        return {
-            "reply": _POLICY_HANDOFF, "language": language, "slots": slots,
-            "missing": missing_fields(slots), "sources": [],
-            "handoff": reason, "llm_used": False,
-        }
-    if reason:
+        # Narrowed handoff: if a policy OKF file covers the question,
+        # answer from it (normal path below) instead of handing off.
+        facts = retrieve(message)
+        if not any(f["source"].startswith("kb/policies/") for f in facts):
+            _save_session(store, session_id, slots)
+            return {
+                "reply": _POLICY_BEYOND_HANDOFF, "language": language,
+                "slots": slots, "missing": missing_fields(slots),
+                "sources": [], "handoff": reason, "llm_used": False,
+            }
+    if reason and reason != "policy_question":
         _save_session(store, session_id, slots)
         return {
             "reply": "Of course — I am connecting you with a team member who can help directly.",
@@ -143,7 +151,8 @@ def handle_message(message: str, session_id: str | None = None, store=None) -> d
         }
 
     moq = guards.moq_check(slots)
-    facts = retrieve(message)
+    if not facts:
+        facts = retrieve(message)
     sources = [f["source"] for f in facts]
     missing = missing_fields(slots)
 
