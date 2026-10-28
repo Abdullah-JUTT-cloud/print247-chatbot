@@ -65,10 +65,14 @@ _EXTRAS = [
 _PACK_COUNT = re.compile(
     r"\b\d+\s*(?:ct|count|pack|capsules?|pieces?|pcs)\b", re.IGNORECASE)
 _SIZE = re.compile(
-    r"\b\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?"
-    r"(?:\s*(?:x|×)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm)?",
+    r"\b\d+(?:\.\d+)?\s*(?:x|×|by)\s*\d+(?:\.\d+)?"
+    r"(?:\s*(?:x|×|by)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm)?",
     re.IGNORECASE)
-_NUMBER = re.compile(r"\b\d[\d,]*(?:\.\d+)?\s*(k|thousand)?\b", re.IGNORECASE)
+_NUMBER = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|million)?\b", re.IGNORECASE)
+_DESIGN_COUNT = re.compile(r"\b\d+\s*(designs?|skus?|variants?|artworks?)\b", re.IGNORECASE)
+_SPELLED = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+            "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+            "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "fifty": 50}
 _WORD_NUM = {
     "fifty": 50, "hundred": 100, "thousand": 1000, "five hundred": 500,
     "one thousand": 1000, "two thousand": 2000, "five thousand": 5000,
@@ -99,22 +103,34 @@ def _find(haystack: str, table) -> str | None:
 def _quantity_in(text: str) -> str | None:
     """First real order quantity, or None.
 
-    Skips pack counts ("10 ct") and design counts ("2 designs").
-    "2k" = 2000, "5,000" = 5000, "fifty" handled by word table.
+    Never reads a design count as quantity: "3 design of bags" has
+    designs=3 and NO quantity, whatever other words are in the text
+    (the old guard only skipped it when no product word was present,
+    so "3 design of bags" wrongly became quantity=3 and the MOQ
+    guard fired on designs instead of asking for a quantity).
+    "15 thousand" = 15000, "2 million" = 2000000, "2k" = 2000.
     """
     low = text.lower()
-    if re.search(r"\b\d+\s*(designs?|skus?|variants?|artworks?)\b", low):
-        # Only a design count here — quantity stays unanswered.
-        if not re.search(r"\b(boxes?|bags?|labels?|pouches?|units?|pcs)\b", low):
-            return None
+    # Strip design-count spans first, so their numbers can never leak
+    # into the quantity search below.
+    cleaned = _DESIGN_COUNT.sub(" ", low)
     # Remove pack-count phrases so "10 ct" is never read as quantity.
-    cleaned = _PACK_COUNT.sub(" ", low)
+    cleaned = _PACK_COUNT.sub(" ", cleaned)
+    # Remove size spans so "4 by 6 inches" never leaks its first
+    # dimension (4) into quantity — same class of bug as designs.
+    cleaned = _SIZE.sub(" ", cleaned)
     m = _NUMBER.search(cleaned)
     if m:
-        n = float(m.group(0).replace(",", "").rstrip("k"))
-        if m.group(1):
+        n = float(m.group(1).replace(",", ""))
+        mult = (m.group(2) or "").lower()
+        if mult == "k" or mult == "thousand":
             n *= 1000
+        elif mult == "million":
+            n *= 1000000
         return str(int(n))
+    m = re.search(r"\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|fifty)\s+(thousand|million)\b", low)
+    if m:
+        return str(int(_SPELLED[m.group(1)] * (1000 if m.group(2) == "thousand" else 1000000)))
     for word, n in _WORD_NUM.items():
         if word in low:
             return str(n)
