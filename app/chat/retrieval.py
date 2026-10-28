@@ -16,10 +16,13 @@ import os
 import re
 
 _EXACT_TOPICS = {
+    # Order matters: specific topics first. "How long do samples
+    # take?" contains "how long", so samples must be checked BEFORE
+    # the generic turnaround keys, or it always loses to turnaround.
     "moq": ["minimum", "moq", "minimum order", "minimum quantity"],
+    "samples": ["sample"],
     "turnaround": ["turnaround", "how long", "delivery time", "lead time"],
     "shipping": ["shipping", "ship"],
-    "samples": ["sample"],
     "refund": ["refund", "return", "cancel"],
     "privacy": ["privacy", "personal data"],
     "terms": ["terms and conditions", "terms"],
