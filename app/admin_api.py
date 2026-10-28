@@ -35,6 +35,8 @@ def _read_kb(path: str) -> tuple[dict, str]:
 
 
 def list_kb() -> list[dict]:
+    """Drafts first: the admin's job is approving drafts, so the
+    files waiting for approval sit on top, verified files below."""
     out = []
     for path in sorted(glob.glob("kb/**/*.md", recursive=True)):
         if path.endswith("/README.md"):
@@ -44,7 +46,46 @@ def list_kb() -> list[dict]:
                     "title": meta.get("title", ""),
                     "status": meta.get("status", "unknown"),
                     "source": meta.get("source", "")})
+    out.sort(key=lambda f: (f["status"] != "draft", f["path"]))
     return out
+
+
+def draft_from_session(session_id: str, messages: list[dict]) -> dict:
+    """ONE draft file for ONE whole conversation (session), not
+    one file per message. The old per-message rows were the
+    confusion: a session is a single chat, so its draft is a
+    single file containing the full Q&A, with one combined
+    verified-fact placeholder for the admin to write.
+
+    The admin's only job after this: read it, write the fact,
+    approve it, re-ingest. Nothing else is asked of them.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", (session_id or "chat").lower()).strip("-")[:20] or "chat"
+    file_id = f"fact-from-session-{slug}"
+    if os.path.exists(f"kb/facts/{file_id}.md"):
+        return {"ok": False, "error": f"already drafted for this session: {file_id}"}
+    lines = []
+    sources: list[str] = []
+    for m in messages:
+        lines.append(f"Visitor: {m.get('message', '')}")
+        lines.append(f"Bot: {m.get('reply', '')}")
+        lines.append("")
+        for s in m.get("sources", []) or []:
+            if s not in sources:
+                sources.append(s)
+    body = (
+        "Full chat (one session, one conversation):\n\n" + "\n".join(lines) +
+        f"\nSources the bot used in this chat: {', '.join(sources) or 'none'}\n\n"
+        "VERIFIED FACT — admin must write this before approving:\n"
+        "- [Write the ONE fact this chat taught us, in your own words, "
+        "with its source. Delete this line if there is no new fact. "
+        "Do not approve a file that still contains this placeholder.]\n"
+    )
+    result = create_okf(file_id, f"From chat session: {session_id}", "facts",
+                        "chat session (admin to confirm source)", body)
+    result["id"] = file_id
+    result["next"] = "Read it, write the fact, Approve, Re-ingest."
+    return result
 
 
 def create_okf(file_id: str, title: str, category: str, source: str, body: str) -> dict:
