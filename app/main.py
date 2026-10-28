@@ -77,7 +77,7 @@ def chat_ui():
     return CHAT_HTML
 
 
-def _kb_rows_html() -> str:
+def _kb_rows_html(files=None) -> str:
     """Server-rendered KB table (SSR). The old admin relied only on
     JS fetches: if JS never ran in the browser, the page sat on
     Loading forever even though the server was healthy (proven by
@@ -86,7 +86,8 @@ def _kb_rows_html() -> str:
     the JS loads then overwrite them with fresh data when it runs."""
     import html as _html
     try:
-        files = admin_api.list_kb()
+        if files is None:
+            files = admin_api.list_kb()
     except Exception:
         return "<p class='warn'>KB list server par nahi ban saki.</p>"
     if not files:
@@ -104,30 +105,51 @@ def _kb_rows_html() -> str:
             + rows + "</table>")
 
 
-def _session_rows_html() -> str:
+def _session_rows_html(pending_only: bool = False) -> str:
     import html as _html
+    import re as _re
     try:
         client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
                              serverSelectionTimeoutMS=2000)
         col = client.get_default_database()["chat_logs"]
         docs = list(col.find().sort("created_at", -1).limit(500))
         sessions = _group_sessions(docs)[:25]
+        if pending_only:
+            kept = []
+            for s in sessions:
+                slug = _re.sub(r"[^a-z0-9]+", "-", (s['session_id'] or "chat").lower()).strip("-")[:20] or "chat"
+                if not admin_api._find_kb_path(f"fact-from-session-{slug}"):
+                    kept.append(s)
+            sessions = kept
     except Exception:
         return "<p class='warn'>Chats server par nahi ban sake (Mongo down ho sakta hai).</p>"
     if not sessions:
         return "<p>No chats yet — send a chat from the chat page first.</p>"
     btn = ("style=\"background:#f97316;color:#111827;padding:7px 14px;border-radius:8px;"
            "text-decoration:none;font-weight:700;display:inline-block\"" )
+    import re as _re
     rows = ""
     for s in sessions:
         sid = _html.escape(s['session_id'])
+        # Draft status for this session, if any file exists for it.
+        draft_action = (f"<form method=\"post\" action=\"/admin/draft-from-session\" "
+                        f"style=\"display:inline\"><input type=\"hidden\" name=\"session_id\" "
+                        f"value=\"{sid}\"><button>Draft KB</button></form>")
+        slug = _re.sub(r"[^a-z0-9]+", "-", (s['session_id'] or "chat").lower()).strip("-")[:20] or "chat"
+        draft_id = f"fact-from-session-{slug}"
+        draft_path = admin_api._find_kb_path(draft_id)
+        if draft_path:
+            meta, _body = admin_api._read_kb(draft_path)
+            status = meta.get("status", "")
+            if status == "verified":
+                draft_action = "<b>Seekh liya (verified)</b>"
+            else:
+                draft_action = (f"<a href=\"/admin/kb/{draft_id}\" {btn}>Draft dekho (approve karo)</a>")
         rows += (f"<tr><td>{_html.escape(str(s['first_message']))}"
                  f"<br><small>{sid}</small></td>"
                  f"<td>{s['count']}</td>"
                  f"<td><a href=\"/admin/session/{sid}\" {btn}>Chat dekho</a> "
-                 f"<form method=\"post\" action=\"/admin/draft-from-session\" "
-                 f"style=\"display:inline\"><input type=\"hidden\" name=\"session_id\" "
-                 f"value=\"{sid}\"><button>Draft KB</button></form></td></tr>")
+                 f"{draft_action}</td></tr>")
     return ("<table><tr><th>Chat (pehla message)</th><th>Messages</th><th>Action</th></tr>"
             + rows + "</table>")
 
@@ -159,10 +181,17 @@ def _mongo_docs(session_id: str | None = None) -> list:
 
 
 @app.get("/admin", response_class=HTMLResponse)
-def admin_ui():
+def admin_ui(view: str = "all"):
     import re as _re
-    html = (ADMIN_HTML.replace("{{KB_ROWS}}", _kb_rows_html())
-                      .replace("{{SESSION_ROWS}}", _session_rows_html()))
+    pending = (view == "pending")
+    kb_files = None
+    if pending:
+        try:
+            kb_files = [f for f in admin_api.list_kb() if f["status"] == "draft"]
+        except Exception:
+            kb_files = None
+    html = (ADMIN_HTML.replace("{{KB_ROWS}}", _kb_rows_html(kb_files))
+                      .replace("{{SESSION_ROWS}}", _session_rows_html(pending_only=pending)))
     try:
         mongo, qdrant = _mongo_ok(), _qdrant_ok()
         health = (f"Server: {'OK' if mongo and qdrant else 'MASLA'} "
