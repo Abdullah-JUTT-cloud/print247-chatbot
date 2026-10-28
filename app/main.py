@@ -184,7 +184,18 @@ def _group_sessions(docs: list) -> list[dict]:
     message. Messages inside a session stay in order, oldest first."""
     sessions: dict[str, dict] = {}
     order: list[str] = []
-    for d in sorted(docs, key=lambda x: x.get("created_at") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)):
+
+    def _sort_key(x: dict):
+        # created_at can be missing, a string, or a naive datetime in
+        # old logs — any of those used to crash the whole /logs call
+        # (and the admin page then sat on Loading forever, because
+        # the old JS had no error path). Normalize, never crash.
+        v = x.get("created_at")
+        if isinstance(v, datetime.datetime):
+            return v if v.tzinfo else v.replace(tzinfo=datetime.timezone.utc)
+        return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+    for d in sorted(docs, key=_sort_key):
         sid = d.get("session_id") or "unknown"
         if sid not in sessions:
             sessions[sid] = {"session_id": sid, "messages": [], "sources": [],
