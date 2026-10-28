@@ -98,20 +98,38 @@ if(!restoreLocal())greet();})();
 
 ADMIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Print247 Admin — KB Approval</title>
+<title>Print247 Admin</title>
 <style>body{font-family:system-ui,sans-serif;max-width:960px;margin:30px auto;padding:0 16px;color:#1f2937}
-table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px;text-align:left;vertical-align:top}
-button{padding:6px 12px;margin:2px;cursor:pointer}input,textarea,select{width:100%;padding:8px;margin:4px 0}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:8px;text-align:left;vertical-align:top}
+button{padding:7px 14px;margin:2px;cursor:pointer}input,textarea,select{width:100%;padding:8px;margin:4px 0}
 pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid #d1d5db;border-radius:12px;padding:16px;margin:16px 0}
-.help{color:#4b5563;font-size:14px}.ok{color:#15803d}.warn{color:#b45309}</style></head>
-<body><h1>Print247 Admin (dev only — no login yet)</h1>
-<p class="help">How it works: a new question appears in Unanswered chats → press <b>Draft KB</b> → a draft file is ready → <b>View</b> it, read it, write the verified fact → <b>Approve</b> → <b>Re-ingest</b>. Only after Re-ingest does the bot learn it. A draft alone trains nothing.</p>
-<h2>Knowledge base files</h2><div id="kb">Loading…</div>
-<div class="card" id="detail" style="display:none"><h3>Step 2 — Read this file, write the verified fact, then Approve</h3><h3 id="dtitle"></h3><p id="dmeta"></p><p id="dwarn" class="warn"></p>
+.help{color:#4b5563;font-size:14px}.warn{color:#b45309}h2{margin-top:32px}</style></head>
+<body><h1>Print247 Admin</h1>
+<p class="help"><b>Sirf 3 kaam hain:</b> 1) Neeche wali chat mein se <b>Draft KB</b> dabao — poori chat ki ek file ban jaye gi. 2) Us file ko parho, sahi fact likho, <b>Approve</b> karo. 3) <b>Re-ingest</b> dabao — tab bot seekhe ga. Bas.</p>
+
+<h2>1. Chats — har session ek hi chat hai</h2>
+<p class="help">Har row poori baat-cheet hai, har message alag row nahi. <b>Chat dekho</b> par poori conversation khulti hai, <b>Draft KB</b> par us poori chat ki ek file ban jati hai.</p>
+<button onclick="autoDraftAll()">Sab chats se auto-draft banao</button>
+<div id="sessions">Loading…</div>
+<div class="card" id="sessionDetail" style="display:none"><h3>Poori chat</h3><pre id="stranscript"></pre>
+<button onclick="draftCurrentSession()">Is chat se Draft KB banao</button><button onclick="closeSession()">Band karo</button></div>
+
+<div class="card" id="detail" style="display:none"><h3>Step 2 — File parho, sahi fact likho, phir Approve karo</h3><h3 id="dtitle"></h3><p id="dmeta"></p><p id="dwarn" class="warn"></p>
 <textarea id="dbody" rows="12"></textarea><br>
 <button onclick="saveDetail()">Save edits</button><button onclick="approveDetail()">Approve this file</button>
 <button onclick="closeDetail()">Close</button><span id="dmsg"></span></div>
-<h2>Create a new OKF file</h2>
+
+<h2>2. Approve karo — drafts sab se upar hain</h2>
+<p class="help">Draft wali files upar hain. <b>View</b> par file khulti hai, wahan fact likho, <b>Save</b> karo, <b>Approve</b> karo. Verified files neeche hain, un ko kuch karne ki zaroorat nahi.</p>
+<div id="kb">Loading…</div>
+
+<h2>3. Deploy — bot ko sikhana</h2>
+<button onclick="ingest()">Re-ingest KB into Qdrant</button>
+<button onclick="runtests()">Run golden + chat tests</button>
+<p class="help"><b>Re-ingest</b> = asli training. Is ke baad hi bot nayi approved files se jawab de ga. <b>Tests</b> = 16 golden sawal + 11 chat rules; koi fail ho to deploy theek nahi.</p>
+<pre id="out"></pre>
+
+<h2>Nayi file khud likhni ho to (optional)</h2>
 <form onsubmit="return createOkf(event)">
 <input id="fid" placeholder="id, e.g. fact-samples-custom" required>
 <select id="fcat"><option>facts</option><option>products</option><option>materials</option><option>policies</option></select>
@@ -119,16 +137,9 @@ pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid 
 <input id="fsource" placeholder="Source, e.g. print247.us/faq" required>
 <textarea id="fbody" rows="6" placeholder="Facts, one concept only. Source + context on every fact." required></textarea>
 <button>Create as draft</button></form>
-<p class="help"><b>Create as draft</b> only writes a draft file. It does not train the bot. You must Approve it, then Re-ingest.</p>
-<h2>Previous chats — turn one into a KB file</h2><div id="logs">Loading…</div>
-<p class="help"><b>Draft KB</b> on a chat row creates a ready draft file from that chat: visitor question, bot reply and sources are pre-filled, and the verified fact is left as a placeholder for you to write. View it, verify it, approve it — only then does it count.</p>
-<h2>Deploy: re-ingest + golden tests</h2>
-<button onclick="ingest()">Re-ingest KB into Qdrant</button>
-<button onclick="runtests()">Run golden + chat tests</button>
-<p class="help"><b>Re-ingest KB into Qdrant</b> runs the ingest script: every OKF file gets a new embedding and is saved in Qdrant. This is the actual "training" step — after this, the bot answers from the new file. <b>Run golden + chat tests</b> runs the 16 golden questions and 11 chat rules; if any fail, do not treat the deploy as good — fix first.</p>
-<pre id="out"></pre>
+<p class="help">Ye sirf draft banata hai. Bot tabhi seekhe ga jab Approve + Re-ingest ho.</p>
 <script>
-let curId=null;
+let curId=null,curSession=null;
 async function loadKb(){const r=await fetch('/api/admin/kb');const d=await r.json();
 document.getElementById('kb').innerHTML='<table><tr><th>File</th><th>Status</th><th>Action</th></tr>'+d.map(f=>
 `<tr><td>${f.path}</td><td>${f.status}</td><td><button onclick="viewKb('${f.id}')">View</button>${f.status==='draft'?`<button onclick="approve('${f.id}')">Approve</button>`:''}</td></tr>`).join('')+'</table>';}
@@ -138,7 +149,7 @@ curId=id;document.getElementById('detail').style.display='block';
 document.getElementById('dtitle').textContent=d.title+' ('+d.path+')';
 document.getElementById('dmeta').textContent='Status: '+d.status+' • Source: '+d.source;
 document.getElementById('dbody').value=d.body;document.getElementById('dmsg').textContent='';
-document.getElementById('dwarn').textContent=d.body.includes('VERIFIED FACT — admin must write')?'⚠ Placeholder abhi maujood hai — pehle sahi fact likho, warna Approve nahi hoga. Upar wala placeholder text delete karo, aur us ki jagah sahi fact likho.':'';}
+document.getElementById('dwarn').textContent=d.body.includes('VERIFIED FACT — admin must write')?'⚠ Placeholder abhi maujood hai — pehle sahi fact likho, warna Approve nahi hoga.':'';}
 function closeDetail(){document.getElementById('detail').style.display='none';curId=null;}
 async function saveDetail(){const v=document.getElementById('dbody').value;
 await fetch('/api/admin/okf/'+encodeURIComponent(curId)+'/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:v})});
@@ -147,18 +158,23 @@ document.getElementById('dwarn').textContent=v.includes('VERIFIED FACT — admin
 async function approveDetail(){const r=await fetch('/api/admin/okf/'+encodeURIComponent(curId)+'/approve',{method:'POST'});const d=await r.json();
 if(!d.ok){document.getElementById('dmsg').textContent='Approve nahi hua: '+d.error;return;}
 document.getElementById('out').textContent='Approved '+curId+' — now press Re-ingest.';loadKb();viewKb(curId);}
-async function approve(id){await fetch('/api/admin/okf/'+encodeURIComponent(id)+'/approve',{method:'POST'});
-document.getElementById('out').textContent='Approved '+id+' — now press Re-ingest.';loadKb();}
+async function approve(id){const r=await fetch('/api/admin/okf/'+encodeURIComponent(id)+'/approve',{method:'POST'});const d=await r.json();
+document.getElementById('out').textContent=d.ok?('Approved '+id+' — now press Re-ingest.'):('Approve nahi hua: '+d.error);loadKb();}
 async function createOkf(e){e.preventDefault();const b={id:fid.value,title:ftitle.value,category:fcat.value,source:fsource.value,body:fbody.value};
 const r=await fetch('/api/admin/okf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const d=await r.json();document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();return false;}
-async function loadLogs(){const r=await fetch('/api/admin/logs');const d=await r.json();
-document.getElementById('logs').innerHTML=d.length?'<table><tr><th>Message</th><th>Sources</th><th>Status</th><th>Action</th></tr>'+d.map((l,i)=>
-`<tr><td>${l.message}</td><td>${(l.sources||[]).join(', ')}</td><td>${l.handoff==='complete'?'quote ready':(l.handoff||'answered')}</td><td><button onclick="draftLog(${i})">Draft KB</button></td></tr>`).join('')+'</table>':'No logged chats yet — send a chat from the chat page first.';
-window._logs=d;}
-async function draftLog(i){const l=window._logs[i];
-const r=await fetch('/api/admin/draft-from-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:l.message,reply:l.reply||'',sources:l.sources||[]})});
+async function loadSessions(){const r=await fetch('/api/admin/logs');const d=await r.json();window._sessions=d;
+document.getElementById('sessions').innerHTML=d.length?'<table><tr><th>Chat (pehla message)</th><th>Messages</th><th>Action</th></tr>'+d.map((s,i)=>
+`<tr><td>${s.first_message}<br><small>${s.session_id} • ${s.started_at||''}</small></td><td>${s.count}</td><td><button onclick="viewSession(${i})">Chat dekho</button><button onclick="draftSession('${s.session_id}')">Draft KB</button></td></tr>`).join('')+'</table>':'No chats yet — send a chat from the chat page first.';}
+function viewSession(i){const s=window._sessions[i];curSession=s.session_id;
+document.getElementById('sessionDetail').style.display='block';
+document.getElementById('stranscript').textContent=s.messages.map(m=>'Visitor: '+m.message+'\nBot: '+m.reply).join('\n\n');}
+function closeSession(){document.getElementById('sessionDetail').style.display='none';curSession=null;}
+async function draftSession(sid){const r=await fetch('/api/admin/draft-from-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sid})});
 const d=await r.json();document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();if(d.id)viewKb(d.id);}
+async function draftCurrentSession(){if(curSession)draftSession(curSession);}
+async function autoDraftAll(){const r=await fetch('/api/admin/auto-draft-all',{method:'POST'});const d=await r.json();
+document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();}
 async function ingest(){const r=await fetch('/api/admin/ingest',{method:'POST'});document.getElementById('out').textContent=await r.text();}
 async function runtests(){const r=await fetch('/api/admin/test',{method:'POST'});document.getElementById('out').textContent=await r.text();}
-loadKb();loadLogs();</script></body></html>"""
+loadKb();loadSessions();</script></body></html>"""
