@@ -111,7 +111,7 @@ pre{background:#1f2937;color:#e5e7eb;padding:12px;white-space:pre-wrap}.card{bor
 
 <h2>1. Chats — har session ek hi chat hai</h2>
 <p class="help">Har row poori baat-cheet hai, har message alag row nahi. <b>Chat dekho</b> par poori conversation khulti hai, <b>Draft KB</b> par us poori chat ki ek file ban jati hai.</p>
-<button onclick="autoDraftAll()">Sab chats se auto-draft banao</button>
+<form method="post" action="/admin/auto-draft-all" style="display:inline"><button>Sab chats se auto-draft banao</button></form>
 <div id="sessions">{{SESSION_ROWS}}</div>
 <div class="card" id="sessionDetail" style="display:none"><h3>Poori chat</h3><pre id="stranscript"></pre>
 <button onclick="draftCurrentSession()">Is chat se Draft KB banao</button><button onclick="closeSession()">Band karo</button></div>
@@ -126,18 +126,18 @@ pre{background:#1f2937;color:#e5e7eb;padding:12px;white-space:pre-wrap}.card{bor
 <div id="kb">{{KB_ROWS}}</div>
 
 <h2>3. Deploy — bot ko sikhana</h2>
-<button onclick="ingest()">Re-ingest KB into Qdrant</button>
-<button onclick="runtests()">Run golden + chat tests</button>
+<form method="post" action="/admin/ingest" style="display:inline"><button>Re-ingest KB into Qdrant</button></form>
+<form method="post" action="/admin/test" style="display:inline"><button>Run golden + chat tests</button></form>
 <p class="help"><b>Re-ingest</b> = asli training. Is ke baad hi bot nayi approved files se jawab de ga. <b>Tests</b> = 16 golden sawal + 11 chat rules; koi fail ho to deploy theek nahi.</p>
 <pre id="out"></pre>
 
 <h2>Nayi file khud likhni ho to (optional)</h2>
-<form onsubmit="return createOkf(event)">
-<input id="fid" placeholder="id, e.g. fact-samples-custom" required>
-<select id="fcat"><option>facts</option><option>products</option><option>materials</option><option>policies</option></select>
-<input id="ftitle" placeholder="Title" required>
-<input id="fsource" placeholder="Source, e.g. print247.us/faq" required>
-<textarea id="fbody" rows="6" placeholder="Facts, one concept only. Source + context on every fact." required></textarea>
+<form method="post" action="/admin/kb/create">
+<input name="id" placeholder="id, e.g. fact-samples-custom" required>
+<select name="category"><option>facts</option><option>products</option><option>materials</option><option>policies</option></select>
+<input name="title" placeholder="Title" required>
+<input name="source" placeholder="Source, e.g. print247.us/faq" required>
+<textarea name="body" rows="6" placeholder="Facts, one concept only. Source + context on every fact." required></textarea>
 <button>Create as draft</button></form>
 <p class="help">Ye sirf draft banata hai. Bot tabhi seekhe ga jab Approve + Re-ingest ho.</p>
 <script>
