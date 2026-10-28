@@ -106,7 +106,7 @@ th{background:#1f2937}
 button{padding:7px 14px;margin:2px;cursor:pointer;background:#f97316;color:#111827;border:none;border-radius:8px;font-weight:700}input,textarea,select{width:100%;padding:8px;margin:4px 0;background:#1f2937;border:1px solid #374151;color:#e5e7eb;border-radius:8px}
 pre{background:#1f2937;color:#e5e7eb;padding:12px;white-space:pre-wrap}.card{border:1px solid #374151;background:#111111;border-radius:12px;padding:16px;margin:16px 0}
 .help{color:#9ca3af;font-size:14px}.warn{color:#fbbf24}h2{margin-top:32px}</style></head>
-<body><h1>Print247 Admin</h1><p id="serverstatus" class="help">Server check ho raha hai…</p><noscript><p class="warn">JavaScript band hai is browser mein — neeche wali lists server se aayi hain, buttons ke liye JavaScript chahiye.</p></noscript>
+<body><h1>Print247 Admin</h1><p id="serverstatus" class="help">Server check ho raha hai…</p><noscript><p class="warn">JavaScript band hai is browser mein — neeche wali lists server se aayi hain, buttons ke liye JavaScript chahiye.</p></noscript><p class="help"><a href="/admin?view=pending">Sirf pending dikhao (baki kaam chhupao)</a> | <a href="/admin">Sab kuch dikhao</a></p>
 <p class="help"><b>Sirf 3 kaam hain:</b> 1) Neeche wali chat mein se <b>Draft KB</b> dabao — poori chat ki ek file ban jaye gi. 2) Us file ko parho, sahi fact likho, <b>Approve</b> karo. 3) <b>Re-ingest</b> dabao — tab bot seekhe ga. Bas.</p>
 
 <h2>1. Chats — har session ek hi chat hai</h2>
