@@ -17,9 +17,10 @@ CHAT_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <style>
 *{box-sizing:border-box}body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#eef1f5;color:#1f2937}
 .wrap{max-width:680px;margin:0 auto;padding:20px 14px 28px}
-header{background:#111827;color:#fff;border-radius:16px;padding:18px 20px;margin-bottom:14px}
+header{background:#111827;color:#fff;border-radius:16px;padding:18px 20px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px}
 header h1{margin:0 0 4px;font-size:22px}header p{margin:0;color:#d1d5db;font-size:14px}
 header .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e;margin-right:6px}
+header button{background:#374151;color:#fff;border:1px solid #4b5563;border-radius:999px;padding:8px 14px;cursor:pointer;white-space:nowrap}
 #log{background:#fff;border-radius:16px;padding:16px;min-height:420px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
 .row{display:flex;margin:10px 0}.row.me{justify-content:flex-end}
 .bubble{max-width:82%;padding:11px 14px;border-radius:16px;line-height:1.5;font-size:15px;white-space:pre-wrap;word-wrap:break-word}
@@ -27,9 +28,14 @@ header .dot{display:inline-block;width:9px;height:9px;border-radius:50%;backgrou
 .me .bubble{background:#2563eb;color:#fff;border-bottom-right-radius:4px}
 .avatar{width:32px;height:32px;border-radius:50%;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;margin-right:8px;flex-shrink:0}
 .src{font-size:12px;color:#6b7280;margin:2px 0 2px 40px}
+.replybtn{font-size:12px;color:#2563eb;background:none;border:none;cursor:pointer;padding:2px 0 0 40px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 6px 40px}
 .chip{border:1px solid #2563eb;color:#2563eb;background:#fff;border-radius:999px;padding:7px 13px;cursor:pointer;font-size:13px}
 .chip:hover{background:#2563eb;color:#fff}
+.quote{background:#e5e7eb;border-left:3px solid #9ca3af;padding:6px 10px;margin-bottom:6px;font-size:13px;color:#374151;white-space:pre-wrap}
+.me .quote{background:rgba(255,255,255,.2);border-color:#bfdbfe;color:#dbeafe}
+#replybar{display:none;background:#fef3c7;border-radius:12px;padding:10px 14px;margin-top:14px;font-size:13px}
+#replybar button{float:right;background:none;border:none;cursor:pointer;font-size:15px}
 .typing{display:flex;gap:4px;align-items:center}.typing span{width:8px;height:8px;border-radius:50%;background:#9ca3af;animation:b 1s infinite}
 .typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
 @keyframes b{0%,100%{transform:translateY(0);opacity:.5}50%{transform:translateY(-4px);opacity:1}}
@@ -41,33 +47,51 @@ button.send:disabled{opacity:.5;cursor:default}
 .note{text-align:center;color:#6b7280;font-size:12px;margin-top:10px}
 </style></head>
 <body><div class="wrap">
-<header><h1>Print247</h1><p><span class="dot"></span>Online — replies from our packaging assistant</p></header>
+<header><div><h1>Print247</h1><p><span class="dot"></span>Online — replies from our packaging assistant</p></div>
+<button onclick="newChat()">+ New chat</button></header>
 <div id="log"></div>
+<div id="replybar"><button onclick="cancelReply()">✕</button>Replying to: <span id="replytext"></span></div>
 <form onsubmit="return send(event)"><input id="q" placeholder="Type your message…" autocomplete="off">
 <button class="send" id="sendBtn" type="submit">Send</button></form>
 <p class="note">Prices depend on your exact spec — the bot collects it and gives you the quote path.</p>
 </div>
 <script>
 const log=document.getElementById('log'),q=document.getElementById('q'),btn=document.getElementById('sendBtn');
-function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+let sessionId=localStorage.getItem('p247_session')||'web-ui';
+localStorage.setItem('p247_session',sessionId);
+let pendingReply=null;
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function chipsHTML(sugs){if(!sugs||!sugs.length)return '';
 return '<div class="chips">'+sugs.map(s=>`<button class="chip" onclick="quick(${JSON.stringify(s).replace(/"/g,'&quot;')})">${esc(s)}</button>`).join('')+'</div>';}
-function addBot(text,sugs,sources){log.innerHTML+=`<div class="row bot"><div class="avatar">P</div><div><div class="bubble">${esc(text)}</div></div></div>`
-+chipsHTML(sugs)+(sources&&sources.length?`<div class="src">Sources: ${esc(sources.join(', '))}</div>`:'');log.scrollTop=log.scrollHeight;}
-function addMe(t){log.innerHTML+=`<div class="row me"><div class="bubble">${esc(t)}</div></div>`;log.scrollTop=log.scrollHeight;}
+function addBot(text,sugs,sources){const safe=esc(text);
+log.innerHTML+=`<div class="row bot"><div class="avatar">P</div><div><div class="bubble">${safe}</div>
+<button class="replybtn" onclick="setReply(${JSON.stringify(text).replace(/"/g,'&quot;')})">↩ Reply</button></div></div>`
++chipsHTML(sugs)+(sources&&sources.length?`<div class="src">Sources: ${esc(sources.join(', '))}</div>`:'');log.scrollTop=log.scrollHeight;saveLocal();}
+function addMe(t,quote){log.innerHTML+=`<div class="row me"><div class="bubble">${quote?`<div class="quote">${esc(quote)}</div>`:''}${esc(t)}</div></div>`;log.scrollTop=log.scrollHeight;saveLocal();}
+function setReply(t){pendingReply=t;document.getElementById('replytext').textContent=t.slice(0,120);
+document.getElementById('replybar').style.display='block';q.focus();}
+function cancelReply(){pendingReply=null;document.getElementById('replybar').style.display='none';}
 function typingRow(){const d=document.createElement('div');d.className='row bot';d.id='typing';
 d.innerHTML='<div class="avatar">P</div><div class="bubble typing"><span></span><span></span><span></span></div>';log.appendChild(d);log.scrollTop=log.scrollHeight;}
 function quick(t){q.value=t;send(new Event('submit'));}
+function saveLocal(){try{localStorage.setItem('p247_chat_'+sessionId,log.innerHTML);}catch(e){}}
+function restoreLocal(){const h=localStorage.getItem('p247_chat_'+sessionId);if(h){log.innerHTML=h;log.scrollTop=log.scrollHeight;return true;}return false;}
 async function send(e){e.preventDefault();const t=q.value.trim();if(!t||btn.disabled)return;
-addMe(t);q.value='';btn.disabled=true;typingRow();
+const quote=pendingReply;addMe(t,quote);q.value='';cancelReply();btn.disabled=true;typingRow();
 try{const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({message:t,session_id:'web-ui'})});const d=await r.json();
+body:JSON.stringify({message:t,session_id:sessionId,reply_to:quote})});const d=await r.json();
 document.getElementById('typing').remove();addBot(d.reply,d.suggestions||[],d.sources||[]);}
 catch(err){document.getElementById('typing').remove();addBot('Sorry, something went wrong. Please try again.',[]);}
 btn.disabled=false;q.focus();return false;}
-// Predefined greeting, already in the chat on load — no empty screen.
-addBot("Hi! I'm the Print247 assistant. I can help with products, sizes, quantities, shipping and refunds. What are you looking to have made?",
-["I need mylar bags","I need custom boxes","I need labels","Is shipping free?"],[]);
+function newChat(){sessionId=(crypto.randomUUID?crypto.randomUUID():String(Date.now()));
+localStorage.setItem('p247_session',sessionId);log.innerHTML='';greet();}
+function greet(){addBot("Hi! I'm the Print247 assistant. I can help with products, sizes, quantities, shipping and refunds. What are you looking to have made?",
+["I need mylar bags","I need custom boxes","I need labels","Is shipping free?"],[]);}
+// Restore the saved session first (server history, with local backup).
+// A refresh keeps the chat; New chat starts a fresh session on purpose.
+(async function(){try{const r=await fetch('/api/chat/history?session_id='+encodeURIComponent(sessionId));const h=await r.json();
+if(h&&h.length){h.forEach(m=>{if(m.reply_to)addMe(m.message,m.reply_to);else addMe(m.message);addBot(m.reply,m.suggestions||[],m.sources||[]);});return;}}catch(e){}
+if(!restoreLocal())greet();})();
 </script></body></html>"""
 
 ADMIN_HTML = """<!doctype html><html><head><meta charset="utf-8">
