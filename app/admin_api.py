@@ -77,6 +77,77 @@ def approve_okf(file_id: str) -> dict:
     return {"ok": False, "error": f"no KB file with id {file_id}"}
 
 
+def _find_kb_path(file_id: str) -> str | None:
+    for path in glob.glob("kb/**/*.md", recursive=True):
+        meta, _ = _read_kb(path)
+        if meta.get("id") == file_id:
+            return path
+    return None
+
+
+def get_kb_file(file_id: str) -> dict:
+    """Full file content for the admin View panel: read before you
+    approve. The bot never sees this endpoint's output, only the
+    file after re-ingest."""
+    path = _find_kb_path(file_id)
+    if not path:
+        return {"ok": False, "error": f"no KB file with id {file_id}"}
+    meta, body = _read_kb(path)
+    return {"ok": True, "path": path, "id": file_id, "title": meta.get("title", ""),
+            "status": meta.get("status", ""), "source": meta.get("source", ""),
+            "body": body}
+
+
+def save_kb_file(file_id: str, body: str) -> dict:
+    """Save an edited draft. Only the body is edited here, never
+    the id/status — approval stays a separate, explicit step."""
+    path = _find_kb_path(file_id)
+    if not path:
+        return {"ok": False, "error": f"no KB file with id {file_id}"}
+    text = open(path, encoding="utf-8").read()
+    m = _FRONTMATTER.match(text)
+    if m:
+        text = text[: m.start(2)] + body.strip() + "\n"
+    else:
+        text = body.strip() + "\n"
+    open(path, "w", encoding="utf-8").write(text)
+    return {"ok": True, "path": path}
+
+
+def draft_from_chat(message: str, reply: str = "", sources: list | None = None) -> dict:
+    """NEW FEATURE: turn a previous chat into a ready draft OKF file.
+
+    The draft is pre-filled with the visitor's question, what the
+    bot replied, and which sources it used — but the verified fact
+    itself is left as an explicit placeholder for the admin to
+    write. That is the whole point: the admin reads, writes the
+    correct fact with its source, verifies it, and only then
+    approves. A draft is never trained on: training happens only
+    at Re-ingest, after approval.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", (message or "").lower()).strip("-")[:40] or "chat"
+    file_id = f"fact-from-chat-{slug}"
+    base = file_id
+    n = 2
+    while os.path.exists(f"kb/facts/{file_id}.md"):
+        file_id = f"{base}-{n}"
+        n += 1
+    body = (
+        f"Visitor question: {message}\n\n"
+        f"Bot reply was: {reply}\n\n"
+        f"Sources the bot used: {', '.join(sources or []) or 'none'}\n\n"
+        "VERIFIED FACT — admin must write this before approving:\n"
+        "- [Write the correct fact here, in your own words, with its source. "
+        "Delete this line and the bot reply above if they are not the fact. "
+        "Do not approve a file that still contains this placeholder.]\n"
+    )
+    result = create_okf(file_id, f"From chat: {message[:60]}", "facts",
+                        "chat log (admin to confirm source)", body)
+    result["id"] = file_id
+    result["next"] = "View it, read it, write the verified fact, then Approve, then Re-ingest."
+    return result
+
+
 def _run(cmd: list[str]) -> dict:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
