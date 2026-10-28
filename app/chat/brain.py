@@ -118,6 +118,18 @@ _FACT_WORDS = ["minimum", "moq", "turnaround", "shipping", "sample",
                "how long", "delivery", "lead time"]
 
 
+def _clean_fact_text(text: str) -> str:
+    """Strip the YAML frontmatter (--- id: … ---) from a KB file
+    before showing it. The old code returned the raw file, so a
+    visitor could see '--- id: fact-moq' at the top of a reply."""
+    t = (text or "").strip()
+    if t.startswith("---\n"):
+        end = t.find("\n---", 4)
+        if end != -1:
+            return t[end + 4:].strip()[:800]
+    return t[:800]
+
+
 def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: list[str]) -> str:
     """No-LLM reply. Only uses OKF text and slot questions — it can
     never invent a price, a policy, or a fact.
@@ -129,8 +141,11 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
     """
     low = message.lower()
     is_fact_question = "?" in message or any(w in low for w in _FACT_WORDS)
+    if is_fact_question and not facts:
+        return ("I don't want to give you a wrong answer on that — that detail "
+                "is not in our published facts, so I will confirm with the team.")
     if facts and is_fact_question:
-        return facts[0]["text"].strip()[:800]
+        return _clean_fact_text(facts[0]["text"])
     if missing:
         return QUESTIONS[missing[0]]
     # Quote complete and no fact question: ask for confirmation, not
@@ -142,7 +157,7 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
                 f"{slots.get('product')}, size {slots.get('sizes')}, "
                 f"{slots.get('skus', '1')} SKU with {slots.get('extras', 'none')} extras?")
     if facts:
-        return facts[0]["text"].strip()[:800]
+        return _clean_fact_text(facts[0]["text"])
     return "Thanks — I have your details. A team member will confirm the quote shortly."
 
 
@@ -302,15 +317,29 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "suggestions": _suggestions(slots, missing),
         }
 
-    reply = _llm_reply(message, language, slots, facts, reply_to=reply_to)
-    llm_used = reply is not None
-    if not llm_used:
+    # ANSWER ROUTING — the fix for the live box/SKU transcript:
+    # - Slot collection (no fact question) NEVER goes to the LLM.
+    #   The LLM was inventing extra questions ("what depth should
+    #   the box be?") while the brain already had sizes filled and
+    #   the chips asked for quantity — text and chips disagreed.
+    #   The deterministic next-question is the only honest reply.
+    # - An exact-topic fact question (one file returned, e.g. SKU)
+    #   also skips the LLM: the LLM once refused a definition that
+    #   was sitting in its own fact block. The KB text itself is
+    #   the answer, verbatim, frontmatter stripped.
+    # - Only a multi-file / open fact question goes to the LLM,
+    #   with the OKF leash, and falls back to deterministic.
+    is_fact_question = "?" in message or any(w in low for w in _FACT_WORDS)
+    if not is_fact_question or (is_fact_question and len(facts) == 1):
         reply = _deterministic_reply(message, slots, facts, missing)
-        # Slot-collection steps get clean sources (see _slot_sources);
-        # fact questions keep their retrieved sources.
-        is_fact_question = "?" in message or any(w in low for w in _FACT_WORDS)
-        if missing and not is_fact_question:
+        llm_used = False
+        if not is_fact_question:
             sources = _slot_sources(slots) or sources
+    else:
+        reply = _llm_reply(message, language, slots, facts, reply_to=reply_to)
+        llm_used = reply is not None
+        if not llm_used:
+            reply = _deterministic_reply(message, slots, facts, missing)
     _save_session(store, session_id, slots)
 
     result = {
