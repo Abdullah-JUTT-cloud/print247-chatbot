@@ -69,7 +69,10 @@ _SIZE = re.compile(
     r"(?:\s*(?:x|×|by)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm)?",
     re.IGNORECASE)
 _NUMBER = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|million)?\b", re.IGNORECASE)
-_DESIGN_COUNT = re.compile(r"\b\d+\s*(designs?|skus?|variants?|artworks?)\b", re.IGNORECASE)
+_DESIGN_COUNT = re.compile(r"\b\d+\s*(?:different\s+)?(?:designs?|skus?|variants?|artworks?|types?)\b", re.IGNORECASE)
+# Time spans are never quantities: "24 hours" used to become
+# quantity=24 and fire the MOQ guard on a turnaround question.
+_TIME_SPAN = re.compile(r"\b\d+\s*(?:hours?|hrs?|days?|minutes?|mins?|seconds?|weeks?|months?)\b|\b24\s*/\s*7\b", re.IGNORECASE)
 _SPELLED = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
             "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
             "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "fifty": 50}
@@ -114,6 +117,8 @@ def _quantity_in(text: str) -> str | None:
     # Strip design-count spans first, so their numbers can never leak
     # into the quantity search below.
     cleaned = _DESIGN_COUNT.sub(" ", low)
+    # Time spans stripped before any number is read as quantity.
+    cleaned = _TIME_SPAN.sub(" ", cleaned)
     # Remove pack-count phrases so "10 ct" is never read as quantity.
     cleaned = _PACK_COUNT.sub(" ", cleaned)
     # Remove size spans so "4 by 6 inches" never leaks its first
@@ -138,7 +143,7 @@ def _quantity_in(text: str) -> str | None:
 
 
 def _skus_in(text: str) -> str | None:
-    m = re.search(r"\b(\d+)\s*(designs?|skus?|variants?|artworks?)\b", text.lower())
+    m = re.search(r"\b(\d+)\s*(?:different\s+)?(?:designs?|skus?|variants?|artworks?|types?)\b", text.lower())
     return m.group(1) if m else None
 
 
