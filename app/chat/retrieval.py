@@ -26,6 +26,13 @@ _EXACT_TOPICS = {
     # question must not land on a campaign file just because its
     # name contains the word, and a specific mylar/jerky/box question
     # must land on its campaign file, not the general one.
+    # Bottle/wine/spirit labels BEFORE the generic labels topic:
+    # "whiskey bottle labels" used to fall through to the generic
+    # labels file, which contains no wine/whiskey/beverage word at
+    # all, so the bot dumped a generic list instead of answering yes.
+    "labels-bottle": ["wine label", "wine labels", "whiskey", "whisky",
+                      "spirit label", "spirit bottle", "beverage label",
+                      "beverage labels", "bottle label", "bottle labels"],
     "pouches-mylar-sizes": ["mylar size", "mylar sizes", "mylar pouch size",
                             "mylar pouch sizes"],
     "beef-jerky-bags": ["beef jerky", "jerky bag", "jerky bags"],
