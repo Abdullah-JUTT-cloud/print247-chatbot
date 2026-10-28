@@ -25,6 +25,14 @@ class SlotStore:
         self._col.update_one(
             {"_id": session_id}, {"$set": {"slots": slots}}, upsert=True)
 
+    def load_meta(self, session_id: str) -> dict:
+        doc = self._col.find_one({"_id": session_id})
+        return (doc or {}).get("meta", {})
+
+    def save_meta(self, session_id: str, meta: dict) -> None:
+        self._col.update_one(
+            {"_id": session_id}, {"$set": {"meta": meta}}, upsert=True)
+
 
 def get_store():
     try:
