@@ -316,6 +316,15 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         extracted = extract_from_message(message)
     except Exception:
         extracted = {}
+    _is_fact_q = "?" in message or any(w in low for w in _FACT_WORDS)
+    _is_order = any(ph in low for ph in ("i need", "i want", "i'd like",
+                                          "i would like", "order", "get a quote",
+                                          "quote for", "buy"))
+    if _is_fact_q and not _is_order:
+        # A question's numbers/sizes are what it ASKS about, not an
+        # order spec — drop them so no guard ever fires on them.
+        extracted.pop("quantity", None)
+        extracted.pop("sizes", None)
     slots = merge_slots(prior, extracted)
     if low in ("start over", "new order", "start again", "reset",
                "new quote", "start fresh"):
@@ -446,7 +455,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if not is_fact_question or (is_fact_question and len(facts) == 1):
         reply = _deterministic_reply(message, slots, facts, missing)
         llm_used = False
-        if not is_fact_question:
+        if reply in set(QUESTIONS.values()) | {"How many units do you need per design?"}:
+            sources = _slot_sources(slots)
+        elif not is_fact_question:
             sources = _slot_sources(slots) or sources
     else:
         reply = _llm_reply(message, language, slots, facts, reply_to=reply_to)
