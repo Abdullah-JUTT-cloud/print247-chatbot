@@ -140,7 +140,8 @@ pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.card{border:1px solid 
 <p class="help">Ye sirf draft banata hai. Bot tabhi seekhe ga jab Approve + Re-ingest ho.</p>
 <script>
 let curId=null,curSession=null;
-async function loadKb(){const r=await fetch('/api/admin/kb');const d=await r.json();
+async function loadKb(){let d;try{const r=await fetch('/api/admin/kb');d=await r.json();}
+catch(e){document.getElementById('kb').innerHTML='<p class="warn">KB list load nahi hui — server chal raha hai? Container up hai ya nahi check karo, phir <button onclick="loadKb()">Retry</button> dabao.</p>';return;}
 document.getElementById('kb').innerHTML='<table><tr><th>File</th><th>Status</th><th>Action</th></tr>'+d.map(f=>
 `<tr><td>${f.path}</td><td>${f.status}</td><td><button onclick="viewKb('${f.id}')">View</button>${f.status==='draft'?`<button onclick="approve('${f.id}')">Approve</button>`:''}</td></tr>`).join('')+'</table>';}
 async function viewKb(id){const r=await fetch('/api/admin/kb/'+encodeURIComponent(id));const d=await r.json();
@@ -163,7 +164,9 @@ document.getElementById('out').textContent=d.ok?('Approved '+id+' — now press 
 async function createOkf(e){e.preventDefault();const b={id:fid.value,title:ftitle.value,category:fcat.value,source:fsource.value,body:fbody.value};
 const r=await fetch('/api/admin/okf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const d=await r.json();document.getElementById('out').textContent=JSON.stringify(d,null,2);loadKb();return false;}
-async function loadSessions(){const r=await fetch('/api/admin/logs');const d=await r.json();window._sessions=d;
+async function loadSessions(){let d;try{const r=await fetch('/api/admin/logs');d=await r.json();}
+catch(e){document.getElementById('sessions').innerHTML='<p class="warn">Chats load nahi hui — server chal raha hai? Container up hai ya nahi check karo, phir <button onclick="loadSessions()">Retry</button> dabao.</p>';return;}
+window._sessions=d;
 document.getElementById('sessions').innerHTML=d.length?'<table><tr><th>Chat (pehla message)</th><th>Messages</th><th>Action</th></tr>'+d.map((s,i)=>
 `<tr><td>${s.first_message}<br><small>${s.session_id} • ${s.started_at||''}</small></td><td>${s.count}</td><td><button onclick="viewSession(${i})">Chat dekho</button><button onclick="draftSession('${s.session_id}')">Draft KB</button></td></tr>`).join('')+'</table>':'No chats yet — send a chat from the chat page first.';}
 function viewSession(i){const s=window._sessions[i];curSession=s.session_id;
