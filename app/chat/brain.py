@@ -1363,6 +1363,22 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             extracted["skus"] = str(int(_num))
             extracted.pop("quantity", None)
             _bare_skus = True
+    # Size-phrase guard (Oct 30): when the bot asked for size and
+    # the visitor answers with a size phrase no pattern parsed
+    # (spelled-out numbers, inch/foot marks, odd joins), no number
+    # in it may become the quantity — the old failure was
+    # quantity=1 + a size re-ask for "1 feet by 2 feet". Only fires
+    # when sizes are still missing after extraction, so a real
+    # quantity stated alongside a parsed size is untouched.
+    if _pend_pre == "sizes" and "sizes" not in extracted and "quantity" in extracted:
+        _size_flavored = (
+            re.search(r"\d\s*(?:feet|foot|ft|inches|inch|in|mm|cm)\b", low)
+            or re.search(r"\d\s*['’\"”″]", low)
+            or re.search(r"\d\s*(?:x|×|by|\*)\s*\d", low)
+            or re.search(r"\d\s*(?:oz|ounces?|ml|millilit(?:er|re)s?|g|gm|grams?|kg|l)\b", low)
+            or re.search(r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:feet|foot|ft|inches|inch|in|mm|cm)\b", low))
+        if _size_flavored:
+            extracted.pop("quantity", None)
     slots = merge_slots(prior, extracted)
     # A contact answer is not an order: while awaiting contact, a
     # phone number ("5551234567") must never overwrite the quantity

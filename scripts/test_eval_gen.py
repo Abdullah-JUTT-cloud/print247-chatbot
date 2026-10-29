@@ -913,6 +913,58 @@ check("flat-bottom alone never counts as two types",
       and "What finish" in r["reply"],
       f"reply={r['reply'][:160]!r}")
 
+# ---------- section 26: Oct 30 size-phrase guard round ----------
+_s = _steps("ev-s26-reported", ["which box types do you offer?", "Corrugated",
+                                 "1 feet by 2 feet"])
+check("reported failure: each-unit size parses, no quantity leak, style asked",
+      _s[2]["slots"].get("sizes") == "1x2 feet"
+      and "quantity" not in _s[2]["slots"]
+      and "What style of box" in _s[2]["reply"],
+      f"reply={_s[2]['reply'][:160]!r} slots={_s[2]['slots']}")
+_s = _steps("ev-s26-eachunit", ["I need custom boxes", "10 inches by 6 inches"])
+check("each-unit inches normalize to NxM inches",
+      _s[1]["slots"].get("sizes") == "10x6 inches",
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-mixed", ["I need custom boxes", "1 feet by 20 inches"])
+check("mixed units keep the raw span, never convert inches to feet",
+      _s[1]["slots"].get("sizes") == "1 feet by 20 inches",
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-3d", ["I need custom boxes", "1 feet by 2 feet by 3 feet"])
+check("three each-unit measurements normalize to NxMxN feet",
+      _s[1]["slots"].get("sizes") == "1x2x3 feet",
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-marks", ["I need custom boxes", "1' by 2'"])
+check("inch/foot marks parse as feet",
+      _s[1]["slots"].get("sizes") == "1x2 feet",
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-capacity", ["I need mylar bags", "12oz"])
+check("capacity never becomes a quantity",
+      "quantity" not in _s[1]["slots"],
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-a4", ["I need labels", "A4"])
+check("A4 stores as the size, its 4 never becomes a quantity",
+      _s[1]["slots"].get("sizes") == "A4"
+      and "quantity" not in _s[1]["slots"],
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-sizeqty", ["I need custom boxes", "10 x 12 inches, 500 units"])
+check("size + quantity together: size stored, quantity kept, no leak",
+      "10" in (_s[1]["slots"].get("sizes") or "")
+      and _s[1]["slots"].get("quantity") == "500",
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-realqty", ["I need custom boxes", "1000 units"])
+check("a real quantity while size is pending is kept, not guard-dropped",
+      _s[1]["slots"].get("quantity") == "1000",
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-spelled", ["I need custom boxes", "one feet by two feet"])
+check("spelled-out size phrase never leaks a quantity",
+      "quantity" not in _s[1]["slots"],
+      f"slots={_s[1]['slots']}")
+_s = _steps("ev-s26-legal", ["I need boxes for legal documents, 1000 units"])
+check("'legal' is a document kind, never a size; quantity still read",
+      "sizes" not in _s[0]["slots"]
+      and _s[0]["slots"].get("quantity") == "1000",
+      f"slots={_s[0]['slots']}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

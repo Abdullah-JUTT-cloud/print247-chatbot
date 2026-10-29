@@ -99,6 +99,49 @@ _LW = re.compile(
     re.IGNORECASE)
 _UNIT_WORD = {"in": " inches", "inch": " inches", "inches": " inches",
               "mm": " mm", "cm": " cm"}
+# A unit on EACH measurement ("1 feet by 2 feet", "10 inches x 6
+# inches", "1 ft x 2 ft"): _SIZE only allows the unit at the very
+# end, so the first number leaked into quantity while the size
+# stayed missing (live transcript, Oct 30). Matching units
+# normalize to NxM + unit; differing units keep the raw span
+# verbatim — "1 feet by 20 inches" must never become "1x20 feet".
+_EACH_UNIT = r"(?:feet|foot|inches|inch|mm|cm|ft|in|['’\"”″])"
+_SIZE_EACH = re.compile(
+    r"\b(\d+(?:\.\d+)?)\s*(" + _EACH_UNIT + r")\s*(?:x|×|by|\*)\s*"
+    r"(\d+(?:\.\d+)?)\s*(" + _EACH_UNIT + r")?"
+    r"(?:\s*(?:x|×|by|\*)\s*(\d+(?:\.\d+)?)\s*(" + _EACH_UNIT + r")?)?",
+    re.IGNORECASE)
+_EACH_CANON = {"feet": "feet", "foot": "feet", "ft": "feet",
+               "inches": "inches", "inch": "inches", "in": "inches",
+               "mm": "mm", "cm": "cm",
+               "'": "feet", "’": "feet",
+               '"': "inches", "”": "inches", "″": "inches"}
+# Named paper sizes are sizes, not quantities: "A4" must never leak
+# its 4 into quantity (old NAMED_SIZE guard, same idea). Only A/B
+# sizes are stored as sizes — "letter"/"legal" also name document
+# kinds, so they are stripped from quantity search only, never
+# stored as a size.
+_PAPER_SIZE = re.compile(r"\b[AB]\d\b", re.IGNORECASE)
+_NAMED_SIZE = re.compile(r"\b(?:a\d|b\d|letter|legal|tabloid)\b", re.IGNORECASE)
+# Capacities are not quantities: "12oz pouch" is a capacity, not
+# an order of 12 (old UNIT_WORD capacity note, same idea).
+_CAPACITY = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:oz|ounces?|ml|millilit(?:er|re)s?|l|ltr|"
+    r"lit(?:er|re)s?|g|gm|grams?|grammes?|kg|kilos?|kilograms?)\b",
+    re.IGNORECASE)
+
+
+def _each_unit_size(low: str) -> str | None:
+    m = _SIZE_EACH.search(low)
+    if not m:
+        return None
+    n1, u1, n2, u2, n3, u3 = m.groups()
+    units = [_EACH_CANON.get((u or "").lower()) for u in (u1, u2, u3)]
+    units = [u for u in units if u]
+    if units and len(set(units)) == 1:
+        dims = "x".join(d for d in (n1, n2, n3) if d is not None)
+        return f"{dims} {units[0]}"
+    return m.group(0).strip()
 
 
 def _lw_size(low: str) -> str | None:
@@ -251,8 +294,13 @@ def _quantity_in(text: str) -> str | None:
     # dimension (4) into quantity — same class of bug as designs.
     # Length/width spans too: "10 inches length and 6 inches width"
     # otherwise leaks its 10 into quantity while the size is lost.
+    # Each-unit spans ("1 feet by 2 feet"), named sizes ("A4") and
+    # capacities ("12oz") are stripped for the same reason.
     cleaned = _LW.sub(" ", cleaned)
+    cleaned = _SIZE_EACH.sub(" ", cleaned)
     cleaned = _SIZE.sub(" ", cleaned)
+    cleaned = _NAMED_SIZE.sub(" ", cleaned)
+    cleaned = _CAPACITY.sub(" ", cleaned)
     m = _NUMBER.search(cleaned)
     if m:
         n = float(m.group(1).replace(",", ""))
@@ -343,9 +391,17 @@ def extract_from_message(text: str) -> dict:
     if lw:
         out["sizes"] = lw
     else:
-        size = _SIZE.search(low)
-        if size and not _PACK_COUNT.search(low.split("x")[0] if "x" in low else low):
-            out["sizes"] = size.group(0).strip()
+        each = _each_unit_size(low)
+        if each:
+            out["sizes"] = each
+        else:
+            size = _SIZE.search(low)
+            if size and not _PACK_COUNT.search(low.split("x")[0] if "x" in low else low):
+                out["sizes"] = size.group(0).strip()
+            else:
+                paper = _PAPER_SIZE.search(low)
+                if paper:
+                    out["sizes"] = paper.group(0).upper()
     finish = _find(low, _FINISHES)
     if finish:
         out["finishes"] = normalise_finish(finish)
