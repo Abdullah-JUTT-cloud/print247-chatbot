@@ -120,6 +120,14 @@ _SUGGEST_PRODUCTS = (("business card", "business card"), ("boxes", "box"),
 
 
 def asks_for_suggestion(text: str) -> bool:
+    low = (text or "").lower()
+    # A complaint ABOUT suggestions ("you gave me mylar bag
+    # suggestions") is not a request for one: the noun
+    # "suggestions" matches suggest\w*, so without this guard the
+    # complaint is swallowed by the suggestion branch and the
+    # correction branch never runs (Oct 29 live transcript).
+    if any(w in low for w in ("gave me", "you gave", "wrong suggestion")):
+        return False
     return bool(_SUGGEST.search(text or ""))
 
 

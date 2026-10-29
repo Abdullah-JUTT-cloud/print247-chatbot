@@ -75,7 +75,7 @@ from .repeated import SENTENCE_BREAK, repeats_the_question
 from .retrieval import retrieve
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
-from .size_unit import apply_unit_answer, unit_answer
+from .size_unit import apply_unit_answer, size_missing_unit, unit_answer
 from .slots import extract_from_message, merge_slots, missing_fields
 
 # A decline of a script field ("no", "none", "no preference"): the
@@ -138,6 +138,11 @@ def _suggestions(slots: dict, missing: list[str], reply: str = "", language: str
                 _tr("chip_size_mm", language, "Size 100x150mm"),
                 _tr("chip_not_sure_size", language, "Not sure about size")]
     if "style" in missing:
+        # Chips follow the product family, like _question() already
+        # does: pouch styles under a box question were the "mylar
+        # bag suggestions" in the Oct 29 live transcript.
+        if "box" in (slots.get("product") or "").lower():
+            return ["Mailer", "Tuck-end", "Rigid", "Folding carton"]
         return ["Flat", "Stand-up", "Flat-bottom"]
     if "finishes" in missing:
         return ["Matte", "Gloss", "Soft touch", "No preference"]
@@ -271,7 +276,7 @@ def _session_rep(session_id: str | None) -> str | None:
 _QUESTION_VARIANTS = {
     "product": "What are you looking to have made — boxes, bags or labels?",
     "sizes": "What size are you looking for?",
-    "style": "Which style would you like — flat, stand-up or flat-bottom?",
+    "style": "Which style would you like?",
     "finishes": "Which finish would you prefer — matte, gloss or soft touch?",
     "quantity": "What quantity are you looking to order for your first run?",
     "per_design": "How many units per design do you need?",
@@ -975,6 +980,37 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "what is the other dimension (length x width)?")
         if re.fullmatch(r"[\d,\s.]+", message.strip() or ""):
             return _intent_result(f"Got it — {message.strip()} inches or mm for the size?")
+    # A correction, not an answer ("bro i want boxes, you gave me
+    # mylar bag suggestions"): the visitor restates the product and
+    # complains about the last reply. The old flow treated this as
+    # a statement, dumped the product file and re-asked the field —
+    # no acknowledgement, same wrong chips. Acknowledge, re-align
+    # to the product, and ask the pending field with correct chips.
+    # Guarded tight: complaint words + product restatement + no
+    # spec word (a style/finish/size in the message is new
+    # information, and the normal flow must extract it).
+    _prior_prod = (prior.get("product") or "").lower()
+    _restates = ((_prior_prod == "box" and re.search(r"\bboxes?\b", low))
+                 or ("mylar" in _prior_prod and re.search(r"\bmylar\b|\bbags?\b", low))
+                 or ("label" in _prior_prod and re.search(r"\blabels?\b", low))
+                 or ("banner" in _prior_prod and re.search(r"\bbanners?\b", low)))
+    _complains = any(w in low for w in
+                     ("wrong", "gave me", "suggestion", "not what", "i said",
+                      "incorrect", "mistake"))
+    _has_spec = bool(re.search(
+        r"\b(mailer|tuck|rigid|folding|flat|stand-up|flat-bottom|matte|gloss|"
+        r"soft touch|window|zipper|kraft)\b|\d", low))
+    if _restates and _complains and not _has_spec and not meta.get("complete"):
+        _plural = {"box": "boxes", "mylar bag": "mylar bags", "label": "labels",
+                   "banner": "banners", "business card": "business cards"}.get(
+                       prior.get("product") or "", prior.get("product") or "")
+        _cmissing = script_missing(prior, meta)
+        _cq = _next_question_text(prior, _cmissing, language)
+        _cack = f"You're right — sorry about that. Let's stick to {_plural}."
+        _creply = f"{_cack} {_cq}" if _cq else _cack
+        meta["last_bot_question"] = _creply
+        return _intent_result(_creply,
+                              suggestions=_suggestions(prior, _cmissing, _creply, language))
     _start_over = low in ("start over", "new order", "start again", "reset",
                           "new quote", "start fresh")
     # Finished quote picked back up (old whatToDoWithFinishedChat /
@@ -1373,36 +1409,56 @@ def handle_message(message: str, session_id: str | None = None, store=None,
 
     if not facts:
         facts = retrieve(message)
+    # Product family of the chosen product, for the two guards
+    # below. _named_families = families the message itself names:
+    # naming another family ("what about box materials?" mid-bag-
+    # quote) disables both guards, so a cross-family question
+    # still reaches the other family's facts.
+    _prod = slots.get("product")
+    _fam_map = {"mylar bag": ("pouches", "mylar"), "pouch": ("pouches", "mylar"),
+                "bag": ("pouches", "mylar"), "stand-up pouch": ("pouches", "mylar"),
+                "flat pouch": ("pouches", "mylar"), "flat-bottom pouch": ("pouches", "mylar"),
+                "box": ("boxes",), "label": ("labels",), "sticker": ("labels",),
+                "business card": ("business-cards",), "banner": ("banners",)}
+    _fam_tokens = _fam_map.get(_prod) if _prod else None
+    _prod_family = ("pouch" if _prod in ("mylar bag", "pouch", "bag", "stand-up pouch",
+                                         "flat pouch", "flat-bottom pouch")
+                    else _prod)
+    _named_families = set()
+    for _alias, _alias_fam in (("box", "box"), ("boxes", "box"),
+                               ("mylar", "pouch"), ("pouch", "pouch"),
+                               ("pouches", "pouch"), ("bag", "pouch"),
+                               ("bags", "pouch"), ("label", "label"),
+                               ("labels", "label"), ("sticker", "label"),
+                               ("stickers", "label"), ("banner", "banner"),
+                               ("business card", "business card")):
+        if re.search(rf"\b{_alias}\b", low):
+            _named_families.add(_alias_fam)
+    _same_family_only = bool(_fam_tokens and (not _named_families
+                                              or _named_families == {_prod_family}))
+    # RETRIEVAL VALIDATION (Oct 29, the code-level answer to SRAG):
+    # with a product chosen, facts from ANOTHER product's files are
+    # dropped when same-family facts exist — "what styles do you
+    # have?" ranked pouches-mylar-styles FIRST for a box visitor,
+    # which is how mylar types reached a box answer. Neutral facts
+    # (policies, sizes, MOQ — no family token in the path) always
+    # survive, and when no same-family fact exists the original
+    # order stands, so a general question never loses its answer.
+    if _same_family_only:
+        _ALL_FAMILY_TOKENS = ("pouches", "mylar", "boxes", "labels",
+                              "banners", "business-cards")
+        if any(t in f["source"] for f in facts for t in _fam_tokens):
+            facts = [f for f in facts
+                     if any(t in f["source"] for t in _fam_tokens)
+                     or not any(t in f["source"] for t in _ALL_FAMILY_TOKENS)]
     # Product-scoped answers: with a product already chosen, an
     # attribute question (material/style/finish) must not be
     # answered from another product's file — "what material is best
     # for coffee?" with mylar bags chosen once came back with BOX
     # materials. Re-rank, never filter: if no same-product fact
-    # exists, the original order stands. Skipped when the message
-    # names a different product family ("what about box materials?"
-    # mid-bag-quote must reach the box facts).
-    _prod = slots.get("product")
+    # exists, the original order stands.
     if _prod and re.search(r"\b(?:materials?|finish(?:es)?|styles?)\b", low):
-        _fam_map = {"mylar bag": ("pouches", "mylar"), "pouch": ("pouches", "mylar"),
-                    "bag": ("pouches", "mylar"), "stand-up pouch": ("pouches", "mylar"),
-                    "flat pouch": ("pouches", "mylar"), "flat-bottom pouch": ("pouches", "mylar"),
-                    "box": ("boxes",), "label": ("labels",), "sticker": ("labels",),
-                    "business card": ("business-cards",), "banner": ("banners",)}
-        _fam_tokens = _fam_map.get(_prod)
-        _prod_family = ("pouch" if _prod in ("mylar bag", "pouch", "bag", "stand-up pouch",
-                                             "flat pouch", "flat-bottom pouch")
-                        else _prod)
-        _named_families = set()
-        for _alias, _alias_fam in (("box", "box"), ("boxes", "box"),
-                                   ("mylar", "pouch"), ("pouch", "pouch"),
-                                   ("pouches", "pouch"), ("bag", "pouch"),
-                                   ("bags", "pouch"), ("label", "label"),
-                                   ("labels", "label"), ("sticker", "label"),
-                                   ("stickers", "label"), ("banner", "banner"),
-                                   ("business card", "business card")):
-            if re.search(rf"\b{_alias}\b", low):
-                _named_families.add(_alias_fam)
-        if _fam_tokens and (not _named_families or _named_families == {_prod_family}):
+        if _same_family_only:
             facts = sorted(facts, key=lambda f: 0
                            if any(t in f["source"] for t in _fam_tokens) else 1)
             # Re-ranking cannot help when NO same-product fact was
@@ -1441,6 +1497,33 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     sources = [f["source"] for f in facts]
     missing = script_missing(slots, meta)
     _gave_up = list(meta.get("gave_up") or [])
+
+    # The purpose question's answer is context, not a script field:
+    # store it and acknowledge it briefly with the next question.
+    # Answering it from the KB ("shipping" -> the shipping policy)
+    # is noise: the visitor did not ask about policy, they answered
+    # what the product is for. Only when the answer did not itself
+    # fill the next field (a size in the answer goes through the
+    # normal flow instead). Never a trap: the flag clears after
+    # this one turn either way.
+    if meta.get("awaiting_purpose") and (message or "").strip():
+        meta["purpose"] = message.strip()
+        meta["awaiting_purpose"] = False
+        if missing and missing[0] == "sizes" and not slots.get("sizes"):
+            _p = message.strip()
+            _ack = f"Got it — {_p}." if len(_p.split()) <= 3 else "Got it."
+            _pq2 = _next_question_text(slots, missing, language)
+            _preply = f"{_ack} {_pq2}" if _pq2 else _ack
+            meta["ai_count"] = meta.get("ai_count", 0) + 1
+            meta["last_bot_question"] = _preply
+            meta.setdefault("bot_replies", []).append(_preply)
+            meta["bot_replies"] = meta["bot_replies"][-20:]
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {"reply": _preply, "language": language, "slots": slots,
+                    "missing": script_missing(slots, meta),
+                    "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                    "suggestions": _suggestions(slots, missing, _preply, language)}
 
     def _final_return(reply, handoff=None, llm_used=False, srcs=None):
         _save_session(store, session_id, slots)
@@ -1747,6 +1830,55 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     #   code (or falls back to deterministic when unsalvageable).
     is_fact_question = ("?" in message or any(w in low for w in _FACT_WORDS)
                         or bool(fact_topics_asked(message)))
+    # A vague size word ("i need large box") with no purpose stated:
+    # the bot cannot recommend a type without knowing the use, so
+    # it asks what the product is for FIRST, then size — once per
+    # session. A "for ..." phrase in the message already states the
+    # purpose, and a question ("do you make large boxes?") is
+    # answered, never purpose-trapped. The purpose is context in
+    # meta, never a script field, so it can never block the quote.
+    _VAGUE_SIZE_WORDS = ("large", "small", "medium", "big", "little",
+                         "huge", "tiny", "jumbo", "mini")
+    if not meta.get("purpose") and not meta.get("purpose_asked") \
+            and slots.get("product") and not slots.get("sizes") \
+            and not is_fact_question \
+            and any(re.search(rf"\b{w}\b", low) for w in _VAGUE_SIZE_WORDS) \
+            and not re.search(r"\bfor\b", low):
+        meta["purpose_asked"] = True
+        meta["awaiting_purpose"] = True
+        _pq = f"What do you need the {slots['product']} for?"
+        meta["ai_count"] = meta.get("ai_count", 0) + 1
+        meta["last_bot_question"] = _pq
+        meta.setdefault("bot_replies", []).append(_pq)
+        meta["bot_replies"] = meta["bot_replies"][-20:]
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {"reply": _pq, "language": language, "slots": slots,
+                "missing": script_missing(slots, meta),
+                "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                "suggestions": ["Shipping", "Food", "Gifts", "Retail"]}
+    # A size span without a unit ("3x4") is not a usable size yet:
+    # ask inches, cm or mm — once per size value, never a trap. A
+    # bare unit answer is applied by the extraction above, so
+    # answering completes the size and the script moves on. If the
+    # visitor ignores the question, the next message proceeds
+    # normally (the size stays unitless for the team to confirm).
+    if slots.get("sizes") and size_missing_unit(slots.get("sizes")) \
+            and meta.get("unit_asked_for") != slots.get("sizes") \
+            and re.search(r"\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+", message,
+                          re.IGNORECASE):
+        meta["unit_asked_for"] = slots["sizes"]
+        _uq = f"Got it — {slots['sizes']}. Is that in inches, cm, or mm?"
+        meta["ai_count"] = meta.get("ai_count", 0) + 1
+        meta["last_bot_question"] = _uq
+        meta.setdefault("bot_replies", []).append(_uq)
+        meta["bot_replies"] = meta["bot_replies"][-20:]
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {"reply": _uq, "language": language, "slots": slots,
+                "missing": script_missing(slots, meta),
+                "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                "suggestions": ["Inches", "Cm", "Mm"]}
     # Asking what is usual ('what is a standard size?') is a question
     # about the field, not an answer to it: answer it first, then
     # re-ask the field. There is no standard — everything is made to

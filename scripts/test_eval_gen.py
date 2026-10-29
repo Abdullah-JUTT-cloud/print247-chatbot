@@ -574,6 +574,61 @@ check("suggestion coffee stays specific, not generic food",
       "coffee pouches" in r["reply"],
       f"reply={r['reply'][:140]!r}")
 
+# --- 21. large-box flow (Oct 29, 2026, live transcript): a vague
+# "i need large box" must ask purpose FIRST, then size; a bare
+# "3x4" must ask inches/cm/mm (never stored unitless, never
+# quantity); style chips and style answers must be BOX types,
+# never pouch types; a complaint about wrong suggestions must be
+# acknowledged, not fact-dumped. ---
+r = run("ev-box-purpose", ["i need large box"])
+check("vague large box asks purpose first, not size/style",
+      "for?" in r["reply"] and "sizes" in r["missing"],
+      f"reply={r['reply'][:140]!r} missing={r['missing']}")
+r = run("ev-box-purpose-ans", ["i need large box", "shipping"])
+check("purpose answer acknowledged, then size asked, no policy dump",
+      r["reply"].startswith("Got it") and "What size do you need?" in r["reply"]
+      and "free nationwide" not in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+r = run("ev-box-unit", ["i need large box", "shipping", "3x4"])
+check("bare 3x4 asks inches/cm/mm, stored pending, never quantity",
+      "inches, cm, or mm" in r["reply"] and r["slots"].get("sizes") == "3x4"
+      and not r["slots"].get("quantity"),
+      f"reply={r['reply'][:140]!r} slots={r['slots']}")
+r = run("ev-box-unit-ans", ["i need large box", "shipping", "3x4", "mm"])
+check("unit answer completes size, style asked with BOX chips",
+      r["slots"].get("sizes") == "3x4 mm"
+      and "What style of box do you need?" in r["reply"]
+      and r["suggestions"] == ["Mailer", "Tuck-end", "Rigid", "Folding carton"],
+      f"reply={r['reply'][:140]!r} chips={r['suggestions']} slots={r['slots']}")
+r = run("ev-box-complaint", ["i need large box", "shipping", "3x4", "mm",
+                             "bro i want boxes you gave me mylar bag suggestions"])
+check("complaint acknowledged, style re-asked with box chips, no dump",
+      "sorry about that" in r["reply"]
+      and "What style of box do you need?" in r["reply"]
+      and "stand-up" not in r["reply"] and "display boxes" not in r["reply"]
+      and r["suggestions"] == ["Mailer", "Tuck-end", "Rigid", "Folding carton"],
+      f"reply={r['reply'][:160]!r} chips={r['suggestions']}")
+r = run("ev-box-pouch-chips", ["i need mylar bags", "4x6 inches"])
+check("pouch style chips unchanged (Flat/Stand-up/Flat-bottom)",
+      r["suggestions"] == ["Flat", "Stand-up", "Flat-bottom"],
+      f"chips={r['suggestions']}")
+r = run("ev-box-styles-q", ["i need boxes", "10x12 inches", "what styles do you have?"])
+check("styles question with product=box answered from box facts only",
+      "stand-up" not in r["reply"].lower() and "flat-bottom" not in r["reply"].lower(),
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-box-cap-vague", ["do you make large boxes?"])
+check("capability question with vague size answered Yes, not purpose-trapped",
+      r["reply"].startswith("Yes"),
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-box-purpose-stated", ["i need large box for shipping"])
+check("purpose already stated -> size asked, no purpose question",
+      "What size do you need?" in r["reply"] and "for?" not in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+r = run("ev-box-suggest-ok", ["suggest me a bag for screws"])
+check("real suggestion requests still work after complaint guard",
+      "size" in r["reply"].lower(),
+      f"reply={r['reply'][:140]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)
