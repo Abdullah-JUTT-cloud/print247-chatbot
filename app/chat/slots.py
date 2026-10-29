@@ -81,7 +81,7 @@ _PACK_COUNT = re.compile(
 # are pack formats inside a product description, not quantities.
 _SIZE = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?"
-    r"(?:\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm)?",
+    r"(?:\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm|feet|ft\b)?",
     re.IGNORECASE)
 # Spelled-out dimensions ("10 inches length and 6 inches width",
 # "6 inches wide, 10 inches long"): _SIZE needs an x/by/* between

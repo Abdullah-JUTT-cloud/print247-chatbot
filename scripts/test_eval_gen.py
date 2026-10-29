@@ -590,8 +590,8 @@ check("purpose answer acknowledged, then size asked, no policy dump",
       and "free nationwide" not in r["reply"],
       f"reply={r['reply'][:160]!r}")
 r = run("ev-box-unit", ["i need large box", "shipping", "3x4"])
-check("bare 3x4 asks inches/cm/mm, stored pending, never quantity",
-      "inches, cm, or mm" in r["reply"] and r["slots"].get("sizes") == "3x4"
+check("bare 3x4 asks inches/cm/mm/feet, stored pending, never quantity",
+      "inches, cm, mm, or feet" in r["reply"] and r["slots"].get("sizes") == "3x4"
       and not r["slots"].get("quantity"),
       f"reply={r['reply'][:140]!r} slots={r['slots']}")
 r = run("ev-box-unit-ans", ["i need large box", "shipping", "3x4", "mm"])
@@ -779,11 +779,90 @@ _s = _steps("ev-boxfix-cap", [
     "What finishes do you offer?", "What materials do you offer?",
     "Do you offer free design support?", "What is your proof approval process?",
     "What is your refund policy?"])
-check("12-message cap hands off exactly once, then Q&A resumes",
-      _s[11].get("handoff") == "max_turns"
-      and "5 business days" in _s[12]["reply"]
-      and _s[12].get("handoff") is None,
-      f"cap={_s[11]['reply'][:80]!r} next={_s[12]['reply'][:120]!r}")
+check("12-message cap REMOVED (Oct 30 directive): no handoff at any turn",
+      all(_t.get("handoff") is None for _t in _s)
+      and "5 business days" in _s[12]["reply"],
+      f"handoffs={[t.get('handoff') for t in _s]} last={_s[12]['reply'][:120]!r}")
+
+# ---------- section 24: Oct 30 transcript round (no cap, no merges) ----------
+_s = _steps("ev-s24-switch", ["I need custom labels for my honey jars", "Size 4x6 inches",
+                               "Soft touch", "I need a vinyl banner 4x8 feet for my shop"])
+check("new order mid-quote asks before switching, old quote untouched",
+      "switch to banner" in _s[3]["reply"] and "keep the label quote" in _s[3]["reply"]
+      and _s[3]["slots"].get("product") == "label"
+      and _s[3]["suggestions"] == ["Switch to banner", "Keep label"],
+      f"reply={_s[3]['reply'][:160]!r} chips={_s[3]['suggestions']}")
+r = run("ev-s24-switch-yes", ["I need custom labels for my honey jars", "Size 4x6 inches",
+                               "Soft touch", "I need a vinyl banner 4x8 feet for my shop",
+                               "Switch to banner"])
+check("switch confirmed: held banner slots become the new quote, no merge",
+      r["slots"].get("product") == "banner" and r["slots"].get("sizes") == "4x8 feet"
+      and r["slots"].get("material") == "vinyl" and "switching to banner" in r["reply"]
+      and "What finish" in r["reply"],
+      f"reply={r['reply'][:160]!r} slots={r['slots']}")
+r = run("ev-s24-switch-no", ["I need custom labels for my honey jars", "Size 4x6 inches",
+                              "Soft touch", "I need a vinyl banner 4x8 feet for my shop",
+                              "Keep labels"])
+check("switch declined: old label quote resumes at its pending field",
+      r["slots"].get("product") == "label" and "keeping the label quote" in r["reply"]
+      and "What quantity" in r["reply"],
+      f"reply={r['reply'][:160]!r} slots={r['slots']}")
+r = run("ev-s24-switch-implicit", ["I need custom labels for my honey jars",
+                                    "Size 4x6 inches",
+                                    "I need a vinyl banner 4x8 feet for my shop", "Matte"])
+check("answer to the old pending field is an implicit keep",
+      r["slots"].get("product") == "label" and r["slots"].get("finishes") == "matte"
+      and "What quantity" in r["reply"],
+      f"reply={r['reply'][:160]!r} slots={r['slots']}")
+r = run("ev-s24-corr-sticker", ["I need custom labels for my honey jars",
+                                 "Size 4x6 inches", "Soft touch", "300", "1 design",
+                                 "the labels should be stickers"])
+check("correction phrase updates the product (stickers, not the first word labels)",
+      r["slots"].get("product") == "sticker" and "switching to sticker" in r["reply"]
+      and "material" in r["reply"],
+      f"reply={r['reply'][:160]!r} slots={r['slots']}")
+r = run("ev-s24-corr-banner", ["I need custom labels for my honey jars",
+                                "Size 4x6 inches", "Soft touch", "300", "1 design", "Kraft",
+                                "make it a banner"])
+check("correction at confirmation re-confirms with the new product",
+      r["slots"].get("product") == "banner" and "Just to confirm" in r["reply"]
+      and "banner, size 4x6 inches" in r["reply"],
+      f"reply={r['reply'][:180]!r} slots={r['slots']}")
+r = run("ev-s24-bareskus", ["I need standup pouchs for coffe", "Size 4x6 inches", "Matte",
+                             "30", "22"])
+check("bare number at the designs question is designs, not quantity",
+      r["slots"].get("skus") == "22" and r["slots"].get("quantity") == "30"
+      and "30 in total, or 30 of each" in r["reply"],
+      f"reply={r['reply'][:180]!r} slots={r['slots']}")
+r = run("ev-s24-pricediff", ["I need a vinyl banner", "4x8 feet", "matte", "1000 units",
+                              "1 design", "vinyl", "How much do 500 mailer boxes cost?"])
+check("price question about another product does not drag the confirmation back",
+      "can't price it here" in r["reply"] and "Just to confirm" not in r["reply"],
+      f"reply={r['reply'][:180]!r}")
+_s = _steps("ev-s24-suggest", ["suggest me a box for coffee", "Suggest me a box for candles"])
+check("unmapped use (candles) never reuses a stale use (coffee) from history",
+      "coffee" not in _s[1]["reply"].lower(),
+      f"reply={_s[1]['reply'][:180]!r}")
+r = run("ev-s24-feet", ["I need a vinyl banner 4x8 feet for my shop"])
+check("feet stated with the size is stored, no unit question",
+      r["slots"].get("sizes") == "4x8 feet" and "What finish" in r["reply"],
+      f"reply={r['reply'][:160]!r} slots={r['slots']}")
+r = run("ev-s24-feetchip", ["I need a vinyl banner", "4x8"])
+check("unit question offers feet as a chip",
+      "feet" in r["reply"].lower() and "Feet" in r["suggestions"],
+      f"reply={r['reply'][:160]!r} chips={r['suggestions']}")
+r = run("ev-s24-espurpose", ["Necesito cajas grandes para ropa"])
+check("spanish vague size asks purpose in spanish with spanish chips",
+      "¿Para qué" in r["reply"] and "Envío" in r["suggestions"],
+      f"reply={r['reply'][:160]!r} chips={r['suggestions']}")
+r = run("ev-s24-esswitch", ["I need pouches", "4x6 inches", "Necesito cajas", "sí"])
+check("spanish switch answer (sí) switches to the new product",
+      r["slots"].get("product") == "box",
+      f"reply={r['reply'][:160]!r} slots={r['slots']}")
+from app.chat.llm_extract import llm_extract as _llm_extract
+check("llm_extract accepts the new context kwargs (no key in VM -> {})",
+      _llm_extract("22", asked="How many designs?", product="pouch") == {},
+      "llm_extract with context kwargs did not return {}")
 
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:

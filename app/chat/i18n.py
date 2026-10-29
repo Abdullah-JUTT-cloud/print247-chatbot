@@ -152,6 +152,26 @@ _STRINGS = {
         "es": "Tamaño 4x6 pulgadas",
         "ur-roman": "Size 4x6 inches",
     },
+    "purpose_q": {
+        "es": "¿Para qué necesita el {product}?",
+        "ur-roman": "Ye {product} kis kaam ke liye chahiye?",
+    },
+    "chip_purpose_shipping": {
+        "es": "Envío",
+        "ur-roman": "Shipping",
+    },
+    "chip_food": {
+        "es": "Comida",
+        "ur-roman": "Food",
+    },
+    "chip_gifts": {
+        "es": "Regalos",
+        "ur-roman": "Gifts",
+    },
+    "chip_retail": {
+        "es": "Venta",
+        "ur-roman": "Retail",
+    },
     "chip_size_mm": {
         "es": "Tamaño 100x150mm",
         "ur-roman": "Size 100x150mm",

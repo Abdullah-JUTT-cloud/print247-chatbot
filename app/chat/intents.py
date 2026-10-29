@@ -177,7 +177,25 @@ def suggestion_use(text: str, history=()) -> str | None:
     the session is about dry meat — the history carries it. Specific
     uses first (jerky, coffee), then generic food, then a
     typo-tolerant pass ("dry fuits" -> fruits)."""
-    for hay in [text or ""] + list(history or []):
+    low = (text or "").lower()
+    for keys, use in _SUGGEST_USES:
+        if any(k in low for k in keys):
+            return use
+    if any(p in low for p in _FOOD_PHRASES):
+        return "food"
+    if any(re.search(rf"\b{re.escape(w)}\b", low) for w in _FOOD_WORDS):
+        return "food"
+    if _fuzzy_food(low):
+        return _fuzzy_food(low)
+    # The message names its OWN use ("for candles") but it is not a
+    # mapped one: do NOT reuse a stale use from history. "Suggest
+    # me a box for candles" after a coffee chat answered with coffee
+    # boxes (Oct 30 transcript) — a new use is unmapped, never an
+    # old one. History is consulted only when the message names no
+    # use phrase at all ("for me" is not a use phrase).
+    if re.search(r"\bfor\s+(?!me\b|us\b|you\b|him\b|her\b|the\b|a\b|an\b|my\b)[a-z]+", low):
+        return None
+    for hay in list(history or []):
         low = hay.lower()
         for keys, use in _SUGGEST_USES:
             if any(k in low for k in keys):

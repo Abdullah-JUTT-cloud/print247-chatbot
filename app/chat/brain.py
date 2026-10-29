@@ -76,7 +76,8 @@ from .retrieval import retrieve
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
 from .size_unit import apply_unit_answer, size_missing_unit, unit_answer
-from .slots import extract_from_message, merge_slots, missing_fields
+from .slots import (_PRODUCTS, _find, extract_from_message, merge_slots,
+                     missing_fields)
 
 # A decline of a script field ("no", "none", "no preference"): the
 # field is recorded as "none"/"1" and the script moves on, instead
@@ -847,7 +848,11 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # become product=box, and a job enquiry must never become a quote.
     _is_order = any(ph in low for ph in ("i need", "i want", "i'd like",
                                           "i would like", "order", "get a quote",
-                                          "quote for", "buy"))
+                                          "quote for", "buy",
+                                          # Spanish order phrases: "Necesito
+                                          # cajas" is an order, not a
+                                          # confirmation answer.
+                                          "necesito", "quiero", "quisiera"))
 
     def _intent_result(reply, handoff=None, suggestions=None, contact=None):
         # Old max-turns rule (12 AI messages): count bot replies here
@@ -1101,7 +1106,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         # a quantity either: ask for the other dimension instead
         # of storing 10 as the order quantity.
         _single_dim = re.fullmatch(
-            r"(\d+(?:\.\d+)?)\s*(inches?|in\b|mm|cm)",
+            r"(\d+(?:\.\d+)?)\s*(inches?|in\b|mm|cm|feet|ft\b)",
             message.strip() or "", re.IGNORECASE)
         if _single_dim:
             return _intent_result(
@@ -1259,12 +1264,34 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         extracted = {}
     # Model read for what code could not parse (old extractor's
     # second half), validated by code before anything is stored.
-    # Only when code found nothing, and never for a question.
-    if not extracted and not visitor_is_asking(message) and not _menu_echo:
+    # Expanded (Oct 30): code finding the WRONG thing used to block
+    # the model entirely. Now the model also runs when code did not
+    # fill the PENDING field, with the bot's question as context —
+    # and it only ever fills gaps, never overwrites code.
+    _bare_skus = False
+    _pend_pre = (script_missing(prior, meta) or [None])[0]
+    if (not extracted or (_pend_pre and _pend_pre not in extracted)) \
+            and not visitor_is_asking(message) and not _menu_echo:
         try:
-            extracted = llm_extract(message)
+            _llm = llm_extract(message, asked=meta.get("last_bot_question"),
+                               product=prior.get("product"))
+            for _k, _v in _llm.items():
+                if _k not in extracted:
+                    extracted[_k] = _v
         except Exception:
-            extracted = {}
+            pass
+    # Bare number answering the designs question ("22" after "How
+    # many designs?") is a design count, not a quantity: code's
+    # quantity reader grabs it first and corrupts the quote (Oct 30
+    # transcript: quantity became 22, then the split question asked
+    # "22 of each of your 22 designs?"). Reinterpret it before
+    # anything else sees it; the prior quantity survives via merge.
+    if _pend_pre == "skus" and re.fullmatch(r"[\d,\s.]+", (message or "").strip() or ""):
+        _num = re.sub(r"[,\s.]", "", message.strip())
+        if _num.isdigit():
+            extracted["skus"] = str(int(_num))
+            extracted.pop("quantity", None)
+            _bare_skus = True
     slots = merge_slots(prior, extracted)
     # A contact answer is not an order: while awaiting contact, a
     # phone number ("5551234567") must never overwrite the quantity
@@ -1492,6 +1519,119 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "sources": _slot_sources(slots), "handoff": None,
                     "llm_used": False, "suggestions": [], "contact": contact,
                 }
+    # --- New product mid-quote (Oct 30 transcript): a fresh order
+    # statement for a DIFFERENT product used to merge silently into
+    # the pending quote (banner + the label quote's finish/qty = a
+    # frankenstein confirmation). Two cases:
+    #  (a) correction phrasing ("the labels should be stickers"):
+    #      update the product at once, acknowledge, continue;
+    #  (b) plain new order ("I need a vinyl banner"): ask first —
+    #      switching discards the pending quote, so the visitor
+    #      confirms the switch before anything is lost.
+    # A message that merely ANSWERS the pending field (a style chip
+    # that is also a product word) is never a switch.
+    _ps = meta.get("pending_switch")
+    if _ps and not meta.get("complete") and not meta.get("awaiting_contact"):
+        _ps_new = _ps["product"]
+        _ps_old = prior.get("product") or ""
+        _to_new = ("switch" in low or "cambiar" in low
+                   or low.strip() in ("yes", "yeah", "yep", "sure", "ok", "okay", "sí", "si")
+                   or extracted.get("product") == _ps_new)
+        _to_old = ("keep" in low or "mantener" in low
+                   or low.strip() in ("no", "nope", "nah")
+                   or (extracted.get("product") and extracted.get("product") == _ps_old))
+        if _to_new and not _to_old:
+            _held = _ps["slots"]
+            _nslots = merge_slots({}, _held)
+            meta.pop("pending_switch", None)
+            meta["answered_fields"] = [k for k in _held]
+            meta["gave_up"] = []
+            meta["qty_split"] = None
+            meta["last_asked"] = None
+            _nmiss = script_missing(_nslots, meta)
+            _nq = _next_question_text(_nslots, _nmiss, language)
+            _nreply = _tr("switch_done", language, "Got it — switching to {new}.",
+                          new=_ps_new) + (f" {_nq}" if _nq else "")
+            _save_session(store, session_id, _nslots)
+            _save_meta(store, session_id, meta)
+            return {"reply": _nreply, "language": language, "slots": _nslots,
+                    "missing": _nmiss, "sources": _slot_sources(_nslots),
+                    "handoff": None, "llm_used": False,
+                    "suggestions": _suggestions(_nslots, _nmiss, _nreply, language)}
+        if _to_old:
+            meta.pop("pending_switch", None)
+            _omiss = script_missing(prior, meta)
+            _oq3 = _next_question_text(prior, _omiss, language)
+            _oreply3 = _tr("switch_keep", language, "No problem — keeping the {old} quote.",
+                           old=_ps_old) + (f" {_oq3}" if _oq3 else "")
+            _save_session(store, session_id, prior)
+            _save_meta(store, session_id, meta)
+            return {"reply": _oreply3, "language": language, "slots": prior,
+                    "missing": _omiss, "sources": _slot_sources(prior),
+                    "handoff": None, "llm_used": False,
+                    "suggestions": _suggestions(prior, _omiss, _oreply3, language)}
+        _old_pending = (script_missing(prior, meta) or [None])[0]
+        if _old_pending and _old_pending in extracted:
+            # An answer to the old quote's pending field is an
+            # implicit keep: drop the switch state, normal flow
+            # handles the answer.
+            meta.pop("pending_switch", None)
+        # Anything else (a question, an unrelated message): the
+        # switch stays open, normal flow answers it.
+    elif not meta.get("complete") and not meta.get("awaiting_contact") \
+            and prior.get("product"):
+        # Correction first: the target comes from the phrase itself,
+        # NOT from extraction — extraction returns the FIRST product
+        # word in the message, so "the labels should be stickers"
+        # extracts "label", the very thing being corrected.
+        _corr = None
+        if "instead of" in low:
+            _seg = low.split("instead of", 1)[1].split(",")[-1]
+            _corr = _find(_seg, _PRODUCTS)
+        if _corr is None:
+            _cm = re.search(
+                r"(?:should be|make it|change (?:it )?to|switch to)"
+                r"\s+(?:a\s+|an\s+|the\s+)?([a-z][a-z\- ]*?)"
+                r"(?:\s+for\b|[.!?]|$)",
+                low)
+            _corr = _find(_cm.group(1), _PRODUCTS) if _cm else None
+        if _corr and _corr != prior["product"]:
+            slots["product"] = _corr
+            if "product" not in meta.setdefault("answered_fields", []):
+                meta["answered_fields"].append("product")
+            _cmiss = script_missing(slots, meta)
+            if not _cmiss:
+                _creply = (_tr("switch_done", language, "Got it — switching to {new}.",
+                               new=_corr)
+                           + " Just to confirm — do you want "
+                           + _spec_parts(slots, meta.get("gave_up") or [],
+                                         meta.get("qty_split")) + "?")
+            else:
+                _cq2 = _next_question_text(slots, _cmiss, language)
+                _creply = _tr("switch_done", language, "Got it — switching to {new}.",
+                              new=_corr) + (f" {_cq2}" if _cq2 else "")
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {"reply": _creply, "language": language, "slots": slots,
+                    "missing": _cmiss, "sources": _slot_sources(slots),
+                    "handoff": None, "llm_used": False,
+                    "suggestions": _suggestions(slots, _cmiss, _creply, language)}
+        _pend_pre2 = (script_missing(prior, meta) or [None])[0]
+        if extracted.get("product") and extracted["product"] != prior["product"] \
+                and not (_pend_pre2 and _pend_pre2 in extracted) and _is_order:
+            meta["pending_switch"] = {"product": extracted["product"],
+                                      "slots": dict(extracted)}
+            _save_session(store, session_id, prior)
+            _save_meta(store, session_id, meta)
+            return {"reply": _tr("switch_check", language,
+                                 "Just to check — you were getting {old} — "
+                                 "do you want to switch to {new}, or keep the {old} quote?",
+                                 old=prior["product"], new=extracted["product"]),
+                    "language": language, "slots": prior,
+                    "missing": script_missing(prior, meta), "sources": _slot_sources(prior),
+                    "handoff": None, "llm_used": False,
+                    "suggestions": [f"Switch to {extracted['product']}",
+                                    f"Keep {prior['product']}"]}
     if _start_over:
         _save_session(store, session_id, {})
         _save_meta(store, session_id, {})
@@ -1885,9 +2025,18 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # Price question (old visitorQuestions): a price is a rep's to
     # give, and it comes with the quote — never a figure, never the
     # minimum as the answer. Answer it, then the script question
-    # (or the confirmation, when the script is complete).
+    # (or the confirmation, when the script is complete). But a
+    # price question about a DIFFERENT product ("How much do mailer
+    # boxes cost?" while a banner quote is pending) must not drag
+    # the pending confirmation back in (Oct 30 transcript).
     if asks_about_price(message):
         _price_line = _tr("price_line", language, PRICING_COMES_WITH_THE_QUOTE)
+        try:
+            _price_prod = extract_from_message(message).get("product")
+        except Exception:
+            _price_prod = None
+        if _price_prod and prior.get("product") and _price_prod != prior["product"]:
+            return _final_return(_price_line)
         if not missing:
             return _final_return(_price_line + " " + _confirmation_text())
         return _final_return(_price_line + " " + _next_question_text(slots, missing, language))
@@ -1919,7 +2068,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # Smaller run after the minimum was stated: put it to the team
     # (old ignoresTheSmallerRun) — never repeat the minimum at them,
     # never turn them down.
-    if wants_smaller_run(message) and minimum_already_stated(meta.get("bot_replies") or []):
+    if wants_smaller_run(message) and minimum_already_stated(meta.get("bot_replies") or []) \
+            and not _bare_skus:
         _q = _next_question_text(slots, missing, language)
         _reply = _tr("smaller_run_note", language,
                      "I'll put {qty} to the team and come back to you on it.",
@@ -2023,7 +2173,11 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # answered, never purpose-trapped. The purpose is context in
     # meta, never a script field, so it can never block the quote.
     _VAGUE_SIZE_WORDS = ("large", "small", "medium", "big", "little",
-                         "huge", "tiny", "jumbo", "mini")
+                         "huge", "tiny", "jumbo", "mini",
+                         # Spanish vague sizes: "cajas grandes" gets
+                         # the purpose question too, not just size.
+                         "grande", "grandes", "pequeño", "pequeña",
+                         "pequeños", "mediano", "mediana")
     if not meta.get("purpose") and not meta.get("purpose_asked") \
             and slots.get("product") and not slots.get("sizes") \
             and not is_fact_question \
@@ -2031,7 +2185,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             and not re.search(r"\bfor\b", low):
         meta["purpose_asked"] = True
         meta["awaiting_purpose"] = True
-        _pq = f"What do you need the {slots['product']} for?"
+        _pq = _tr("purpose_q", language, "What do you need the {product} for?",
+                  product=slots["product"])
         meta["ai_count"] = meta.get("ai_count", 0) + 1
         meta["last_bot_question"] = _pq
         meta.setdefault("bot_replies", []).append(_pq)
@@ -2041,7 +2196,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         return {"reply": _pq, "language": language, "slots": slots,
                 "missing": script_missing(slots, meta),
                 "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
-                "suggestions": ["Shipping", "Food", "Gifts", "Retail"]}
+                "suggestions": [_tr("chip_purpose_shipping", language, "Shipping"),
+                                _tr("chip_food", language, "Food"),
+                                _tr("chip_gifts", language, "Gifts"),
+                                _tr("chip_retail", language, "Retail")]}
     # A size span without a unit ("3x4") is not a usable size yet:
     # ask inches, cm or mm — once per size value, never a trap. A
     # bare unit answer is applied by the extraction above, so
@@ -2053,7 +2211,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             and re.search(r"\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+", message,
                           re.IGNORECASE):
         meta["unit_asked_for"] = slots["sizes"]
-        _uq = f"Got it — {slots['sizes']}. Is that in inches, cm, or mm?"
+        _uq = f"Got it — {slots['sizes']}. Is that in inches, cm, mm, or feet?"
         meta["ai_count"] = meta.get("ai_count", 0) + 1
         meta["last_bot_question"] = _uq
         meta.setdefault("bot_replies", []).append(_uq)
@@ -2063,7 +2221,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         return {"reply": _uq, "language": language, "slots": slots,
                 "missing": script_missing(slots, meta),
                 "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
-                "suggestions": ["Inches", "Cm", "Mm"]}
+                "suggestions": ["Inches", "Cm", "Mm", "Feet"]}
     # Asking what is usual ('what is a standard size?') is a question
     # about the field, not an answer to it: answer it first, then
     # re-ask the field. There is no standard — everything is made to
@@ -2205,19 +2363,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # already state the minimum (the quantity question does).
     if _moq_note and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():
         reply = _moq_note + " " + reply
-    # Old max-turns rule: 12 AI messages, then a human takes over.
-    # Delivered ONCE: the old code overrode EVERY later reply with
-    # the handoff, so a visitor who then asked a real question
-    # ("What is your refund policy?") got the handoff forever and
-    # the chat was bricked (Oct 30 transcript). After the one
-    # handoff, normal Q&A resumes.
+    # No turn cap: the old 12-message rule handed off mid-conversation
+    # and, before the one-time fix, bricked the chat outright. User
+    # directive (Oct 30): if the chat is flowing, let it flow — no
+    # limit, no forced handoff. Handoffs still happen for real
+    # reasons (guards, existing-customer, contact completion), never
+    # for message count.
     meta["ai_count"] = meta.get("ai_count", 0) + 1
     _handoff = None
-    if meta["ai_count"] >= 12 and not meta.get("complete") \
-            and not meta.get("cap_handoff_delivered"):
-        reply = "Let me hand this over to a team member who can pick it up from here."
-        _handoff = "max_turns"
-        meta["cap_handoff_delivered"] = True
     meta["last_bot_question"] = reply
     meta.setdefault("bot_replies", []).append(reply)
     meta["bot_replies"] = meta["bot_replies"][-20:]

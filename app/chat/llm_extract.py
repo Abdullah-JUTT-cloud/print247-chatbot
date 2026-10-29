@@ -93,12 +93,22 @@ def _validate(raw: dict) -> dict:
     return out
 
 
-def llm_extract(message: str) -> dict:
+def llm_extract(message: str, asked: str | None = None,
+                product: str | None = None) -> dict:
     """One gpt-5-nano read of a message code could not parse, or {}
-    when no key is set, the call fails, or nothing validates."""
+    when no key is set, the call fails, or nothing validates.
+    `asked` is the bot's question the visitor is answering and
+    `product` the current quote's product: without them a bare
+    "22" is ambiguous (quantity or designs?); with them the model
+    reads it in context. Every value is still validated by code."""
     key = os.environ.get("OPENAI_API_KEY")
     if not key or not (message or "").strip() or len(message) > 500:
         return {}
+    _ctx = ""
+    if asked:
+        _ctx += f" The bot just asked the visitor: '{asked[:200]}'."
+    if product:
+        _ctx += f" The current quote is for {product}."
     try:
         from openai import OpenAI
 
@@ -112,7 +122,8 @@ def llm_extract(message: str) -> dict:
                      "with any of these fields the message literally states: "
                      "product, sizes, finishes, quantity, skus, extras, material, "
                      "style. Omit any field not stated. Never guess, never add "
-                     "units or numbers that are not there. Return JSON only.")},
+                     "units or numbers that are not there." + _ctx +
+                     " Return JSON only.")},
                 {"role": "user", "content": message},
             ],
             timeout=10,
