@@ -321,6 +321,15 @@ _SUGGESTION_ANSWERS = {
     ("coffee", "box"):
         "For coffee, food and beverage boxes work — 14pt to 16pt lightweight, "
         "18pt to 20pt standard, 24pt heavy duty.",
+    # Generic food (dry fruits, nuts, snacks...): no use-specific
+    # page exists, so no sizes are named — only the grounded
+    # category facts (food-grade mylar for food, food-box weights).
+    ("food", "mylar bag"):
+        "For food items like this, we suggest food-grade mylar pouches "
+        "with resealable zippers.",
+    ("food", "box"):
+        "For food items like this, food boxes work — 14pt to 16pt lightweight, "
+        "18pt to 20pt standard, 24pt heavy duty.",
 }
 _FACT_WORDS = ["minimum", "moq", "turnaround", "shipping", "sample",
                "how long", "delivery", "lead time"]

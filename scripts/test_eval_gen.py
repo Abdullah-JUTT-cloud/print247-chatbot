@@ -542,6 +542,35 @@ check("live suggestion without a use invents nothing",
       "food-grade" not in r["reply"] and "size" in r["reply"].lower(),
       f"reply={r['reply'][:140]!r}")
 
+# --- 20. suggestion food fallback (Oct 29, 2026): "dry fuits"
+# got no suggestion at all because the use map had no food entry
+# and the typo beat exact matching ---
+r = run("ev-sug-dryfuits", ["suggest me a bag for my poduct which is peices of dry fuits"])
+check("suggestion dry-fruits typo suggests food-grade pouches, then size",
+      "food-grade" in r["reply"] and "resealable" in r["reply"]
+      and "size" in r["reply"].lower() and r["slots"].get("product") == "mylar bag",
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-sug-nuts", ["suggest me a bag for nuts"])
+check("suggestion nuts suggests food-grade pouches",
+      "food-grade" in r["reply"] and "size" in r["reply"].lower(),
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-sug-frutis", ["suggest me a bag for dry frutis"])
+check("suggestion transposed frutis still suggests",
+      "food-grade" in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-sug-foodbox", ["suggest me a box for dry fruits"])
+check("suggestion dry-fruit boxes suggests food boxes",
+      "food boxes" in r["reply"] and r["slots"].get("product") == "box",
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-sug-plastic", ["suggest me a bag for pieces of plastic"])
+check("suggestion non-food pieces invents no food claim",
+      "food-grade" not in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-sug-coffee2", ["suggest me a bag for my coffee"])
+check("suggestion coffee stays specific, not generic food",
+      "coffee pouches" in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

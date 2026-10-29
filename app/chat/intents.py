@@ -123,15 +123,61 @@ def asks_for_suggestion(text: str) -> bool:
     return bool(_SUGGEST.search(text or ""))
 
 
+# Generic food uses: the KB names no dry-fruit page, but it does
+# establish food-grade mylar pouches for food (pouches.md) and food
+# boxes with board weights (boxes.md), so a food use still earns a
+# grounded suggestion — without jerky sizes or any invented pick.
+_FOOD_PHRASES = ("dry fruit", "dried fruit", "dry fruits", "dried fruits",
+                 "pet treat", "pet treats")
+_FOOD_WORDS = ("fruit", "fruits", "nut", "nuts", "almond", "almonds",
+               "snack", "snacks", "spice", "spices", "tea", "candy",
+               "chocolate", "food", "gummies", "powder", "treats")
+# Fuzzy single words (len >= 4 only: "tea"/"nut" stay exact, or "eat"
+# would match "tea"). "dry fuits" must still find "fruits": the
+# visitor's typo is the common case, not the exception.
+_FUZZY_FOOD = ("fruit", "fruits", "nuts", "almonds", "snacks", "spices",
+               "candy", "chocolate", "food", "gummies", "powder", "treats",
+               "jerky", "coffee", "beef")
+
+
+def _fuzzy_food(low: str) -> str | None:
+    import difflib
+    # Generic words never count: "pieces" scores 0.833 against
+    # "spices", so "pieces of plastic" would wrongly become food.
+    # Threshold 0.85 (transpositions still match via sorted letters).
+    _skip = {"piece", "pieces", "peices", "item", "items", "thing",
+             "things", "product", "products", "stuff"}
+    for token in re.findall(r"[a-z]+", low):
+        if len(token) < 4 or token in _skip:
+            continue
+        for word in _FUZZY_FOOD:
+            if sorted(token) == sorted(word):
+                return "jerky" if word in ("jerky", "beef") else \
+                    "coffee" if word == "coffee" else "food"
+            if difflib.SequenceMatcher(None, token, word).ratio() >= 0.85:
+                return "jerky" if word in ("jerky", "beef") else \
+                    "coffee" if word == "coffee" else "food"
+    return None
+
+
 def suggestion_use(text: str, history=()) -> str | None:
     """The use, from this message first, then the session history:
     "which type of boxes is best for me?" names no use itself, but
-    the session is about dry meat — the history carries it."""
+    the session is about dry meat — the history carries it. Specific
+    uses first (jerky, coffee), then generic food, then a
+    typo-tolerant pass ("dry fuits" -> fruits)."""
     for hay in [text or ""] + list(history or []):
         low = hay.lower()
         for keys, use in _SUGGEST_USES:
             if any(k in low for k in keys):
                 return use
+        if any(p in low for p in _FOOD_PHRASES):
+            return "food"
+        if any(re.search(rf"\b{re.escape(w)}\b", low) for w in _FOOD_WORDS):
+            return "food"
+        _fz = _fuzzy_food(low)
+        if _fz:
+            return _fz
     return None
 
 
