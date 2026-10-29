@@ -12,11 +12,17 @@ Rules carried over, and tightened for our channel:
   is not a question, not an intent, not a pleasantry. One nano call
   per such turn, never on every turn.
 - Every value the model returns is validated by CODE before it is
-  stored (product from the known list, sizes from the dimension
-  pattern, quantity from quantity_in, finishes from finish_in,
-  skus from the design-count pattern, extras/material/style from
-  known words). A guessed value is worse than an empty one, so an
-  unvalidated value is dropped, never stored.
+  stored (product from the known list, quantity from quantity_in,
+  finishes from finish_in, skus from the design-count pattern,
+  extras/material/style from known words). Sizes are the exception
+  that proves the rule: code used to require the dimension pattern
+  to match the model's words, so the model could never understand
+  MORE than code already did — "1 feet by 2 feet" was understood
+  by nano and thrown away live (Oct 30). Now code normalizes the
+  model's size when it can, and otherwise keeps it when it LOOKS
+  like a dimension (digits + a unit word or a dimension join). A
+  guessed value is worse than an empty one, so a value that looks
+  like nothing is still dropped, never stored.
 - The contact half of the old model read (guessing a name from
   free text) is deliberately NOT ported: a guessed contact is
   worse than an empty one, and our deterministic contact flow
@@ -44,7 +50,7 @@ def _validate(raw: dict) -> dict:
     """Code validation for every model-returned value."""
     from .finishes_norm import finish_in, normalise_finish
     from .quantity_parse import quantity_in
-    from .slots import _MATERIALS, _PRODUCTS, _SIZE, _skus_in, _EXTRAS
+    from .slots import _MATERIALS, _PRODUCTS, _skus_in, _EXTRAS
 
     out: dict = {}
     product = str(raw.get("product") or "").lower()
@@ -53,9 +59,27 @@ def _validate(raw: dict) -> dict:
             out["product"] = label
             break
     size = str(raw.get("sizes") or "")
-    m = _SIZE.search(size.lower())
-    if m:
-        out["sizes"] = m.group(0).strip()
+    if size:
+        # The model is the understander; code is the validator, not
+        # a second parser. Normalize through code's own extractors
+        # first (they now read each-unit phrasings); if they still
+        # can't read it, keep the model's words when they look like
+        # a dimension — digits (or spelled numbers) plus a unit word
+        # or a dimension join. A plausible size the rep can read
+        # beats a dropped one; a digit-less guess is still dropped.
+        from .slots import extract_from_message
+        _parsed = None
+        try:
+            _parsed = extract_from_message(size).get("sizes")
+        except Exception:
+            _parsed = None
+        if _parsed:
+            out["sizes"] = _parsed
+        elif re.search(r"\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b",
+                       size.lower()) and re.search(
+                r"(?:feet|foot|ft|inches|inch|in\b|mm|cm|oz|ounces?|ml|g|kg|x|×|by|\*)",
+                size.lower()):
+            out["sizes"] = size.strip()
     finish = str(raw.get("finishes") or "")
     if finish:
         f = normalise_finish(finish)

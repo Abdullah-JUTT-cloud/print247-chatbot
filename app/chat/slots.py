@@ -88,7 +88,9 @@ _SIZE = re.compile(
 # the numbers, so this phrasing fell through — and then "10" leaked
 # into quantity while the size stayed missing (live transcript,
 # Oct 29). Same shape, both orders, hyphen tolerated ("10-inch
-# length"). Stored normalized as NxM + unit, never raw.
+# length"). Stored WITH its labels + unit, never bare NxM: a bare
+# "10x6" never says which number is the length, and the rep (or the
+# confirmation) would have to guess (Oct 30).
 _LW = re.compile(
     r"\b(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:length|long)\b"
     r"\s*(?:and|,)?\s*"
@@ -151,10 +153,12 @@ def _lw_size(low: str) -> str | None:
     gs = m.groups()
     if gs[0] is not None:
         n1, u1, n2, u2 = gs[0], gs[1], gs[2], gs[3]
+        labels = ("length", "width")
     else:
         n1, u1, n2, u2 = gs[4], gs[5], gs[6], gs[7]
+        labels = ("width", "length")
     unit = _UNIT_WORD.get((u1 or u2 or "").lower().strip(), "")
-    return f"{n1}x{n2}{unit}"
+    return f"{n1} {labels[0]} x {n2} {labels[1]}{unit}"
 # A rejected option must never be stored as the choice: "not matte"
 # stored matte, "without zipper" stored zipper. The negation is
 # checked right before the label, so "zipper, no window" still keeps

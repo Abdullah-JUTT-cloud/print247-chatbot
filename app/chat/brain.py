@@ -676,7 +676,20 @@ def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None 
     if slots.get("product"):
         parts.append(str(slots.get("product")))
     if slots.get("sizes"):
-        parts.append(f"size {slots.get('sizes')}")
+        _sz = str(slots.get("sizes"))
+        # A bare "4x6" never says which number is the width: the
+        # bot's own size question asks "Width x height x depth",
+        # so a bare size follows that order — but the confirmation
+        # must SHOW the assumption, or the customer can never catch
+        # it being backwards. Sizes that already carry their labels
+        # (length/width words) are shown as-is.
+        if "length" not in _sz.lower() and "width" not in _sz.lower():
+            _n = len(re.findall(r"\d+(?:\.\d+)?", _sz))
+            if _n >= 3:
+                _sz = f"{_sz} (width x height x depth)"
+            elif _n == 2:
+                _sz = f"{_sz} (width x height)"
+        parts.append(f"size {_sz}")
     if slots.get("style") and slots.get("style") != "none":
         parts.append(f"{slots.get('style')} style")
     if slots.get("finishes") and slots.get("finishes") != "none":
@@ -1341,6 +1354,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # and it only ever fills gaps, never overwrites code.
     _bare_skus = False
     _pend_pre = (script_missing(prior, meta) or [None])[0]
+    _llm: dict = {}
     if (not extracted or (_pend_pre and _pend_pre not in extracted)) \
             and not visitor_is_asking(message) and not _menu_echo:
         try:
@@ -1351,6 +1365,24 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     extracted[_k] = _v
         except Exception:
             pass
+    # When the model fills the PENDING field, its read of the
+    # message is holistic, and code's quantity from that same
+    # message is suspect: a code quantity the model did not return
+    # is almost always a leaked dimension ("1 feet by 2 feet" ->
+    # the code's quantity=1), not a real order. Drop it — a re-ask
+    # is cheaper than a corrupt quote. And when the model DID
+    # return a quantity stated explicitly ("500 units") while code
+    # grabbed a leaked number instead, the explicit one wins.
+    # Word-based code values (product, material, style) are never
+    # touched: they don't leak from dimension spans.
+    if _pend_pre and _pend_pre in _llm:
+        if "quantity" in extracted and "quantity" not in _llm:
+            extracted.pop("quantity", None)
+        elif "quantity" in _llm and _llm["quantity"] != extracted.get("quantity"):
+            _mq = str(_llm["quantity"])
+            if re.search(rf"\b{re.escape(_mq)}\b\s*(?:units?|pcs|pieces)\b",
+                         (message or "").lower()):
+                extracted["quantity"] = _mq
     # Bare number answering the designs question ("22" after "How
     # many designs?") is a design count, not a quantity: code's
     # quantity reader grabs it first and corrupts the quote (Oct 30

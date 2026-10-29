@@ -501,16 +501,16 @@ check("live Canada delivery gets caveat + team-confirm",
       f"reply={r['reply'][:140]!r}")
 r = run("ev-live-lw", ["I need mylar bags", "10 inches length and 6 inches width"])
 check("live length/width phrasing stores size, not quantity",
-      r["slots"].get("sizes") == "10x6 inches" and not r["slots"].get("quantity")
+      r["slots"].get("sizes") == "10 length x 6 width inches" and not r["slots"].get("quantity")
       and "style" in r["reply"].lower(),
       f"reply={r['reply'][:100]!r} slots={r['slots']}")
 r = run("ev-live-lw-rev", ["I need mylar bags", "6 inches width and 10 inches length"])
 check("live width-first phrasing stores stated order",
-      r["slots"].get("sizes") == "6x10 inches" and not r["slots"].get("quantity"),
+      r["slots"].get("sizes") == "6 width x 10 length inches" and not r["slots"].get("quantity"),
       f"slots={r['slots']}")
 r = run("ev-live-lw-long", ["I need mylar bags", "10 inches long and 6 inches wide"])
 check("live long/wide phrasing stores size",
-      r["slots"].get("sizes") == "10x6 inches" and not r["slots"].get("quantity"),
+      r["slots"].get("sizes") == "10 length x 6 width inches" and not r["slots"].get("quantity"),
       f"slots={r['slots']}")
 r = run("ev-live-by", ["I need mylar bags", "10 by 6 inches"])
 check("live by-phrasing still stores size, not quantity",
@@ -964,6 +964,60 @@ check("'legal' is a document kind, never a size; quantity still read",
       "sizes" not in _s[0]["slots"]
       and _s[0]["slots"].get("quantity") == "1000",
       f"slots={_s[0]['slots']}")
+
+# ---------- section 27: Oct 30 model-first round ----------
+from app.chat import brain as _B
+from app.chat.llm_extract import _validate as _llm_validate
+check("model size '1 feet by 2 feet' validates to normalized 1x2 feet",
+      _llm_validate({"sizes": "1 feet by 2 feet"}).get("sizes") == "1x2 feet",
+      f"got={_llm_validate({'sizes': '1 feet by 2 feet'})}")
+check("model size in unknown phrasing is kept when dimension-like",
+      _llm_validate({"sizes": "roughly one feet by two feet"}).get("sizes")
+      == "roughly one feet by two feet",
+      f"got={_llm_validate({'sizes': 'roughly one feet by two feet'})}")
+check("model size with no dimension content is still dropped",
+      "sizes" not in _llm_validate({"sizes": "the big ones"}),
+      f"got={_llm_validate({'sizes': 'the big ones'})}")
+_orig_llm = _B.llm_extract
+
+
+def _fake_llm(message, asked=None, product=None):
+    _m = (message or "").strip().lower()
+    if _m == "1 foot wide, 2 foot tall":
+        return {"sizes": "1x2 feet"}
+    if _m == "1 foot wide, 2 foot tall, 500 units":
+        return {"sizes": "1x2 feet", "quantity": "500"}
+    return {}
+
+
+_B.llm_extract = _fake_llm
+try:
+    _s = _steps("ev-s27-modeldrop", ["I need custom boxes", "1 foot wide, 2 foot tall"])
+    check("model filling size drops code's leaked quantity=1",
+          _s[1]["slots"].get("sizes") == "1x2 feet"
+          and "quantity" not in _s[1]["slots"]
+          and "style" in _s[1]["reply"].lower(),
+          f"reply={_s[1]['reply'][:120]!r} slots={_s[1]['slots']}")
+    _s = _steps("ev-s27-modelqty", ["I need custom boxes",
+                                    "1 foot wide, 2 foot tall, 500 units"])
+    check("model's explicit quantity beats code's leaked number",
+          _s[1]["slots"].get("sizes") == "1x2 feet"
+          and _s[1]["slots"].get("quantity") == "500",
+          f"slots={_s[1]['slots']}")
+finally:
+    _B.llm_extract = _orig_llm
+_s = _steps("ev-s27-conflabel", ["I need mylar bags", "4x6 inches", "Stand-up",
+                                  "No preference", "1000 units", "1 design",
+                                  "No preference", "Kraft", "Yes, that's correct"])
+check("confirmation shows bare size with width x height labels",
+      "size 4x6 inches (width x height)" in _s[-2]["reply"],
+      f"reply={_s[-2]['reply'][:300]!r}")
+_s = _steps("ev-s27-lwlabel", ["I need mylar bags", "10 inches length and 6 inches width",
+                               "Stand-up", "No preference", "1000 units", "1 design",
+                               "No preference", "Kraft", "Yes, that's correct"])
+check("length/width size keeps its labels in the confirmation",
+      "size 10 length x 6 width inches" in _s[-2]["reply"],
+      f"reply={_s[-2]['reply'][:300]!r}")
 
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
