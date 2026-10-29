@@ -17,7 +17,7 @@ _FINISHES = [
     ("matte", re.compile(r"^(matte|matt|mat|mattee|matty|mate)$"),
      re.compile(r"\b(matt|mat|mattee|matty)\b")),
     ("soft touch", re.compile(r"^(soft ?-? ?touch|softtouch|soft tuch|soft touche|softouch)$"),
-     re.compile(r"\b(softtouch|softouch|soft tuch)\b")),
+     re.compile(r"\b(soft ?touch|softtouch|softouch|soft tuch)\b")),
 ]
 _BARE_NOISE = re.compile(r"\b(finish|finishing|lamination|laminate|laminated|please|prefer|i|want|the|a)\b")
 

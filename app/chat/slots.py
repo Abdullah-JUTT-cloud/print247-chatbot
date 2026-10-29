@@ -58,6 +58,7 @@ _FINISHES = [
     ("embossing", ["embossing"]),
     ("matte", ["matte"]),
     ("gloss", ["gloss", "glossy"]),
+    ("soft touch", ["soft touch", "soft-touch", "softtouch"]),
     ("none", ["no finish", "without finish"]),
 ]
 
@@ -69,11 +70,28 @@ _EXTRAS = [
 ]
 
 _PACK_COUNT = re.compile(
-    r"\b\d+\s*(?:ct|count|pack|capsules?|pieces?|pcs)\b", re.IGNORECASE)
+    r"\b\d+\s*(?:ct|count|pack|capsules?)\b", re.IGNORECASE)
+# NOTE: "pcs"/"pieces" were in this list and are NOT here on purpose:
+# "5000 pcs" is an order quantity, not a pack format — stripping it
+# left the quantity empty. "10 ct" / "10pack" stay stripped: those
+# are pack formats inside a product description, not quantities.
 _SIZE = re.compile(
-    r"\b\d+(?:\.\d+)?\s*(?:x|×|by)\s*\d+(?:\.\d+)?"
-    r"(?:\s*(?:x|×|by)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm)?",
+    r"\b\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?"
+    r"(?:\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm)?",
     re.IGNORECASE)
+# A rejected option must never be stored as the choice: "not matte"
+# stored matte, "without zipper" stored zipper. The negation is
+# checked right before the label, so "zipper, no window" still keeps
+# the zipper and only drops the window.
+def _negated_labels(text: str, labels: list[str]) -> set[str]:
+    low = (text or "").lower()
+    out = set()
+    for label in labels:
+        if re.search(r"\b(?:not|no|without|never|anything but|except|dont|don't|do not)"
+                     r"(?:\s+want)?\s+(?:a\s+|an\s+|the\s+)?"
+                     + re.escape(label) + r"\b", low):
+            out.add(label)
+    return out
 _NUMBER = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|million)?\b", re.IGNORECASE)
 _DESIGN_COUNT = re.compile(r"\b\d+\s*(?:different\s+)?(?:designs?|skus?|variants?|artworks?|types?)\b", re.IGNORECASE)
 # Time spans are never quantities: "24 hours" used to become
@@ -203,6 +221,8 @@ def extract_from_message(text: str) -> dict:
         out["product"] = product
     for mat in _MATERIALS:
         if re.search(rf"\b{re.escape(mat)}\b", low):
+            if mat in _negated_labels(text, [mat]):
+                continue
             out["material"] = mat
             break
     size = _SIZE.search(low)
@@ -219,12 +239,25 @@ def extract_from_message(text: str) -> dict:
         slip = finish_in(low)
         if slip:
             out["finishes"] = slip
+    if out.get("finishes") and out["finishes"] in _negated_labels(text, [out["finishes"]]):
+        # "not matte" is a rejection, not a choice — leave the finish
+        # open so the bot asks again instead of recording matte.
+        out.pop("finishes")
     qty = _quantity_in(text)
     if qty:
         out["quantity"] = qty
     extras = [label for label, keys in _EXTRAS if any(k in low for k in keys)]
     if extras:
-        out["extras"] = ", ".join(extras)
+        neg = _negated_labels(text, extras)
+        extras = [e for e in extras if e not in neg]
+        if extras:
+            out["extras"] = ", ".join(extras)
+        elif not (out.get("product") or out.get("sizes") or out.get("quantity")):
+            # A bare rejection ("without zipper") answers the extras
+            # question with "none". But "I need bags, no window"
+            # carries an order too — there the extras question is
+            # still open, so nothing is stored for it.
+            out["extras"] = "none"
     skus = _skus_in(text)
     if skus:
         out["skus"] = skus

@@ -35,7 +35,9 @@ _PITCHING_TO_US = re.compile(
     r"|\b(?:advertise|promote)\s+(?:your|ur)\s+(?:products?|brand|company)\b"
     r"|\bwe(?:['’]re| are)\s+(?:\w+\s+){0,2}partnered with\b|\bexclusively partnered\b"
     r"|\bwe help (?:small (?:to medium[- ]sized )?)?(?:businesses|brands|companies)\b"
-    r"|\b(?:our|my) (?:agency|marketing services|seo services)\b|\bwould love to (?:partner|collaborate)\b",
+    r"|\b(?:our|my) (?:agency|marketing services|seo services)\b|\bwould love to (?:partner|collaborate)\b"
+    r"|\blet'?s (?:partner|collaborate|work together)\b|\blooking to (?:partner|collaborate)\b"
+    r"|\bwe are a supplier\b|\bpartnership\b|\bwant to (?:partner|collaborate)\b",
     re.IGNORECASE)
 PITCH_MESSAGE = (
     "Thanks for getting in touch! This chat is for custom packaging and printing quotes, "

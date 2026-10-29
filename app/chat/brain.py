@@ -40,14 +40,14 @@ import re
 
 from . import guards
 from .attempts import (MAX_ASKS, apply_ask_outcome, ask_outcome, asks_what_is_usual,
-                       says_they_do_not_know, visitor_is_asking)
+                       says_they_do_not_know, visitor_is_asking, wants_to_stop)
 from .complete import get_chat_complete_message, when_the_team_replies
 from .erp_eligibility import quantity_is_per_design, quantity_is_total
 from .composer import fix_reply
 from .contacts import (CONTACT_FIELDS, contact_field_by_key, email_in, has_reachable_contact,
                        is_contact_value_usable, is_our_reps_name, is_placeholder_name,
                        missing_contact_fields, phones_in, REP_NAMES)
-from .fact_topics import asks_bare_fact_topic, topic_query
+from .fact_topics import asks_bare_fact_topic, fact_topics_asked, topic_query
 from .finished import (NOTED_AFTER_THE_QUOTE, NOT_SENT_YET, SIGN_OFFS,
                        asks_if_it_arrived, is_pleasantry)
 from .i18n import tr as _tr
@@ -408,7 +408,8 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
     script question, not a fact chunk that merely mentions a keyword.
     """
     low = message.lower()
-    is_fact_question = "?" in message or any(w in low for w in _FACT_WORDS)
+    is_fact_question = ("?" in message or any(w in low for w in _FACT_WORDS)
+                        or bool(fact_topics_asked(message)))
     next_q = _next_question_text(slots, missing, language)
     if is_fact_question and not facts:
         # Old composer rule: never "I'll confirm/check" — either the
@@ -643,6 +644,17 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # restarts (handled below), and start-over restarts too.
     if meta.get("complete") and not _is_order and not _start_over:
         _last_bot = meta.get("last_bot_question", "")
+        if wants_to_stop(message):
+            # A repeated refusal after the chat closed is a goodbye,
+            # not a new detail to note.
+            _sign = _tr("signoff_b", language, SIGN_OFFS[1]) \
+                if _tr("signoff_a", language, SIGN_OFFS[0]) in _last_bot else \
+                _tr("signoff_a", language, SIGN_OFFS[0])
+            _save_session(store, session_id, prior)
+            _save_meta(store, session_id, meta)
+            return {"reply": _sign, "language": language, "slots": prior,
+                    "missing": script_missing(prior, meta), "sources": [],
+                    "handoff": None, "llm_used": False, "suggestions": []}
         if is_pleasantry(message):
             _last_sign = _tr("signoff_b", language, SIGN_OFFS[1]) \
                 if _tr("signoff_a", language, SIGN_OFFS[0]) in _last_bot else \
@@ -769,6 +781,40 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _unit = unit_answer(message)
     if _unit and slots.get("sizes"):
         slots["sizes"] = apply_unit_answer(slots["sizes"], _unit)
+    # "Stop everything" beats any pending question. The old decline
+    # list only retired one field, so "NO I DONT WANT NOW" was
+    # answered with the email question, and "I SAID I DONT WANT
+    # NOW" — which matched no decline pattern at all — was answered
+    # with the email question AGAIN. A stop now closes the flow
+    # once, gracefully, and never re-asks. Mid-quote it just pauses
+    # the script: the visitor's next message continues it.
+    if wants_to_stop(message) and not _is_order and not extracted:
+        if meta.get("awaiting_contact"):
+            meta["awaiting_contact"] = False
+            meta["complete"] = True
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {
+                "reply": ("No problem at all — I'll stop here. Your request is saved "
+                          "in this chat, and the team will follow up with you here "
+                          f"{when_the_team_replies()}. Just come back anytime."),
+                "language": language, "slots": slots,
+                "missing": missing_fields(slots), "sources": _slot_sources(slots),
+                "handoff": "complete_no_contact", "llm_used": False,
+                "suggestions": [], "contact": contact,
+            }
+        if slots:
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {
+                "reply": ("Got it — I'll stop asking. Your details so far are saved "
+                          "here; just say the word anytime you want to continue."),
+                "language": language, "slots": slots,
+                "missing": script_missing(slots, meta),
+                "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                "suggestions": [],
+            }
+
     # --- Contact flow (old contactFields.ts): asked after the job
     # details, in name -> email -> phone order, MAX_ASKS=2 per field,
     # a refusal retires the field at once, and the chat only finishes
@@ -1166,7 +1212,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # - Only a multi-file / open fact question goes to the LLM,
     #   with the OKF leash, then the composer validator fixes it in
     #   code (or falls back to deterministic when unsalvageable).
-    is_fact_question = "?" in message or any(w in low for w in _FACT_WORDS)
+    is_fact_question = ("?" in message or any(w in low for w in _FACT_WORDS)
+                        or bool(fact_topics_asked(message)))
     # Asking what is usual ('what is a standard size?') is a question
     # about the field, not an answer to it: answer it first, then
     # re-ask the field. There is no standard — everything is made to

@@ -31,7 +31,8 @@ def asks_about_price(text: str) -> bool:
     said = text or ""
     # "Cuanto por las cajas 1000" asks a price with no question mark
     # and no English.
-    if re.search(r"\bhow much\b|\bwhat\b.{0,15}\b(?:cost|price|charge)|\bcu[aá]nto\b|\bqu[eé] precio\b|\bcu[aá]l es el precio\b",
+    if re.search(r"\bhow much\b|\bwhat\b.{0,15}\b(?:cost|price|charge)|\bcu[aá]nto\b|\bqu[eé] precio\b|\bcu[aá]l es el precio\b"
+                 r"|\bprice (for|of|please)\b|\bgive me (a )?price\b|\bneed (a )?price\b|\bprice list\b|\bprice quote\b",
                  said, re.IGNORECASE):
         return True
     asked = [s for s in re.split(r"(?<=[.!?])\s+|\n+", said)

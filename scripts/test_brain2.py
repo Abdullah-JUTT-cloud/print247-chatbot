@@ -47,6 +47,39 @@ r = run("b2-script-yes", _SCRIPT + ["Yes, that's correct"])
 check("script: yes after full script starts contact flow",
       "Could I take your name?" in r["reply"])
 
+# --- finishes: soft touch in all its spellings, never re-asked ---
+for _form in ["Soft touch", "soft-touch", "softtouch", "soft touch finish"]:
+    r = run("b2-soft-" + _form.replace(" ", "-"),
+            ["I need mylar bags", "4x6 inches", "stand-up", _form])
+    check(f"finish: '{_form}' stored, no re-ask",
+          r["slots"].get("finishes") == "soft touch"
+          and "finish" not in r["reply"].lower())
+
+# --- contact flow: a refusal ends it, never re-asks the same field ---
+r = run("b2-stop", ["I need custom boxes", "100x150mm", "flat-bottom", "gloss",
+                    "1000 units", "3 designs", "in total", "no preference",
+                    "Yes, that's correct", "NO I DONT WANT NOW"])
+check("stop: first refusal closes contact flow, no email question",
+      "stop here" in r["reply"] and "email" not in r["reply"].lower())
+r = handle_message("I SAID I DONT WANT NOW....", session_id="b2-stop", store=None)
+check("stop: repeated refusal gets a goodbye, not a question",
+      "email" not in r["reply"].lower() and "?" not in r["reply"])
+r = run("b2-stop-mid", ["I need mylar bags", "4x6 inches", "stop"])
+check("stop: mid-quote stop pauses, does not ask the next field",
+      "stop asking" in r["reply"] and "style" not in r["reply"].lower())
+r = run("b2-stop-spec", ["I need mylar bags", "4x6 inches", "stand-up",
+                         "I don't want matte"])
+check("stop: 'I don't want matte' is a finish answer, not a stop",
+      r["slots"].get("finishes") in (None, "matte") and "stop asking" not in r["reply"])
+
+# --- delivery scope: US published, international goes to the team ---
+for _q in ["can you deliver in china?", "do you ship to india?",
+           "delivery to canada?", "can you deliver to the uk?"]:
+    r = run("b2-ship", [_q])
+    check(f"delivery: '{_q}' grounded, never promised",
+          "free nationwide" in r["reply"] and "UPS" in r["reply"]
+          and "team will confirm" in r["reply"])
+
 # --- multi-design quantity scope: total vs per design ---
 r = run("b2-split", ["I need 5000 mylar bags, size 4x6 inches", "stand-up", "matte",
                      "3 designs"])

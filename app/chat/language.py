@@ -12,8 +12,12 @@ import re
 _ARABIC = re.compile(r"[\u0600-\u06FF]")
 _ROMAN_URDU = [
     "mujhe", "chahiye", "kitne", "kya", "hai", "kaise", "kab", "kahan",
-    "price", "batao", "bataen", "chahte", "ho", "mera", "meri", "aur",
+    "batao", "bataen", "chahte", "ho", "mera", "meri", "aur",
 ]
+# NOTE: "price" was in this list and is NOT here on purpose — it is an
+# English word the user himself writes, and it once flipped a plain
+# English "what's the price?" into a Roman-Urdu reply. A genuine
+# Roman-Urdu price question still hits via batao/mujhe/chahiye.
 _SPANISH = [
     "necesito", "quiero", "cuánto", "cuanto", "precio", "gracias",
     "bolsas", "cajas", "etiquetas", "tamaño", "tamano",

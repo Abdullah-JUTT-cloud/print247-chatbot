@@ -59,7 +59,7 @@ _EXACT_TOPICS = {
     "moq": ["minimum", "moq", "minimum order", "minimum quantity"],
     "samples": ["sample"],
     "turnaround": ["turnaround", "how long", "delivery time", "lead time", "24 hours", "24 hour"],
-    "shipping": ["shipping", "ship"],
+    "shipping": ["shipping", "ship", "deliver", "delivery"],
     "refund": ["refund", "return", "cancel"],
     "privacy": ["privacy", "personal data"],
     "terms": ["terms and conditions", "terms"],
@@ -68,7 +68,8 @@ _EXACT_TOPICS = {
     "artwork": ["artwork", "file format", "bleed"],
     "proof-approval": ["proof", "approve", "approval"],
     "quote-flow": ["quote", "get a quote"],
-    "contact": ["contact", "address", "phone", "location"],
+    "contact": ["contact", "address", "phone", "location", "located",
+                "where are you", "based in", "headquarter", "office"],
     "pricing-approach": ["price", "cost", "pricing"],
 }
 

@@ -26,6 +26,44 @@ _DECLINES = re.compile(
 _SPEC_WORDS = re.compile(
     r"\b(matte|gloss|soft\s*touch|finish|cheaper|cheapest|economical|cost[-\s]?effective|lowest\s*cost|inches|cm|mm|size|dimension|depth|height|width|x\s*\d|\d+\s*x|qty|quantity|pcs|pieces|units|boxes|bags|pouches|labels|stickers|cardboard|corrugated|rigid|kraft|foil|mylar|material|paper|coating|laminate|laminated)\b",
     re.IGNORECASE)
+# "Stop everything", not "skip this field": a visitor who says they
+# do not want this now is ending the contact flow, not declining one
+# field. The old decline list only caught a refusal at the START of
+# the message or one naming a contact noun — "I SAID I DONT WANT
+# NOW" matched neither, so the bot asked for the email again after
+# an explicit refusal. That repeat is the pestering failure.
+_STOP_ALL = re.compile(
+    r"\b(dont|don't|do not) want (it|this|that|now|anymore|any more|to continue)\b"
+    r"|\bnot now\b"
+    r"|(?<![\w-])stop\b"
+    r"|\bleave me alone\b"
+    r"|\bdon'?t (contact|message|email|call) me\b"
+    r"|\bno more questions\b"
+    r"|\bnot interested\b"
+    r"|\b(dont|don't|do not) want to (share|give|tell)\b"
+    r"|\bi said\b.{0,15}\b(dont|don't|do not)\b",
+    re.IGNORECASE)
+# Field-level refusal in looser words ("not interested", "don't want
+# to share") — only when no spec word is present, so "I don't want
+# matte" stays a finish answer, not a contact refusal.
+_WONT_SHARE = re.compile(
+    r"\b(dont|don't|do not) want to (share|give|tell)\b"
+    r"|\bnot interested\b"
+    r"|\bprefer not to (share|give)\b"
+    r"|\brather not (share|give)\b",
+    re.IGNORECASE)
+
+
+def wants_to_stop(text: str | None) -> bool:
+    """True when the visitor ends the conversation here, in any
+    wording — not when they decline one field or answer a spec
+    question. A spec word ('I don't want matte') is never a stop."""
+    value = text or ""
+    if _SPEC_WORDS.search(value):
+        return False
+    return bool(_STOP_ALL.search(value))
+
+
 _PREFERS_EMAIL = re.compile(
     r"\b(?:send|share|forward|mail)\b[^.?!]{0,25}\b(?:to\s+)?(?:my\s+|the\s+)?e-?mail\b"
     r"|\b(?:communicate|talk|deal|correspond)\b[^.?!]{0,20}\b(?:through|via|by|over|on)\s+(?:the\s+)?e-?mail\b",
@@ -54,6 +92,8 @@ def ask_outcome(last_asked: str, text: str, have_it_now: bool) -> str:
         return "free"
     if is_contact_key(last_asked):
         if _DECLINES.search(text or ""):
+            return "declined"
+        if _WONT_SHARE.search(text or "") and not _SPEC_WORDS.search(text or ""):
             return "declined"
         if last_asked != "email" and _PREFERS_EMAIL.search(text or ""):
             return "declined"

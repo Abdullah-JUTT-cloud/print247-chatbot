@@ -6,8 +6,10 @@ the lead time and in-house manufacturing was asked for her quantity
 instead — in live chat, and again on replay. So: the topic is found
 in what they wrote, and the reply has to contain what answers it.
 Only topics our KB covers are checked. A price, fees, samples terms
-or shipping terms go in the quote, and there is nothing in a reply
-to check that for.
+or international shipping terms go in the quote — but the US
+shipping scope IS published (free via UPS), so delivery questions
+get the published scope plus the international caveat, never a
+vague "I don't have details" and never a guessed promise.
 
 One deliberate correction vs the old patterns: the old "where we
 are" answer accepted Houston (the old script's base). Our site
@@ -61,6 +63,11 @@ TOPICS = [
      re.compile(r"\b(?:design support|in-?house (?:design|engineering|art)|design team|we (?:can|do|offer|provide|have)[^.?!]{0,30}design|dielines?|templates?)\b", re.I),
      None,
      "design support"),
+    ("shipping / delivery scope",
+     re.compile(r"\b(ship(ping|ped)?|deliver(y|ed|ing)?)\b.*\b(to|in|for|abroad|overseas|international|worldwide|usa|america|china|india|uk|canada|australia|germany|france|uae|pakistan|europe)\b|\b(can you|could you|do you) (ship|deliver)\b|\bshipping (cost|fee|charges?|time|to)\b|\bdelivery (cost|fee|charges?|time|to|options?)\b", re.I),
+     re.compile(r"\b(ups|free|international|team (will )?confirm|quote)\b", re.I),
+     re.compile(r"\b(ups|free shipping|international)\b", re.I),
+     "shipping delivery"),
     ("payment",
      re.compile(r"\b(payment methods?|how (can|do) (i|we) pay|pay (by|with|via|invoice)|credit card|accept (cards?|paypal|ach|wire|zelle))\b", re.I),
      re.compile(r"\b(ach|wire|zelle|visa|mastercard|amex|paypal|payment link)\b", re.I),
