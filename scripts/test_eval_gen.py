@@ -1141,6 +1141,31 @@ check("two types in one message stores neither and asks which one",
       and "type" not in r[2]["slots"],
       f"reply={r[2]['reply'][:150]!r} slots={r[2]['slots']}")
 
+# ---------- section 31: Oct 30 styles + full type vocab round ----------
+for _tv, _tc in [("cosmetic boxes", "cosmetic"), ("CBD boxes", "cbd"),
+                 ("pharmaceutical boxes", "pharmaceutical"),
+                 ("apparel boxes", "apparel"),
+                 ("food and beverage boxes", "food and beverage")]:
+    r = _steps(f"ev-s31-type-{_tc}", ["i need boxes", "4x6 inches", _tv])
+    check(f"type list item {_tv!r} parses, style asked next",
+          r[2]["slots"].get("type") == _tc
+          and "What style of box do you need?" in r[2]["reply"],
+          f"reply={r[2]['reply'][:150]!r} slots={r[2]['slots']}")
+r = run("ev-s31-styles", ["i need boxes", "4x6 inches", "metalized boxes",
+                          "what styles do you offer"])
+check("box styles question lists real styles, never campaign cards",
+      "Mailer" in r["reply"] and "Tuck-end" in r["reply"]
+      and "Folding carton" in r["reply"]
+      and "gift boxes" not in r["reply"] and "kraft boxes" not in r["reply"]
+      and "square boxes" not in r["reply"]
+      and "What style of box do you need?" in r["reply"],
+      f"reply={r['reply'][:250]!r}")
+r = run("ev-s31-pouchstyles", ["i need mylar bags", "4x6 inches",
+                               "what styles do you offer"])
+check("pouch styles question lists pouch styles",
+      "Stand-up" in r["reply"] and "Flat-bottom" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

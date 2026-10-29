@@ -632,12 +632,21 @@ _TYPE_CHIPS = {"box": ["Corrugated", "Rigid", "Mailer", "Folding carton"],
 # Type words a visitor can name, canonical value first, longest
 # phrases first so "flat-bottom" never also counts as "flat".
 _TYPE_VOCAB = {
+    # Every item the bot's own type list offers must parse here:
+    # "cosmetic boxes" was offered by the type question but had no
+    # vocab entry, so the bot re-asked instead of storing it
+    # (Oct 30 transcript). Same gap for CBD, pharmaceutical,
+    # apparel and food and beverage.
     "box": [("folding carton", "folding carton"), ("folding", "folding carton"),
             ("tuck-end", "tuck-end"), ("tuck end", "tuck-end"),
             ("corrugated", "corrugated"), ("rigid", "rigid"),
             ("mailer", "mailer"), ("display", "display"),
             ("metalized", "metalized"), ("die-cut", "die-cut"),
-            ("diecut", "die-cut"), ("gable", "gable")],
+            ("diecut", "die-cut"), ("gable", "gable"),
+            ("cosmetic", "cosmetic"), ("cbd", "cbd"),
+            ("pharmaceutical", "pharmaceutical"), ("apparel", "apparel"),
+            ("food and beverage", "food and beverage"),
+            ("food", "food and beverage")],
     "pouch": [("flat-bottom", "flat-bottom"), ("flat bottom", "flat-bottom"),
               ("stand-up", "stand-up"), ("stand up", "stand-up"),
               ("standup", "stand-up"), ("spout", "spout"),
@@ -2257,6 +2266,32 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _tq = _next_question_text(slots, _tmiss, language)
             _treply = _types_list + (f" {_tq}" if _tq else "")
             return _final_return(_treply, srcs=[_TYPE_FILES[_types_prod]])
+
+    # Styles question, mirroring the types branch: "what styles do
+    # you offer" used to be answered from the campaign styles file,
+    # whose cards (gift/kraft/square/cosmetic/apparel boxes) are
+    # categories, not styles — while the bot's own style question
+    # asks Mailer/Tuck-end/Rigid/Folding carton (Oct 30 transcript).
+    # Answer with the style vocab itself, then the pending question.
+    _styles_prod = None
+    if re.search(r"\bstyles?\b", low) \
+            and ("?" in message or visitor_is_asking(message)):
+        for _w, _p in (("boxes", "box"), ("box", "box"),
+                       ("pouches", "pouch"), ("pouch", "pouch"),
+                       ("mylar", "mylar bag"), ("bags", "mylar bag"),
+                       ("bag", "mylar bag")):
+            if re.search(rf"\b{_w}\b", low):
+                _styles_prod = _p
+                break
+        if not _styles_prod:
+            _styles_prod = slots.get("product") or prior.get("product")
+    if _styles_prod in ("box", "pouch", "mylar bag"):
+        _slist = {"box": "Box styles: Mailer, Tuck-end, Rigid, Folding carton.",
+                  "pouch": "Mylar bag styles: Flat, Stand-up, Flat-bottom.",
+                  "mylar bag": "Mylar bag styles: Flat, Stand-up, Flat-bottom."}[_styles_prod]
+        _smiss = script_missing(slots, meta)
+        _sq = _next_question_text(slots, _smiss, language)
+        return _final_return(_slist + (f" {_sq}" if _sq else ""), srcs=[])
 
     # Multi-design quantity scope (old quantity_split_question):
     # "5000 units, 3 designs" does not say whether 5000 is the total
