@@ -47,7 +47,8 @@ from .composer import fix_reply
 from .contacts import (CONTACT_FIELDS, contact_field_by_key, email_in, has_reachable_contact,
                        is_contact_value_usable, is_our_reps_name, is_placeholder_name,
                        missing_contact_fields, phones_in, REP_NAMES)
-from .capability import capability_fact, capability_product, capability_source
+from .capability import (capability_fact, capability_product, capability_source,
+                         unlisted_options)
 from .fact_topics import asks_bare_fact_topic, fact_topics_asked, topic_query
 from .finished import (NOTED_AFTER_THE_QUOTE, NOT_SENT_YET, SIGN_OFFS,
                        asks_if_it_arrived, is_pleasantry)
@@ -55,13 +56,13 @@ from .i18n import tr as _tr
 from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A_PRICE_OBJECTION,
                       ANSWER_TO_ARE_YOU_A_BOT, ANSWER_TO_SAMPLES, BYE_ANSWER, DONE_WITH_US_MESSAGE,
                       HARM_ANSWER, HOW_ARE_YOU_ANSWER, JOB_MESSAGE, LATER_MESSAGE, LIED_ANSWER,
-                      NO_EMAIL_THEN_PHONE, PITCH_MESSAGE, THANKS_ANSWER, TRUST_ANSWER,
-                      YES_SEND_YOUR_NUMBER, asks_about_trust, asks_for_a_catalog,
+                      NO_EMAIL_THEN_PHONE, PITCH_MESSAGE, SHARED_FILE_ANSWER, THANKS_ANSWER,
+                      TRUST_ANSWER, YES_SEND_YOUR_NUMBER, asks_about_trust, asks_for_a_catalog,
                       asks_for_samples, asks_how_are_you, asks_only_if_we_are_a_bot,
                       chat_is_a_pitch, chat_is_not_a_customer, claims_harm, claims_we_lied,
-                      is_already_a_customer, is_done_with_us, is_looking_for_work,
+                      is_already_a_customer, is_dismissal, is_done_with_us, is_looking_for_work,
                       objects_to_the_price, offers_a_phone_number, puts_it_off_for_now,
-                      rep_named_in, says_bye, says_thanks, wants_a_person,
+                      rep_named_in, says_bye, says_thanks, shared_a_file, wants_a_person,
                       wants_it_in_the_chat)
 from .language import detect_language
 from .llm_extract import llm_extract
@@ -417,7 +418,12 @@ def _direct_answer(question: str, text: str) -> str:
         if score > best_score:
             best_idx, best, best_score = i, s, score
     if best_score[0] < 1:
-        result = best
+        # Nothing in the file actually answers this question: lead
+        # with the file's opening sentence (usually its summary)
+        # instead of a sentence that merely carries a number —
+        # "5-7 mil for sharp products" as an answer to "best
+        # material for coffee" misleads more than it helps.
+        result = sentences[0]
     else:
         result = best
         for s, score in scored[best_idx + 1:]:
@@ -533,10 +539,28 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
         # Capability question about a real product ("Can you print
         # boxes?") deserves a Yes first, not a bare list. Restricted
         # to kb/products files, so a turnaround/policy question can
-        # never be falsely turned into a Yes.
+        # never be falsely turned into a Yes. The Yes is withheld
+        # exactly like in the capability branch when the question
+        # names an option the files do not list ("can I get PET
+        # labels?" once got a Yes followed by sheet-label text),
+        # and for a spout pouch (gallery-only, team must confirm).
         is_capability = low.startswith(("can you", "do you", "can i", "could you"))
-        if is_capability and "/products/" in facts[0]["source"] and not text.lower().startswith("yes"):
-            text = "Yes — " + (text[0].lower() + text[1:] if text else text)
+        if is_capability and "/products/" in facts[0]["source"]:
+            _src = facts[0]["source"]
+            _cap2 = ("label" if "labels" in _src else
+                     "mylar bag" if "pouches" in _src else
+                     "box" if "boxes" in _src else
+                     "banner" if "banners" in _src else
+                     "business card" if "business-cards" in _src else None)
+            _unl2 = unlisted_options(message, _cap2) if _cap2 else []
+            if _cap2 == "mylar bag" and re.search(r"\bspout\b", low):
+                text = ("Spout pouches appear in our gallery, but the quote form "
+                        "doesn't list them — I'll note it for the team to confirm.")
+            elif _unl2:
+                text = (f"I can't confirm {_unl2[0]} for this product here — "
+                        "I'll include it in the quote for the team.")
+            elif not text.lower().startswith("yes"):
+                text = "Yes — " + (text[0].lower() + text[1:] if text else text)
         return f"{text} {next_q}" if next_q else text
     if missing:
         return next_q
@@ -723,6 +747,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # Small talk only while the chat is open: after completion the
     # finished branch owns pleasantries (sign-off, never the close
     # again), and these branches run before it.
+    # Soft dismissal first: "thanks though" contains "thanks", and
+    # the plain thanks branch below would push the next script
+    # question after a polite goodbye. Guarded like bye (an order
+    # statement still wins: "thanks, but I want a bigger size").
+    if not _is_order and not meta.get("complete") and is_dismissal(message):
+        return _intent_result(BYE_ANSWER)
     if not _is_order and not meta.get("complete") and says_thanks(message):
         return _intent_result(_with_next_question(THANKS_ANSWER, prior,
                                                  script_missing(prior, meta), language))
@@ -758,6 +788,13 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         # to the KB fact answer below.
         return _intent_result(_with_next_question(ANSWER_TO_SAMPLES, prior,
                                                  script_missing(prior, meta), language))
+    # A file shared mid-quote is an acknowledgment, not an answer:
+    # note it for the team and carry on with the script question.
+    # No _is_order guard on purpose — artwork shared while a size
+    # was asked still needs the size re-asked, not silence.
+    if shared_a_file(message):
+        return _intent_result(_with_next_question(SHARED_FILE_ANSWER, prior,
+                                                 script_missing(prior, meta), language))
     if objects_to_the_price(message):
         return _intent_result(_with_next_question(ANSWER_TO_A_PRICE_OBJECTION, prior,
                                                  script_missing(prior, meta), language))
@@ -769,6 +806,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         meta["last_asked"] = "phone"
         meta.setdefault("asks", {})["email"] = MAX_ASKS
         return _intent_result(NO_EMAIL_THEN_PHONE)
+    # A bare number answering a size question ("10" after "What size
+    # do you need?") is NOT a quantity: storing it as quantity 10
+    # silently corrupts the quote while the size stays missing.
+    # Ask which unit the size is in; a visitor who meant quantity
+    # says so ("10 units") and the normal quantity path stores it.
+    _last_q = (meta.get("last_bot_question") or "").lower()
+    if (re.fullmatch(r"[\d,\s.]+", message.strip() or "")
+            and "size" in _last_q and "quantity" not in _last_q
+            and not prior.get("quantity")):
+        return _intent_result(f"Got it — {message.strip()} inches or mm for the size?")
     _start_over = low in ("start over", "new order", "start again", "reset",
                           "new quote", "start fresh")
     # Finished quote picked back up (old whatToDoWithFinishedChat /
@@ -1011,7 +1058,20 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 }
             if _outcome == "free":
                 # They asked us something instead of answering: answer
-                # it below, keep the contact question pending.
+                # it below, keep the contact question pending. But a
+                # bare spec word ("kraft") is not a question — the
+                # old "free" fall-through re-showed the confirmation
+                # and the email was never re-asked. Re-ask the field.
+                if not visitor_is_asking(message) and "?" not in message:
+                    meta["last_asked"] = _field
+                    _save_session(store, session_id, slots)
+                    _save_meta(store, session_id, meta)
+                    return {
+                        "reply": _contact_question(_field, language), "language": language,
+                        "slots": slots, "missing": missing_fields(slots),
+                        "sources": _slot_sources(slots), "handoff": None,
+                        "llm_used": False, "suggestions": [], "contact": contact,
+                    }
                 meta["last_asked"] = _field
                 _save_meta(store, session_id, meta)
             else:
@@ -1154,6 +1214,71 @@ def handle_message(message: str, session_id: str | None = None, store=None,
 
     if not facts:
         facts = retrieve(message)
+    # Product-scoped answers: with a product already chosen, an
+    # attribute question (material/style/finish) must not be
+    # answered from another product's file — "what material is best
+    # for coffee?" with mylar bags chosen once came back with BOX
+    # materials. Re-rank, never filter: if no same-product fact
+    # exists, the original order stands. Skipped when the message
+    # names a different product family ("what about box materials?"
+    # mid-bag-quote must reach the box facts).
+    _prod = slots.get("product")
+    if _prod and re.search(r"\b(?:materials?|finish(?:es)?|styles?)\b", low):
+        _fam_map = {"mylar bag": ("pouches", "mylar"), "pouch": ("pouches", "mylar"),
+                    "bag": ("pouches", "mylar"), "stand-up pouch": ("pouches", "mylar"),
+                    "flat pouch": ("pouches", "mylar"), "flat-bottom pouch": ("pouches", "mylar"),
+                    "box": ("boxes",), "label": ("labels",), "sticker": ("labels",),
+                    "business card": ("business-cards",), "banner": ("banners",)}
+        _fam_tokens = _fam_map.get(_prod)
+        _prod_family = ("pouch" if _prod in ("mylar bag", "pouch", "bag", "stand-up pouch",
+                                             "flat pouch", "flat-bottom pouch")
+                        else _prod)
+        _named_families = set()
+        for _alias, _alias_fam in (("box", "box"), ("boxes", "box"),
+                                   ("mylar", "pouch"), ("pouch", "pouch"),
+                                   ("pouches", "pouch"), ("bag", "pouch"),
+                                   ("bags", "pouch"), ("label", "label"),
+                                   ("labels", "label"), ("sticker", "label"),
+                                   ("stickers", "label"), ("banner", "banner"),
+                                   ("business card", "business card")):
+            if re.search(rf"\b{_alias}\b", low):
+                _named_families.add(_alias_fam)
+        if _fam_tokens and (not _named_families or _named_families == {_prod_family}):
+            facts = sorted(facts, key=lambda f: 0
+                           if any(t in f["source"] for t in _fam_tokens) else 1)
+            # Re-ranking cannot help when NO same-product fact was
+            # retrieved at all (keyword search returned only the
+            # other product's files). Then fetch the family's own
+            # attribute file directly, so the answer still comes
+            # from the right product instead of the wrong one.
+            if not any(t in f["source"] for f in facts for t in _fam_tokens):
+                _attr_kind = ("material" if "material" in low else
+                              "finish" if "finish" in low else "style")
+                _attr_files = {
+                    "material": {"pouch": "kb/materials/pouches-mylar-materials-finishes.md",
+                                 "box": "kb/materials/boxes-campaign-materials.md",
+                                 "label": "kb/products/labels.md",
+                                 "business card": "kb/products/business-cards.md",
+                                 "banner": "kb/products/banners.md"},
+                    "style": {"pouch": "kb/products/pouches-mylar-styles.md",
+                              "box": "kb/products/boxes-campaign-styles.md",
+                              "label": "kb/products/labels.md",
+                              "business card": "kb/products/business-cards.md",
+                              "banner": "kb/products/banners.md"},
+                    "finish": {"pouch": "kb/materials/pouches-mylar-materials-finishes.md",
+                               "box": "kb/materials/finishes.md",
+                               "label": "kb/products/labels.md",
+                               "business card": "kb/products/business-cards.md",
+                               "banner": "kb/products/banners.md"},
+                }[_attr_kind].get(_prod_family)
+                if _attr_files:
+                    try:
+                        _raw = open(_attr_files, encoding="utf-8").read()
+                        _m = re.match(r"^---\n.*?\n---\n(.*)$", _raw, re.DOTALL)
+                        facts = [{"source": _attr_files,
+                                  "text": (_m.group(1).strip() if _m else _raw.strip())}] + facts
+                    except OSError:
+                        pass
     sources = [f["source"] for f in facts]
     missing = script_missing(slots, meta)
     _gave_up = list(meta.get("gave_up") or [])
@@ -1274,7 +1399,22 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                         _box_variant = _disp
                         break
             _ctext = _fact_reply_text(_ctext_raw)
-            if _box_variant:
+            # Never a Yes for an option the product's own files do
+            # not list (PET labels, a handle on a mylar bag), and
+            # never a bare Yes for a spout pouch: it appears in the
+            # gallery but the quote form does not list it, so the
+            # team must confirm it. The product interest is still
+            # stored; only the confirmation is withheld.
+            _unlisted = unlisted_options(message, _cap)
+            _is_pouch_family = _cap in ("mylar bag", "pouch", "bag", "stand-up pouch",
+                                        "flat pouch", "flat-bottom pouch")
+            if _is_pouch_family and re.search(r"\bspout\b", low):
+                _ctext = ("Spout pouches appear in our gallery, but the quote form "
+                          "doesn't list them — I'll note it for the team to confirm.")
+            elif _unlisted:
+                _ctext = (f"I can't confirm {_unlisted[0]} for this product here — "
+                          "I'll include it in the quote for the team.")
+            elif _box_variant:
                 _ctext = f"Yes — we make {_box_variant} boxes. " + _ctext
             elif not _ctext.lower().startswith("yes"):
                 _ctext = "Yes — " + (_ctext[0].lower() + _ctext[1:] if _ctext else _ctext)

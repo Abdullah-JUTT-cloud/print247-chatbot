@@ -9,6 +9,7 @@ China delivery). A family that fails systematically gets a code fix,
 not a weaker assertion.
 """
 import itertools
+import re
 import sys
 
 sys.path.insert(0, ".")
@@ -347,6 +348,136 @@ for msg, want in [
           want.lower() in r["reply"].lower()
           and "Minimum order quantity" not in r["reply"],
           f"reply={r['reply'][:140]!r}")
+
+# --- 18. colleague-research battery (Oct 29, 2026): the old bot's
+# dominant failure classes, from the colleague's 2,046-chat rule
+# flags + 300-chat judge run. Most were already handled; the ones
+# that were not got code fixes in this same round (file-share
+# branch, WFH carve-out, soft-dismissal branch, bare-number
+# clarification, capability option guard, product-scoped
+# re-ranking, contact "free" fix). Each case below locks the
+# behavior, so the old bot's exact failure shapes can never
+# silently come back.
+for msgs, want in [
+    (["I need mylar bags", "what is a SKU?"], "one SKU means one design"),
+    (["I need boxes", "can I visit your facility?"], "Rosenberg"),
+    (["I need mylar bags", "do you deliver to Canada?"], "team will confirm"),
+    (["I need boxes", "how long does production take?"], "12 to 15 business days"),
+]:
+    r = run(f"ev-col-ans-{msgs[-1][:10]}", msgs)
+    check(f"answer-first {msgs[-1]!r}", want.lower() in r["reply"].lower(),
+          f"reply={r['reply'][:140]!r}")
+r = run("ev-col-coffee", ["I need mylar bags", "what material is best for coffee?"])
+check("answer-first coffee material is mylar, not box",
+      "Box materials" not in r["reply"]
+      and ("film" in r["reply"].lower() or "foil" in r["reply"].lower()
+           or "kraft" in r["reply"].lower()),
+      f"reply={r['reply'][:140]!r}")
+
+# Unusable answers: a non-answer must never be stored as the field.
+r = run("ev-col-vague", ["I need mylar bags", "any size"])
+check("unusable vague size re-asked, not stored",
+      not r["slots"].get("sizes") and "size" in r["reply"].lower(),
+      f"slots={r['slots']} reply={r['reply'][:100]!r}")
+r = run("ev-col-phoneqty", ["I need mylar bags", "4x6", "stand-up", "matte",
+                            "call me at 5551234567"])
+check("unusable phone-as-quantity not stored",
+      not r["slots"].get("quantity") and "phone" in r["reply"].lower(),
+      f"slots={r['slots']} reply={r['reply'][:100]!r}")
+r = run("ev-col-fin", ["I need mylar bags", "4x6", "stand-up", "Bag's"])
+check("unusable non-answer as finish re-asked, not stored",
+      not r["slots"].get("finishes") and "finish" in r["reply"].lower(),
+      f"slots={r['slots']} reply={r['reply'][:100]!r}")
+r = run("ev-col-bare10", ["I need mylar bags", "10"])
+check("unusable bare number as size answer clarified, not quantity",
+      not r["slots"].get("quantity") and "inches or mm" in r["reply"],
+      f"slots={r['slots']} reply={r['reply'][:100]!r}")
+r = run("ev-col-emailmat", ["I need mylar bags", "4x6", "stand-up", "matte", "100",
+                            "2 designs", "zipper", "kraft", "yes", "yes", "Ali", "kraft"])
+check("unusable material word as email answer re-asks email",
+      "email" in r["reply"].lower() and "kraft@" not in r["reply"]
+      and "Just to confirm" not in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+
+# Label materials: PET is a bag film, never a label stock.
+r = run("ev-col-labelmat", ["I need labels", "what materials do you use for labels?"])
+check("label materials from the labels file, no PET",
+      ("paper" in r["reply"].lower() or "vinyl" in r["reply"].lower()
+       or "film" in r["reply"].lower()) and "PET" not in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-col-labelpet", ["I need labels", "can I get PET labels?"])
+check("PET labels not confirmed",
+      "can't confirm" in r["reply"] and not r["reply"].startswith("Yes"),
+      f"reply={r['reply'][:140]!r}")
+
+# Capability guard: a Yes must never confirm an unlisted option.
+r = run("ev-col-handle", ["do you make mylar bags with a handle?"])
+check("handle on a mylar bag not confirmed",
+      "can't confirm" in r["reply"] and "handle" in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-col-spout", ["do you make spout pouches?"])
+check("spout pouch gallery-only, never a bare Yes",
+      "gallery" in r["reply"] and not r["reply"].startswith("Yes"),
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-col-petbag", ["do you make PET mylar bags?"])
+check("PET mylar bags not confirmed (not in our KB)",
+      "can't confirm" in r["reply"] and "pet" in r["reply"].lower(),
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-col-kraftbag", ["do you make kraft bags?"])
+check("kraft bags still a Yes (kraft is listed)",
+      r["reply"].startswith("Yes"), f"reply={r['reply'][:140]!r}")
+r = run("ev-col-window", ["do you make boxes with a window?"])
+check("window boxes still a Yes (window is a listed box style)",
+      r["reply"].startswith("Yes"), f"reply={r['reply'][:140]!r}")
+
+# Out of scope: job / work-from-home / order tracking.
+r = run("ev-col-wfh", ["I want to work from home packing boxes"])
+check("work-from-home packing boxes is a job enquiry, not an order",
+      r.get("handoff") == "not_a_customer" and "job" in r["reply"].lower(),
+      f"handoff={r.get('handoff')} reply={r['reply'][:100]!r}")
+r = run("ev-col-wfh2", ["do you have work from home jobs?"])
+check("work-from-home jobs deflected",
+      r.get("handoff") == "not_a_customer", f"reply={r['reply'][:100]!r}")
+r = run("ev-col-track", ["where is my order?"])
+check("order tracking hands off to existing-customer",
+      r.get("handoff") == "existing_customer", f"reply={r['reply'][:100]!r}")
+r = run("ev-col-job", ["are you hiring?"])
+check("job enquiry deflected",
+      r.get("handoff") == "not_a_customer", f"reply={r['reply'][:100]!r}")
+
+# File shared: acknowledged + script continues, never silence.
+r = run("ev-col-share", ["I need mylar bags", "here is my artwork"])
+check("shared artwork acknowledged, size re-asked",
+      "noted your file" in r["reply"] and "size" in r["reply"].lower(),
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-col-share2", ["I just sent you my logo"])
+check("shared logo acknowledged, product asked",
+      "noted your file" in r["reply"] and "product" in r["reply"].lower(),
+      f"reply={r['reply'][:140]!r}")
+
+# Soft dismissal: "thanks though" closes, plain "thanks" carries on.
+r = run("ev-col-softbye", ["I need mylar bags", "thanks though"])
+check("soft dismissal closes, no script question pushed",
+      "Goodbye" in r["reply"] and "?" not in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-col-thanks", ["I need mylar bags", "thanks"])
+check("plain thanks still carries on",
+      "welcome" in r["reply"].lower() and "size" in r["reply"].lower(),
+      f"reply={r['reply'][:140]!r}")
+
+# One question per message, no re-introduction, no markdown leak.
+_replies = []
+for _m in ["hi", "I need mylar bags", "4x6", "stand-up", "matte", "100"]:
+    _replies.append(handle_message(_m, session_id="ev-col-locks", store=None)["reply"])
+check("one question per message across a script",
+      all(_r.count("?") <= 1 for _r in _replies),
+      f"replies={[(_r.count('?'), _r[:60]) for _r in _replies]}")
+check("no re-introduction with a rep name mid-chat",
+      not any(re.search(r"Hi,? I'?m [A-Z][a-z]+", _r) for _r in _replies),
+      f"replies={_replies}")
+check("no markdown leaks into chat replies",
+      all("**" not in _r and not _r.lstrip().startswith("#") for _r in _replies),
+      f"replies={_replies}")
 
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:

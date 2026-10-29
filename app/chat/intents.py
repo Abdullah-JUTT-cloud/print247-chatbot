@@ -53,9 +53,61 @@ def is_looking_for_work(text: str) -> bool:
     said = (text or "").strip()
     if not said:
         return False
-    if _WANTS_A_JOB.search(said) or _WANTS_TO_WORK_FROM_HOME.search(said) or _SENDING_A_CV.search(said):
+    if _WANTS_TO_WORK_FROM_HOME.search(said):
+        # The boxes are the JOB here ("work from home packing
+        # boxes"), not an order — the old enquiry guard let the
+        # word "boxes" turn this into a quote. Only an explicit
+        # commercial signal (a quote/price/order word, or a number
+        # with a unit) overrides the job reading.
+        if re.search(r"\b(?:quote|pricing|price|order|buy|purchase)\b"
+                     r"|\d+\s*(?:bags|boxes|pcs|units|pieces)\b", said, re.IGNORECASE):
+            return False
+        return True
+    if _WANTS_A_JOB.search(said) or _SENDING_A_CV.search(said):
         return not _IS_REALLY_AN_ENQUIRY.search(said)
     return False
+
+
+# --- File/image shared by the visitor (colleague-research class:
+# visitors sharing artwork got silence) ---
+_SHARED_FILE = re.compile(
+    r"\b(?:here(?:'s| is)|i(?:'ve| have)?\s+(?:just\s+)?(?:sent|shared|attached|uploaded)"
+    r"|(?:i(?:'m| am)\s+)?(?:sending|sharing|attaching|uploading)|check|see)\b"
+    r"[^.?!]{0,40}\b(?:my\s+|the\s+)?(?:artwork|design|file|image|photo|picture|logo|pdf)\b"
+    r"|\battached\b",
+    re.IGNORECASE)
+_SHARED_FILE_YOURS = re.compile(
+    r"\b(?:your|ur)\s+(?:artwork|design|file|image|photo|picture|logo)\b",
+    re.IGNORECASE)
+SHARED_FILE_ANSWER = (
+    "Thanks — I've noted your file, and the team will review it with your quote.")
+
+
+def shared_a_file(text: str) -> bool:
+    """A visitor sharing a file, not asking about one. Questions
+    ("can I send artwork?"), bare numbers ("4x6" with a file
+    mention would be a size, not a share) and "your" files ("see
+    your designs") are not shares — they fall through to the
+    normal question/script flow."""
+    said = (text or "").strip()
+    if not said or "?" in said or re.search(r"\d", said):
+        return False
+    if _SHARED_FILE_YOURS.search(said):
+        return False
+    return bool(_SHARED_FILE.search(said))
+
+
+# --- Soft dismissal ("thanks though"): a polite goodbye, not
+# thanks-and-carry-on. The plain thanks branch would push the
+# next script question after it — the old bot's ignored-goodbye
+# class in miniature.
+_DISMISSAL = re.compile(
+    r"\bthank(?:s| you)\s+(though|anyway)\b|\bthanks?,?\s+but\b|\bthanks? for your time\b",
+    re.IGNORECASE)
+
+
+def is_dismissal(text: str) -> bool:
+    return bool(_DISMISSAL.search(text or ""))
 
 
 def chat_is_a_pitch(messages: list) -> bool:
