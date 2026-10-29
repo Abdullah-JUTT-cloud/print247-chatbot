@@ -15,6 +15,15 @@ Run:  python scripts/ingest.py [--dry-run]
 Dry-run prints what WOULD be indexed, without calling OpenAI/Qdrant.
 Re-running is safe: same point id overwrites the old vector, so an
 edited OKF file replaces (never duplicates) its old embedding.
+
+Two guards that did not exist before Oct 29, 2026 (found when a
+re-ingest put an UNAPPROVED session draft live in Qdrant):
+  1. Files whose frontmatter says `status: draft` are NEVER indexed.
+     A draft goes live only after the admin writes the verified fact
+     and approves it (status: verified).
+  2. Points whose source file is gone — deleted, or now a draft —
+     are DELETED from Qdrant. Upsert alone never removes anything,
+     so without this a deleted draft's point would stay live forever.
 """
 import argparse
 import glob
@@ -32,6 +41,11 @@ def parse_okf(path: str):
     m = FRONTMATTER.match(text)
     meta, body = (m.group(1), m.group(2)) if m else ("", text)
     return meta.strip(), body.strip()
+
+
+def file_status(meta: str) -> str:
+    m = re.search(r"(?m)^status:\s*(\S+)\s*$", meta or "")
+    return m.group(1).lower() if m else ""
 
 
 def chunks_for(body: str):
@@ -53,8 +67,17 @@ def main() -> int:
     args = ap.parse_args()
 
     # kb/README.md is the rulebook, not a fact — never index it.
-    files = sorted(p for p in glob.glob("kb/**/*.md", recursive=True)
-                   if not p.endswith("/README.md"))
+    # Draft files are never indexed either: a session draft goes
+    # live only after the admin writes the fact and approves it.
+    all_files = sorted(p for p in glob.glob("kb/**/*.md", recursive=True)
+                       if not p.endswith("/README.md"))
+    files, skipped = [], []
+    for path in all_files:
+        meta, _body = parse_okf(path)
+        if file_status(meta) == "draft":
+            skipped.append(path)
+        else:
+            files.append(path)
     if not files:
         print("No kb/**/*.md files found. Run from the repo root.")
         return 1
@@ -65,6 +88,8 @@ def main() -> int:
         for i, chunk in enumerate(chunks_for(body)):
             rows.append((point_id(path, i), path, meta, chunk))
     print(f"{len(files)} OKF files -> {len(rows)} chunks")
+    for path in skipped:
+        print(f"  SKIP draft (not approved): {path}")
     for pid, path, meta, chunk in rows:
         print(f"  {path} [{pid[:8]}] {len(chunk)} chars")
 
@@ -92,6 +117,24 @@ def main() -> int:
     qdrant.upsert(COLLECTION, [PointStruct(id=pid, vector=vec, payload={"source": path, "meta": meta, "text": chunk})
                                for (pid, path, meta, chunk), vec in zip(rows, embeddings)])
     print(f"Upserted {len(rows)} points into {COLLECTION}.")
+
+    # Stale-point cleanup: upsert never deletes, so a removed file
+    # or a file turned back into a draft would otherwise stay live.
+    live_sources = {path for _, path, _, _ in rows}
+    stale_ids, offset = [], None
+    while True:
+        points, offset = qdrant.scroll(COLLECTION, limit=100, offset=offset,
+                                       with_payload=["source"], with_vectors=False)
+        for pt in points:
+            if (pt.payload or {}).get("source") not in live_sources:
+                stale_ids.append(pt.id)
+        if offset is None:
+            break
+    if stale_ids:
+        qdrant.delete(COLLECTION, points_selector=stale_ids)
+        print(f"Deleted {len(stale_ids)} stale points (source file gone or now a draft).")
+    else:
+        print("No stale points.")
     return 0
 
 
