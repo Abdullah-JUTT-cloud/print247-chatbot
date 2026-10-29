@@ -1019,6 +1019,72 @@ check("length/width size keeps its labels in the confirmation",
       "size 10 length x 6 width inches" in _s[-2]["reply"],
       f"reply={_s[-2]['reply'][:300]!r}")
 
+# ---------- section 28: Oct 30 category -> subcategory round ----------
+_s = _steps("ev-s28-envelope", ["which materials do you use in Envelopes??"])
+check("unknown-product materials question never serves another product's file",
+      "team can confirm" in _s[0]["reply"]
+      and "Envelopes aren't a listed product" in _s[0]["reply"]
+      and "What size" not in _s[0]["reply"]
+      and "kraft paperboard" not in _s[0]["reply"],
+      f"reply={_s[0]['reply'][:200]!r}")
+_s = _steps("ev-s28-woodencards",
+            ["do you have wodden Custom NFC Business Cards??", "i need wodden ones"])
+check("wooden cards: product stored, wooden named as unlisted, no box switch",
+      _s[0]["slots"].get("product") == "business card"
+      and "Wooden isn't in our listed business card options" in _s[0]["reply"]
+      and "What size do you need?" in _s[0]["reply"]
+      and _s[1]["slots"].get("product") == "business card"
+      and "What style of box" not in _s[1]["reply"],
+      f"r0={_s[0]['reply'][-200:]!r} r1={_s[1]['reply'][:120]!r} slots={_s[1]['slots']}")
+_s = _steps("ev-s28-boxmat", ["what materials do you use in boxes?"])
+check("known-product materials question stores the product, asks size not product",
+      _s[0]["slots"].get("product") == "box"
+      and "What size do you need?" in _s[0]["reply"],
+      f"reply={_s[0]['reply'][:200]!r} slots={_s[0]['slots']}")
+_orig_llm = _B.llm_extract
+
+
+def _fake_llm_box(message, asked=None, product=None):
+    if (message or "").strip().lower() == "i need wodden ones":
+        return {"product": "box"}
+    return {}
+
+
+_B.llm_extract = _fake_llm_box
+try:
+    _s = _steps("ev-s28-llmswitch", ["do you have business cards?", "i need wodden ones"])
+    check("LLM product guess never silently switches an existing quote",
+          _s[1]["slots"].get("product") == "business card"
+          and "What style of box" not in _s[1]["reply"],
+          f"reply={_s[1]['reply'][:160]!r} slots={_s[1]['slots']}")
+finally:
+    _B.llm_extract = _orig_llm
+for _q, _prod in (("do you have corrugated boxes?", "box"),
+                  ("do you have spout pouches?", "pouch"),
+                  ("do you have vinyl banners?", "banner"),
+                  ("do you have kraft business cards?", "business card")):
+    r = run("ev-s28-listed-" + _prod, [_q])
+    check(f"listed qualifier for {_prod} gets no unlisted caveat",
+          "isn't in our listed" not in r["reply"]
+          and r["slots"].get("product") == _prod,
+          f"reply={r['reply'][:200]!r} slots={r['slots']}")
+for _q, _prod in (("do you have wooden boxes?", "box"),
+                  ("do you have wooden pouches?", "pouch"),
+                  ("do you have metal labels?", "label"),
+                  ("do you have wooden banners?", "banner")):
+    r = run("ev-s28-unlisted-" + _prod, [_q])
+    check(f"unlisted qualifier for {_prod} is named, not swallowed by Yes",
+          "isn't in our listed" in r["reply"]
+          and r["slots"].get("product") == _prod,
+          f"reply={r['reply'][-200:]!r} slots={r['slots']}")
+_s = _steps("ev-s28-confirm", ["do you have wodden Custom NFC Business Cards??",
+                                "4x6 inches", "No preference", "1000 units",
+                                "1 design", "No preference"])
+check("confirmation carries the open qualifier as team-to-confirm",
+      "wooden — team to confirm" in _s[5]["reply"]
+      and "size 4x6 inches (width x height)" in _s[5]["reply"],
+      f"reply={_s[5]['reply'][:300]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

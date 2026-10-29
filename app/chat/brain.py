@@ -48,6 +48,7 @@ from .contacts import (CONTACT_FIELDS, contact_field_by_key, email_in, has_reach
                        is_contact_value_usable, is_our_reps_name, is_placeholder_name,
                        missing_contact_fields, phones_in, REP_NAMES)
 from .capability import (capability_fact, capability_product, capability_source)
+from .qualifiers import qualifier_caveat, unlisted_qualifiers
 from .learn import save_learned
 from .websearch import web_search
 from .fact_topics import asks_bare_fact_topic, fact_topics_asked, topic_query
@@ -714,6 +715,12 @@ def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None 
         parts.append(f"extras {slots.get('extras')}")
     if slots.get("material") and slots.get("material") != "none":
         parts.append(f"{slots.get('material')} material")
+    # Unlisted qualifiers the visitor named ("wooden") are open
+    # items, not part of the order: the confirmation must show them
+    # as team-to-confirm, or the quote silently implies they are
+    # included (Oct 30).
+    if slots.get("notes"):
+        parts.append(f"{slots.get('notes')} — team to confirm")
     text = ", ".join(parts)
     if gave_up:
         text += f". For {', '.join(gave_up)}, the team will confirm it with you directly"
@@ -1355,6 +1362,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _bare_skus = False
     _pend_pre = (script_missing(prior, meta) or [None])[0]
     _llm: dict = {}
+    _code_product = extracted.get("product")
     if (not extracted or (_pend_pre and _pend_pre not in extracted)) \
             and not visitor_is_asking(message) and not _menu_echo:
         try:
@@ -1365,6 +1373,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     extracted[_k] = _v
         except Exception:
             pass
+    # An LLM product guess must never silently switch the quote:
+    # code-found switches go through the switch clarification, and
+    # a model guess from a message with no product word is not an
+    # explicit switch (Oct 30: cards became a box style question).
+    # Only when code found no product at all can the model's
+    # product be the quote's product — and even then, never over
+    # an existing quote's product.
+    if _code_product is None and prior.get("product") \
+            and _llm.get("product") and _llm["product"] != prior["product"]:
+        extracted.pop("product", None)
     # When the model fills the PENDING field, its read of the
     # message is holistic, and code's quantity from that same
     # message is suspect: a code quantity the model did not return
@@ -1792,6 +1810,39 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "suggestions": _suggestions({}, ["product"], language=language),
         }
 
+    # An unlisted qualifier inside an order ("i need wodden ones"
+    # for cards): the quote continues with the known product, but
+    # the visitor's qualifier must not vanish silently (Oct 30: the
+    # cards quote became a box style question). Note it once per
+    # product, then ask the pending question.
+    if not visitor_is_asking(message) and not meta.get("awaiting_contact") \
+            and slots.get("product"):
+        _oquals = unlisted_qualifiers(message, slots["product"])
+        _noted = set(meta.get("qualifier_noted") or [])
+        _new_quals = [q for q in _oquals
+                      if f"{slots['product']}:{q}" not in _noted]
+        if _new_quals:
+            meta["qualifier_noted"] = sorted(
+                _noted | {f"{slots['product']}:{q}" for q in _new_quals})
+            _pnotes = sorted(q.split(":", 1)[1] for q in meta["qualifier_noted"]
+                             if q.startswith(f"{slots['product']}:"))
+            slots["notes"] = ", ".join(_pnotes)
+            _qmissing = script_missing(slots, meta)
+            _qq = _next_question_text(slots, _qmissing, language)
+            _qreply = qualifier_caveat(slots["product"], _new_quals) \
+                + (f" {_qq}" if _qq else "")
+            meta["last_bot_question"] = _qreply
+            meta.setdefault("bot_replies", []).append(_qreply)
+            meta["bot_replies"] = meta["bot_replies"][-20:]
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {"reply": _qreply, "language": language, "slots": slots,
+                    "missing": script_missing(slots, meta),
+                    "sources": _slot_sources(slots), "handoff": None,
+                    "llm_used": False,
+                    "suggestions": _suggestions(
+                        slots, script_missing(slots, meta),
+                        language=language)}
     # Confirmation chips must actually work: "Change quantity" clears
     # that slot and re-asks it, instead of the bot treating the tap
     # as a new message and repeating the confirmation.
@@ -1882,6 +1933,82 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "suggestions": _suggestions(slots, script_missing(slots, meta), language=language),
         }
 
+    # Attribute questions name their product ("box materials?",
+    # "which materials do you use in Envelopes??"). Two cases:
+    # - Unknown product (envelopes): retrieval would serve another
+    #   product's file as if it were the answer (box materials for
+    #   an envelopes question, Oct 30), and the live model composes
+    #   generic materials as if they were ours. Say so plainly and
+    #   do NOT funnel into a quote.
+    # - Known product, no quote yet: like the types branch, the
+    #   question names the product, so store it — answering box
+    #   materials and then asking "what product?" is the old
+    #   annoyance. Never overrides an existing quote's product: a
+    #   cross-family question keeps the quote.
+    _attr_word = re.search(r"\b(materials?|finish(?:es)?|styles?|types?)\b", low)
+    # Questions only: a finish VALUE ("matte finish") or a stated
+    # material ("coffee material is mylar") is an answer, not an
+    # attribute question — firing here broke both (Oct 30).
+    if _attr_word and ("?" in message or visitor_is_asking(message)):
+        # Bare "mylar" is a family word, not an alias — "mylar
+        # finishes" is a pouch question, not an unknown product.
+        _known = bool(re.search(r"\bmylar\b", low)) or any(
+            re.search(rf"\b{re.escape(a)}\b", low)
+            for _, _aliases in _PRODUCTS for a in _aliases)
+        if not _known:
+            _tm = re.search(r"\b(?:materials?|finish(?:es)?|styles?|types?)\b"
+                            r".*?\b(?:in|for|of)\b\s+([a-z]+)", low) \
+                or re.search(r"\b([a-z]+)\s+(?:materials?|finish(?:es)?|styles?|types?)\b",
+                             low)
+            if _tm:
+                _tgt = _tm.group(1)
+                # The word before the attribute is often the question
+                # word itself ("what finishes") — that is no target.
+                _tgt_stop = {"what", "which", "who", "where", "when", "why",
+                             "how", "do", "you", "your", "our", "any", "all",
+                             "the", "a", "an", "this", "that", "it", "offer",
+                             "offers", "available", "best"}
+                # A use ("coffee", "candles") is grounded, not a
+                # product: "material for coffee" is a mylar answer,
+                # never a team-confirm about coffee (Oct 30).
+                from .intents import _SUGGEST_USES
+                _use_words = {k for _keys, _ in _SUGGEST_USES for k in _keys}
+                _use_words |= {"food", "candles", "candle"}
+                _sing = _tgt[:-1] if _tgt.endswith("s") and len(_tgt) > 3 else _tgt
+                if _tgt not in _tgt_stop and _tgt not in _use_words \
+                        and _sing not in _use_words \
+                        and not any(_sing == a or _tgt == a
+                                    for _, _aliases in _PRODUCTS for a in _aliases):
+                    _plural = _tgt.endswith("s")
+                    _ureply = (
+                        f"{_tgt[0].upper() + _tgt[1:]} {'are' if _plural else 'is'}n't "
+                        f"a listed product with published {_attr_word.group(1)} — "
+                        f"the team can confirm whether we make {_tgt} and in what "
+                        f"{_attr_word.group(1)}. We list boxes, bags, pouches, "
+                        f"labels, stickers, business cards and banners — did you "
+                        f"mean one of those?")
+                    _save_session(store, session_id, slots)
+                    _save_meta(store, session_id, meta)
+                    return {"reply": _ureply, "language": language, "slots": slots,
+                            "missing": script_missing(slots, meta), "sources": [],
+                            "handoff": None, "llm_used": False,
+                            "suggestions": _suggestions(
+                                slots, script_missing(slots, meta),
+                                language=language)}
+        elif not slots.get("product"):
+            _best = None
+            for _canon, _aliases in _PRODUCTS:
+                for _al in _aliases:
+                    if re.search(rf"\b{re.escape(_al)}\b", low):
+                        if _best is None or len(_al) > len(_best[1]):
+                            _best = (_canon, _al)
+            if _best is None and re.search(r"\bmylar\b", low):
+                _best = ("mylar bag", "mylar")
+            if _best:
+                slots["product"] = _best[0]
+                meta.setdefault("answered_fields", [])
+                if "product" not in meta["answered_fields"]:
+                    meta["answered_fields"].append("product")
     if not facts:
         facts = retrieve(message)
     # Product family of the chosen product, for the two guards
@@ -2180,12 +2307,27 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _ctext = f"Yes — we make {_box_variant} boxes. " + _ctext
             elif not _ctext.lower().startswith("yes"):
                 _ctext = "Yes — " + (_ctext[0].lower() + _ctext[1:] if _ctext else _ctext)
+            # Subcategory grounding (Oct 30): a qualifier the
+            # product's own files never name ("wodden" for cards)
+            # must be named as unlisted, not swallowed by the Yes.
+            _quals = unlisted_qualifiers(message, _cap)
+            _qcaveat = qualifier_caveat(_cap, _quals) if _quals else ""
+            if _quals:
+                meta.setdefault("qualifier_noted", [])
+                for _q in _quals:
+                    _qk = f"{_cap}:{_q}"
+                    if _qk not in meta["qualifier_noted"]:
+                        meta["qualifier_noted"].append(_qk)
+                _pnotes = sorted(q.split(":", 1)[1] for q in meta["qualifier_noted"]
+                                 if q.startswith(f"{_cap}:"))
+                slots["notes"] = ", ".join(_pnotes)
             _cmissing = script_missing(slots, meta)
             _cq = _next_question_text(slots, _cmissing, language)
             meta["last_asked"] = _cmissing[0] if _cmissing else None
-            meta["last_bot_question"] = (_ctext + " " + _cq) if _cq else _ctext
-            return _final_return((_ctext + " " + _cq) if _cq else _ctext,
-                                 srcs=[capability_source(_cap)])
+            _creply = _ctext + (f" {_qcaveat}" if _qcaveat else "") \
+                + (f" {_cq}" if _cq else "")
+            meta["last_bot_question"] = _creply
+            return _final_return(_creply, srcs=[capability_source(_cap)])
 
     # Location + a foreign country ("where it located in pakistan"):
     # dumping the footer address never answers it — the visitor is

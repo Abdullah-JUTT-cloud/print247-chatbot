@@ -32,7 +32,7 @@ _AUX = re.compile(
 _VARIANT_QUALIFIERS = ("wine", "whiskey", "whisky", "spirit", "beverage",
                        "jerky")
 _VERBS = {"make", "print", "offer", "do", "produce", "provide", "sell",
-          "create", "manufacture", "handle", "supply"}
+          "create", "manufacture", "handle", "supply", "have"}
 
 
 def _is_make_like(token: str) -> bool:
