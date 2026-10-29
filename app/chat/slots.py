@@ -21,7 +21,10 @@ import re
 from .finishes_norm import finish_in, normalise_finish
 from .quantity_parse import spelled_number_in
 
-FIELDS = ["product", "material", "sizes", "finishes", "quantity", "extras", "skus"]
+FIELDS = ["product", "material", "sizes", "finishes", "quantity", "extras", "skus", "style"]
+# "style" is a script question, not one of the old 7 quote fields:
+# the bag/box style question ("Flat, Standup or which one?") is
+# asked after sizes, and its answer is stored here, never guessed.
 DEFAULTS = {"skus": "1", "extras": "none"}
 
 _PLACEHOLDERS = {
@@ -37,9 +40,9 @@ _PRODUCTS = [
     ("flat-bottom pouch", ["flat-bottom pouch", "flat bottom pouch"]),
     ("mylar bag", ["mylar bag", "mylar bags"]),
     ("pouch", ["pouch", "pouches"]),
-    ("bag", ["bag", "bags"]),
-    ("box", ["box", "boxes", "carton", "cartons"]),
-    ("label", ["label", "labels"]),
+    ("bag", ["bag", "bags", "bolsa", "bolsas"]),
+    ("box", ["box", "boxes", "carton", "cartons", "caja", "cajas"]),
+    ("label", ["label", "labels", "etiqueta", "etiquetas"]),
     ("sticker", ["sticker", "stickers"]),
     ("banner", ["banner", "banners"]),
 ]
@@ -149,6 +152,30 @@ def _quantity_in(text: str) -> str | None:
 
 _WORD_SKUS = {"single": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
+# Pouch/box styles from the campaign KB (mylar styles file). The
+# gallery-only "spout pouch" is NOT offered by the bot as a choice,
+# but a visitor who asks for it outright has their style recorded
+# for the team — refusing their own words would be worse.
+_STYLE_WORDS = [
+    ("side gusset", "side gusset"),
+    ("pinch bottom", "pinch bottom"),
+    ("flat-bottom", "flat-bottom"),
+    ("flat bottom", "flat-bottom"),
+    ("stand-up", "stand-up"),
+    ("stand up", "stand-up"),
+    ("standup", "stand-up"),
+    ("spout", "spout"),
+    ("3-side", "flat"),
+]
+
+
+def _style_in(text: str) -> str | None:
+    low = (text or "").lower()
+    for word, label in _STYLE_WORDS:
+        if word in low:
+            return label
+    return None
+
 
 def _skus_in(text: str) -> str | None:
     m = re.search(r"\b(\d+)\s*(?:different\s+)?(?:designs?|skus?|variants?|artworks?|types?)\b", text.lower())
@@ -165,7 +192,11 @@ def extract_from_message(text: str) -> dict:
     None so the LLM (or the next question) can ask, instead of the
     code inventing an answer.
     """
-    low = (text or "").lower()
+    # Spanish units read as their English equivalents ("4x6
+    # pulgadas" is 4x6 inches, not a unit-less size).
+    low = (text or "").lower().replace("pulgadas", "inches").replace(
+        "centímetros", "cm").replace("centimetros", "cm").replace(
+        "milímetros", "mm").replace("milimetros", "mm")
     out: dict = {}
     product = _find(low, _PRODUCTS)
     if product:
@@ -180,6 +211,10 @@ def extract_from_message(text: str) -> dict:
     finish = _find(low, _FINISHES)
     if finish:
         out["finishes"] = normalise_finish(finish)
+    elif re.search(r"\bmate\b", low):
+        # Spanish "mate" = matte. Word-boundary only: "material"
+        # contains "mate" and must never become a finish.
+        out["finishes"] = "matte"
     else:
         slip = finish_in(low)
         if slip:
@@ -193,6 +228,9 @@ def extract_from_message(text: str) -> dict:
     skus = _skus_in(text)
     if skus:
         out["skus"] = skus
+    style = _style_in(text)
+    if style:
+        out["style"] = style
     return out
 
 

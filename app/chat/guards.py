@@ -6,17 +6,24 @@ rule is followed "most of the time" — and "most of the time" is how
 a customer who said "80" got thanked for an order that cannot be
 produced.
 
-MOQ rule (PENDING sales sign-off, see kb/facts/moq.md):
-  minimum 1000 per size, banners exempt. The old code's "500 each
-  for multiple designs" rule is NOT applied here — it is unresolved
-  in the sales-team questions, and applying an unconfirmed discount
-  rule would be inventing policy.
+MOQ rule (CHANGED with the full old-brain port, Oct 29): the new
+old-bot snapshot takes smaller runs (SAY_THE_MINIMUM = false) and
+its composer forbids a flat refusal ("Lead with what we can do —
+that we can look at their quantity — and give the minimum after
+it"). So a below-minimum quantity is NO LONGER a refusal: the bot
+states the minimum once, accepts the quantity, and the team
+confirms the smaller run. moq_check is kept for reporting (is a
+quantity below the minimum?) and for the confirmation note — it
+no longer blocks a quote. Banners are exempt from the minimum
+entirely, with the full banner family (pull-ups, roll-ups, pop-ups,
+retractables, backdrops, x-stands), not just the word "banner".
 """
 import re
 
+from .script import is_banner_family
+
 MINIMUM_ORDER = 1000
 
-_BANNER = re.compile(r"\bbanners?\b", re.IGNORECASE)
 _HUMAN = re.compile(
     r"\b(human|agent|representative|rep|real person|call me|phone me)\b",
     re.IGNORECASE)
@@ -26,14 +33,15 @@ _POLICY_TOPICS = re.compile(
 
 
 def minimum_applies(product: str | None) -> bool:
-    return not (product and _BANNER.search(product))
+    return not is_banner_family(product)
 
 
 def moq_check(slots: dict) -> dict:
     """Return {'ok': bool, 'message': str|None}.
 
-    ok=False only when a real quantity below the minimum was given
-    and the minimum applies. No quantity yet -> ok (nothing to check).
+    ok=False now only REPORTS a below-minimum quantity (the brain
+    states the minimum and carries on — it never refuses). No
+    quantity yet -> ok. Banners -> ok (no minimum at all).
     """
     qty_raw = slots.get("quantity")
     if not qty_raw:
@@ -49,9 +57,8 @@ def moq_check(slots: dict) -> dict:
     return {
         "ok": False,
         "message": (
-            f"Our minimum order is {MINIMUM_ORDER} units per size, "
-            f"so {qty} units is below the minimum. "
-            f"Would {MINIMUM_ORDER} units work, or a different size?"
+            f"We can look at {qty} for you. Our standard MOQ is "
+            f"{MINIMUM_ORDER} per size and per design, but we do smaller runs too."
         ),
     }
 
@@ -70,7 +77,10 @@ def handoff_reason(text: str, slots: dict) -> str | None:
 
 
 def is_complete(slots: dict) -> bool:
-    """Quote-ready: product + sizes + quantity, MOQ satisfied."""
+    """Quote-ready: product + sizes + quantity present. The MOQ no
+    longer blocks (see module docstring); the full script gate is
+    script.script_complete, which also requires finishes/skus/
+    extras/material/style to be answered, given up, or not asked."""
     from .slots import missing_fields
 
-    return not missing_fields(slots) and moq_check(slots)["ok"]
+    return not missing_fields(slots)

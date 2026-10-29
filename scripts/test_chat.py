@@ -18,19 +18,27 @@ def check(name, cond):
     assert cond, name
 
 
-# 1. Normal quote: product + size + quantity extracted, nothing missing.
+# 1. Normal quote: product + size + quantity extracted, then the
+# script asks style (bags) — the quote is NOT complete until the
+# whole script (style, finishes, skus, extras, material) is done.
 r = handle_message("I need 5000 mylar bags, size 4x6 inches", store=None)
 check("mylar bag + size + qty extracted", r["slots"].get("product") == "mylar bag"
       and r["slots"].get("sizes") == "4x6 inches" and r["slots"].get("quantity") == "5000")
-check("complete when all required present", r["handoff"] == "complete")
+check("script asks style next, not complete yet",
+      "style" in r["reply"].lower() and r["handoff"] is None)
 
 # 2. Pack count is NOT quantity or size: "10 ct" must not fill either.
 s = extract_from_message("I want a 10 ct gummy pouch")
 check("pack count ignored", "quantity" not in s and "sizes" not in s)
 
-# 3. MOQ: 80 is below 1000 and must be refused in code, not accepted.
+# 3. MOQ (old-brain rule, new snapshot): 80 is below 1000 and is
+# NEVER refused — the bot states the minimum once, accepts the
+# quantity, and the team confirms the smaller run.
 r = handle_message("I need 80 boxes", store=None)
-check("MOQ blocks 80", "minimum order is 1000" in r["reply"].lower())
+check("MOQ accepts 80 with minimum stated",
+      "we can look at 80" in r["reply"].lower()
+      and "1000" in r["reply"] and r["slots"].get("quantity") == "80"
+      and r["handoff"] is None)
 
 # 4. Banners are exempt from MOQ.
 r = handle_message("I need 2 banners", store=None)

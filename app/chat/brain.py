@@ -1,19 +1,32 @@
 """The chat brain: one pipeline, in this order, every message.
 
   1. Language detect (heuristic).
-  2. Slot extraction + merge with the session's collected slots.
-  3. Code guards: MOQ arithmetic, handoff triggers.
-  4. RAG retrieval: exact topic first, then vector, then keyword.
-  5. Answer:
+  2. Old-bot intents in code (job, pitch, human, catalog, samples,
+     price objection, done, later) — pure intent messages never
+     merge slots.
+  3. Slot extraction + merge with the session's collected slots:
+     code first, then one gpt-5-nano read when code found nothing
+     (validated by code before anything is stored). A question is
+     never an answer: a visitor's question sentence fills no slot.
+  4. Code guards: handoff triggers, below-minimum note (the old
+     brain never refuses a smaller run — it states the minimum
+     once and lets the team confirm it).
+  5. The sales script, one question at a time, in the team's order:
+     product -> sizes -> style -> finishes -> quantity -> skus ->
+     extras -> material (family trims apply; plain orders never get
+     a designs question). A fact question is answered FIRST, then
+     the script question — never the other way round.
+  6. RAG retrieval: exact topic first, then vector, then keyword.
+  7. Answer:
        - handoff needed  -> say so, do not invent. POLICY RULE
          (narrowed, Oct 2026): a policy question is answered from
          the policy OKF file when retrieval finds one; handoff
          happens ONLY when no policy file covers the question.
-       - MOQ failed     -> state the minimum, do not accept silently.
        - OPENAI key set -> gpt-5-mini writes the reply, using ONLY
-         the retrieved OKF facts + slots + guard verdicts. It is told
-         to say "confirm with the team" when a fact is not in them.
-       - no key         -> deterministic reply: next missing-field
+         the retrieved OKF facts + slots + guard verdicts, then the
+         composer validator fixes it in code (or falls back to the
+         deterministic reply when it is unsalvageable).
+       - no key         -> deterministic reply: next script
          question, or a retrieved fact. This is honest, not a fake
          sales answer, and it lets the whole pipeline be tested
          without spending a cent.
@@ -26,11 +39,18 @@ import os
 import re
 
 from . import guards
-from .attempts import MAX_ASKS, apply_ask_outcome, ask_outcome, asks_what_is_usual, says_they_do_not_know
+from .attempts import (MAX_ASKS, apply_ask_outcome, ask_outcome, asks_what_is_usual,
+                       says_they_do_not_know, visitor_is_asking)
 from .complete import get_chat_complete_message, when_the_team_replies
+from .erp_eligibility import quantity_is_per_design, quantity_is_total
+from .composer import fix_reply
 from .contacts import (CONTACT_FIELDS, contact_field_by_key, email_in, has_reachable_contact,
                        is_contact_value_usable, is_our_reps_name, is_placeholder_name,
                        missing_contact_fields, phones_in, REP_NAMES)
+from .fact_topics import asks_bare_fact_topic, topic_query
+from .finished import (NOTED_AFTER_THE_QUOTE, NOT_SENT_YET, SIGN_OFFS,
+                       asks_if_it_arrived, is_pleasantry)
+from .i18n import tr as _tr
 from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A_PRICE_OBJECTION,
                       ANSWER_TO_ARE_YOU_A_BOT, ANSWER_TO_SAMPLES, DONE_WITH_US_MESSAGE, JOB_MESSAGE,
                       LATER_MESSAGE, NO_EMAIL_THEN_PHONE, PITCH_MESSAGE, YES_SEND_YOUR_NUMBER,
@@ -40,25 +60,56 @@ from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A
                       offers_a_phone_number, puts_it_off_for_now, rep_named_in,
                       wants_a_person, wants_it_in_the_chat)
 from .language import detect_language
-from .repeated import repeats_the_question
+from .llm_extract import llm_extract
+from .price_questions import PRICING_COMES_WITH_THE_QUOTE, asks_about_price
+from .quantity_parse import minimum_already_stated, wants_smaller_run
+from .quote_value import is_our_own_menu, without_template_blanks
+from .repeated import SENTENCE_BREAK, repeats_the_question
 from .retrieval import retrieve
+from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
+                     question_for, script_complete, script_missing, wants_plain_packaging)
 from .size_unit import apply_unit_answer, unit_answer
 from .slots import extract_from_message, merge_slots, missing_fields
 
-QUESTIONS = {
-    "product": "What product are you looking for — for example mylar bags, pouches, boxes, or labels?",
-    "sizes": "What size do you need? Width x height x depth, in inches or mm.",
-    "quantity": "How many units do you need?",
-}
+# A decline of a script field ("no", "none", "no preference"): the
+# field is recorded as "none"/"1" and the script moves on, instead
+# of looping on it. Product/sizes/quantity declines are NOT answers
+# — those fields are re-asked until given up.
+_DECLINE = re.compile(
+    r"^\s*(?:no|none|nope|nah|not needed|no preference|doesn'?t matter|don'?t need (?:it|one|any)?|no thanks?)\s*[.!]*\s*$",
+    re.IGNORECASE)
+_YES = re.compile(r"^\s*(?:yes|yeah|yep|ya|sure|please|ok(?:ay)?)\s*[.!]*\s*$", re.IGNORECASE)
+_BARE_NUMBER = re.compile(r"^\s*(\d+)\s*$")
+_BARE_SPELLED = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+                 "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"}
 
-def _suggestions(slots: dict, missing: list[str], reply: str = "") -> list[str]:
+def _question(field: str, slots: dict, language: str) -> str:
+    """The script question for a field, in the visitor's language
+    when a translation exists (i18n.py), else the team's English."""
+    if field == "style":
+        key = "q_style_boxes" if "box" in (slots.get("product") or "").lower() else "q_style_bags"
+        english = question_for(field, slots)
+        return _tr(key, language, english)
+    if field == "quantity" and per_design_quantity(slots):
+        return _tr("q_per_design", language, "How many units do you need per design?")
+    key = {"product": "q_product", "sizes": "q_sizes", "finishes": "q_finishes",
+           "quantity": "q_quantity_banner" if is_banner_family(slots.get("product")) else "q_quantity",
+           "skus": "q_skus", "extras": "q_extras", "material": "q_material"}.get(field, "")
+    english = question_for(field, slots)
+    return _tr(key, language, english) if key else english
+
+
+def _contact_question(field: str, language: str) -> str:
+    english = contact_field_by_key(field)["question"]
+    return _tr("q_" + field, language, english)
+
+
+def _suggestions(slots: dict, missing: list[str], reply: str = "", language: str = "en") -> list[str]:
     """Clickable next steps shown under every bot reply.
 
-    They follow the quote flow, not a random list: if the product
-    is missing, suggest products; if sizes are missing, suggest
-    sizes; if quantity is missing, suggest quantities; otherwise
-    suggest the most-asked fact questions. The UI renders these as
-    chips, so a visitor can continue in one tap instead of typing.
+    They follow the script, not a random list: the first missing
+    script field decides the chips. The UI renders these as chips,
+    so a visitor can continue in one tap instead of typing.
 
     Special case: a confirmation reply ("Just to confirm — do you
     want …?") gets Yes / Change chips, not generic fact questions
@@ -66,16 +117,36 @@ def _suggestions(slots: dict, missing: list[str], reply: str = "") -> list[str]:
     first live transcript, because tapping one abandoned the quote.
     """
     low_reply = (reply or "").lower()
-    if "just to confirm" in low_reply or "do you want" in low_reply:
-        return ["Yes, that's correct", "Change quantity", "Change size"]
+    if "just to confirm" in low_reply or "do you want" in low_reply \
+            or "confirm kar lun" in low_reply or "solo para confirmar" in low_reply:
+        return [_tr("yes_correct", language, "Yes, that's correct"),
+                _tr("change_quantity", language, "Change quantity"),
+                _tr("change_size", language, "Change size")]
     if "product" in missing:
-        return ["I need mylar bags", "I need custom boxes", "I need labels"]
+        return [_tr("chip_mylar", language, "I need mylar bags"),
+                _tr("chip_boxes", language, "I need custom boxes"),
+                _tr("chip_labels", language, "I need labels")]
     if "sizes" in missing:
-        return ["Size 4x6 inches", "Size 100x150mm", "Not sure about size"]
+        return [_tr("chip_size_4x6", language, "Size 4x6 inches"),
+                _tr("chip_size_mm", language, "Size 100x150mm"),
+                _tr("chip_not_sure_size", language, "Not sure about size")]
+    if "style" in missing:
+        return ["Flat", "Stand-up", "Flat-bottom"]
+    if "finishes" in missing:
+        return ["Matte", "Gloss", "Soft touch", "No preference"]
     if "quantity" in missing:
-        return ["1000 units", "5000 units", "Not sure about quantity"]
-    return ["What is the minimum order?", "Is shipping free?",
-            "What is your refund policy?"]
+        return [_tr("chip_qty_1000", language, "1000 units"),
+                _tr("chip_qty_5000", language, "5000 units"),
+                _tr("chip_not_sure_qty", language, "Not sure about quantity")]
+    if "skus" in missing:
+        return ["1 design", "2 designs", "3 designs"]
+    if "extras" in missing:
+        return ["Zipper and tear notch", "No extras"]
+    if "material" in missing:
+        return ["Kraft", "No preference"]
+    return [_tr("chip_moq", language, "What is the minimum order?"),
+            _tr("chip_shipping", language, "Is shipping free?"),
+            _tr("chip_refund", language, "What is your refund policy?")]
 
 
 def _slot_sources(slots: dict) -> list[str]:
@@ -112,22 +183,36 @@ _POLICY_BEYOND_HANDOFF = (
 )
 
 
+_SESSION_FALLBACK: dict = {}
+
+
 def _load_session(store, session_id: str | None) -> dict:
-    if not session_id or store is None:
+    """Slots live in the store when it works; otherwise in-process,
+    exactly like meta. The old code returned {} here when the store
+    was None or down while meta still persisted in-process — so a
+    multi-turn chat lost its slots but kept its answered-fields,
+    and the script could "confirm" a spec that was never collected.
+    Slots and meta must persist or fail together."""
+    if not session_id:
         return {}
-    try:
-        return store.load(session_id) or {}
-    except Exception:
-        return {}
+    if store is not None:
+        try:
+            return store.load(session_id) or {}
+        except Exception:
+            pass
+    return _SESSION_FALLBACK.get(session_id, {})
 
 
 def _save_session(store, session_id: str | None, slots: dict) -> None:
-    if not session_id or store is None:
+    if not session_id:
         return
-    try:
-        store.save(session_id, slots)
-    except Exception:
-        pass
+    if store is not None:
+        try:
+            store.save(session_id, slots)
+            return
+        except Exception:
+            pass
+    _SESSION_FALLBACK[session_id] = slots
 
 
 _META_FALLBACK: dict = {}
@@ -179,24 +264,23 @@ def _session_rep(session_id: str | None) -> str | None:
 _QUESTION_VARIANTS = {
     "product": "What are you looking to have made — boxes, bags or labels?",
     "sizes": "What size are you looking for?",
+    "style": "Which style would you like — flat, stand-up or flat-bottom?",
+    "finishes": "Which finish would you prefer — matte, gloss or soft touch?",
     "quantity": "What quantity are you looking to order for your first run?",
     "per_design": "How many units per design do you need?",
+    "skus": "How many designs or SKUs is that in total?",
+    "extras": "Should I add a zipper and tear notch?",
+    "material": "Any particular material or special feature in mind?",
     "name": "May I have your name?",
     "email": "Which email should I send the quote to?",
     "phone": "What phone number can the team reach you on?",
 }
 
 
-def _next_question_text(slots: dict, missing: list[str]) -> str:
+def _next_question_text(slots: dict, missing: list[str], language: str = "en") -> str:
     if not missing:
         return ""
-    if missing[0] == "quantity":
-        try:
-            if int(slots.get("skus", "1")) > 1:
-                return _QUESTION_VARIANTS["per_design"]
-        except (TypeError, ValueError):
-            pass
-    return QUESTIONS[missing[0]]
+    return _question(missing[0], slots, language)
 
 
 def _missing_contact(meta: dict, contact: dict) -> list:
@@ -208,8 +292,8 @@ def _missing_contact(meta: dict, contact: dict) -> list:
     return missing_contact_fields(contact, wanted)
 
 
-def _with_next_question(answer: str, slots: dict, missing: list[str]) -> str:
-    q = _next_question_text(slots, missing)
+def _with_next_question(answer: str, slots: dict, missing: list[str], language: str = "en") -> str:
+    q = _next_question_text(slots, missing, language)
     return f"{answer} {q}" if q else answer
 
 
@@ -256,20 +340,83 @@ def _fact_reply_text(text: str) -> str:
     return cleaned
 
 
-def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: list[str]) -> str:
+def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None = None) -> str:
+    """The collected spec as one readable line for confirmations:
+    product, size, style, finish, quantity (per design + total when
+    multi-design, or the total when the visitor said "in total"),
+    designs, extras, material — plus the fields the team still has
+    to confirm, so the confirmation never lies by omission about
+    what is still open."""
+    parts = []
+    if slots.get("product"):
+        parts.append(str(slots.get("product")))
+    if slots.get("sizes"):
+        parts.append(f"size {slots.get('sizes')}")
+    if slots.get("style") and slots.get("style") != "none":
+        parts.append(f"{slots.get('style')} style")
+    if slots.get("finishes") and slots.get("finishes") != "none":
+        parts.append(f"{slots.get('finishes')} finish")
+    try:
+        n_designs = int(slots.get("skus", "1"))
+    except (TypeError, ValueError):
+        n_designs = 1
+    if slots.get("quantity"):
+        if n_designs > 1 and qty_split == "total":
+            parts.append(f"{slots.get('quantity')} units total, {n_designs} designs")
+        elif n_designs > 1:
+            try:
+                total = int(slots.get("quantity", "0")) * n_designs
+            except (TypeError, ValueError):
+                total = slots.get("quantity")
+            parts.append(f"{slots.get('quantity')} units per design, {n_designs} designs "
+                         f"(total {total} units)")
+        else:
+            parts.append(f"{slots.get('quantity')} units")
+    if slots.get("extras") and slots.get("extras") != "none":
+        parts.append(f"extras {slots.get('extras')}")
+    if slots.get("material") and slots.get("material") != "none":
+        parts.append(f"{slots.get('material')} material")
+    text = ", ".join(parts)
+    if gave_up:
+        text += f". For {', '.join(gave_up)}, the team will confirm it with you directly"
+    return text
+
+
+def _below_min_note(slots: dict, language: str) -> str:
+    """Below-minimum note for confirmations (old composer rule:
+    never hand the rep a number nobody has answered)."""
+    try:
+        qty = int(float(str(slots.get("quantity", "0")).replace(",", "")))
+    except (TypeError, ValueError):
+        return ""
+    if qty and qty < 1000 and guards.minimum_applies(slots.get("product")):
+        return " " + _tr("below_min_note", language,
+                         "Note: {qty} is below our usual minimum of 1000 per size — "
+                         "the team will confirm the smaller run with you.", qty=qty)
+    return ""
+
+
+def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: list[str],
+                         language: str = "en", gave_up: list | None = None,
+                         qty_split: str | None = None) -> str:
     """No-LLM reply. Only uses OKF text and slot questions — it can
     never invent a price, a policy, or a fact.
 
-    Order matters: an ORDER statement ("I need 2 banners") must get
-    the next missing-field question, not a fact chunk that merely
-    mentions a keyword. Only a real fact question ("?", or a fact
-    word like turnaround) gets the fact text first.
+    Order matters (old withAnswersBeforeQuestion): a fact question
+    is answered FIRST, then the script question — never the other
+    way round. An ORDER statement ("I need 2 banners") gets the next
+    script question, not a fact chunk that merely mentions a keyword.
     """
     low = message.lower()
     is_fact_question = "?" in message or any(w in low for w in _FACT_WORDS)
+    next_q = _next_question_text(slots, missing, language)
     if is_fact_question and not facts:
-        return ("I don't want to give you a wrong answer on that — that detail "
-                "is not in our published facts, so I will confirm with the team.")
+        # Old composer rule: never "I'll confirm/check" — either the
+        # facts answer it or it goes in the quote.
+        text = ("I don't want to give you a wrong answer on that — that detail "
+                "is not in our published facts, so I'll include it in your quote "
+                "for the team.")
+        return f"{text} {next_q}" if next_q else text
     if facts and is_fact_question:
         text = _fact_reply_text(facts[0]["text"])
         # Capability question about a real product ("Can you print
@@ -279,38 +426,17 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
         is_capability = low.startswith(("can you", "do you", "can i", "could you"))
         if is_capability and "/products/" in facts[0]["source"] and not text.lower().startswith("yes"):
             text = "Yes — " + (text[0].lower() + text[1:] if text else text)
-        return text
+        return f"{text} {next_q}" if next_q else text
     if missing:
-        # Multi-design order: quantity is PER DESIGN (the question the
-        # competitor's human rep asks: "How much quantity per design?").
-        if missing[0] == "quantity":
-            try:
-                if int(slots.get("skus", "1")) > 1:
-                    return "How many units do you need per design?"
-            except (TypeError, ValueError):
-                pass
-        return QUESTIONS[missing[0]]
-    # Quote complete and no fact question: ask for confirmation, not
+        return next_q
+    # Script complete and no fact question: ask for confirmation, not
     # a raw KB chunk. (The old fallback returned facts[0] here, which
     # was a whole file including its frontmatter — the ugliest reply
     # in the live transcript's no-LLM path.)
     if not missing:
-        try:
-            n_designs = int(slots.get("skus", "1"))
-        except (TypeError, ValueError):
-            n_designs = 1
-        if n_designs > 1:
-            try:
-                total = int(slots.get("quantity", "0")) * n_designs
-            except (TypeError, ValueError):
-                total = slots.get("quantity")
-            return (f"Just to confirm — do you want {slots.get('quantity')} "
-                    f"{slots.get('product')} per design, {n_designs} designs "
-                    f"(total {total} units), size {slots.get('sizes')}, "
-                    f"with {slots.get('extras', 'none')} extras?")
-        return (f"Just to confirm — do you want {slots.get('quantity')} "
-                f"{slots.get('product')}, size {slots.get('sizes')}, "
-                f"{slots.get('skus', '1')} SKU with {slots.get('extras', 'none')} extras?")
+        intro = _tr("confirm_intro", language, "Just to confirm — do you want")
+        return (f"{intro} {_spec_parts(slots, gave_up, qty_split)}?"
+                f"{_below_min_note(slots, language)}")
     if facts:
         return _fact_reply_text(facts[0]["text"])
     return "Thanks — I have your details. A team member will confirm the quote shortly."
@@ -322,7 +448,11 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
 
     The prompt is the leash: facts come ONLY from the retrieved OKF
     chunks below. No chunk about it -> the model must say it will
-    confirm with the team, never guess. Numbers are copied verbatim.
+    include it in the quote for the team, never guess. Numbers are
+    copied verbatim. The composer rules below are the old brain's
+    problemsWith list, restated as prompt rules — and they are ALSO
+    enforced in code afterwards, because a prompt rule is followed
+    "most of the time".
     """
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
@@ -342,9 +472,24 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
             "PER DESIGN: ask for quantity per design and, when confirming, "
             "state quantity per design and the total. Use ONLY the facts below and the "
             "collected order details. If a fact is not in them, say you "
-            "will confirm with the team — never guess, never invent a "
-            "price, policy, or date. Copy numbers verbatim. Keep it short, "
-            "one question at a time.\n\n"
+            "will include it in the quote for the team — never guess, never invent a "
+            "price, policy, or date. Copy numbers verbatim. Keep it short.\n"
+            "SCRIPT (ask one question at a time, in this order): product, size, "
+            "style (bags/boxes), finish, quantity, designs/SKUs, extras (bags only: "
+            "zipper and tear notch), material. Never ask for a detail already "
+            "collected, never ask two things at once, never repeat a question, "
+            "never ask designs/SKUs for a plain (unprinted) order.\n"
+            "ALWAYS answer the visitor's own question first, in one short sentence, "
+            "then ask your one script question. A price question is answered "
+            "'your quote will carry the pricing' — never a figure, never the "
+            "minimum as the answer. Banners have no minimum — never state one "
+            "for them. A below-minimum quantity is never refused: say we can look "
+            "at it, state the usual minimum of 1000 per size, and carry on.\n"
+            "NEVER: say you will prepare, get or send a quote; say you will "
+            "confirm, check or find something out; say you cannot go on without "
+            "something; ask about proofs, artwork files, PDFs, approval links, "
+            "quote layout, delivery addresses or carriers (a rep sorts those out); "
+            "hand the visitor's own question back to them.\n\n"
             f"FACTS:\n{fact_block}\n\nCOLLECTED: {slots}{reply_ctx}"
         )
         resp = client.chat.completions.create(
@@ -360,26 +505,28 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
         return None
 
 
-def _perfect_reply(slots: dict) -> str:
+def _kb_first_sentence(topic: str) -> str | None:
+    """First sentence of the KB answer for a fact topic, for the
+    composer's answer-before-question repair."""
+    try:
+        facts = retrieve(topic_query(topic))
+    except Exception:
+        return None
+    if not facts:
+        return None
+    text = _fact_reply_text(facts[0]["text"])
+    first = re.split(SENTENCE_BREAK, text)[0].strip() if text else ""
+    return first or None
+
+
+def _perfect_reply(slots: dict, language: str = "en", gave_up: list | None = None,
+                   qty_split: str | None = None) -> str:
     """Quote-ready message. Multi-design orders state per-design
     quantity and total, or the confirmation lies by omission."""
-    try:
-        n = int(slots.get("skus", "1"))
-    except (TypeError, ValueError):
-        n = 1
-    if n > 1:
-        try:
-            total = int(slots.get("quantity", "0")) * n
-        except (TypeError, ValueError):
-            total = slots.get("quantity")
-        return (f"Perfect — your quote request is ready: {slots.get('product')}, "
-                f"{slots.get('sizes')}, {slots.get('quantity')} units per design, "
-                f"{n} designs (total {total} units), extras {slots.get('extras', 'none')}. "
-                f"A team member will confirm the price and turnaround {when_the_team_replies()}.")
-    return (f"Perfect — your quote request is ready: {slots.get('product')}, "
-            f"{slots.get('sizes')}, {slots.get('quantity')} units, "
-            f"{slots.get('skus', '1')} SKU, extras {slots.get('extras', 'none')}. "
-            f"A team member will confirm the price and turnaround {when_the_team_replies()}.")
+    intro = _tr("perfect_intro", language, "Perfect — your quote request is ready:")
+    return (f"{intro} {_spec_parts(slots, gave_up, qty_split)}. "
+            f"A team member will confirm the price and turnaround {when_the_team_replies()}."
+            f"{_below_min_note(slots, language)}")
 
 
 def handle_message(message: str, session_id: str | None = None, store=None,
@@ -393,6 +540,17 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     prior = _load_session(store, session_id)
     meta = _load_meta(store, session_id)
     low = message.lower().strip()
+    # Session language (old replyLanguageFor): the language of the
+    # CONVERSATION, not just this message. A Spanish visitor whose
+    # second message is only "4x6 pulgadas" must not flip back to
+    # English mid-quote — once a non-English language is detected,
+    # it sticks, unless they explicitly switch to English.
+    if language != "en":
+        meta["language"] = language
+    elif "in english" in low or "english please" in low:
+        meta.pop("language", None)
+    else:
+        language = meta.get("language") or language
     # Whole-chat memory for the checks below (capped, visitor only).
     visitor_messages = list(meta.get("visitor_messages") or [])
     visitor_messages.append(message)
@@ -414,10 +572,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                                           "quote for", "buy"))
 
     def _intent_result(reply, handoff=None, suggestions=None):
+        # Old max-turns rule (12 AI messages): count bot replies here
+        # and in the final branch; the contact flow is bounded by its
+        # 3 fields x 2 asks, so it cannot hit the cap on its own.
+        meta["ai_count"] = meta.get("ai_count", 0) + 1
         _save_session(store, session_id, prior)
         _save_meta(store, session_id, meta)
         return {"reply": reply, "language": language, "slots": prior,
-                "missing": missing_fields(prior), "sources": [],
+                "missing": script_missing(prior, meta), "sources": [],
                 "handoff": handoff, "llm_used": False,
                 "suggestions": suggestions if suggestions is not None else []}
 
@@ -428,7 +590,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # human-request pattern, and the old bot used to hand those chats
     # over by mistake. Curiosity is not a request for somebody else.
     if asks_only_if_we_are_a_bot(message):
-        return _intent_result(_with_next_question(ANSWER_TO_ARE_YOU_A_BOT, prior, missing_fields(prior)))
+        return _intent_result(_with_next_question(ANSWER_TO_ARE_YOU_A_BOT, prior,
+                                                 script_missing(prior, meta), language))
     if wants_a_person(message):
         return _intent_result("Of course — I am connecting you with a team member who can help directly.",
                               handoff="visitor_asked_for_human")
@@ -451,14 +614,17 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         meta["paused"] = True
         return _intent_result(LATER_MESSAGE)
     if not _is_order and asks_for_a_catalog(message):
-        return _intent_result(_with_next_question(ANSWER_TO_A_CATALOG, prior, missing_fields(prior)))
+        return _intent_result(_with_next_question(ANSWER_TO_A_CATALOG, prior,
+                                                 script_missing(prior, meta), language))
     if not _is_order and asks_for_samples(message) and "?" not in message:
         # A sample REQUEST ('send me samples') is noted for the team;
         # a sample QUESTION ('do you offer samples?') falls through
         # to the KB fact answer below.
-        return _intent_result(_with_next_question(ANSWER_TO_SAMPLES, prior, missing_fields(prior)))
+        return _intent_result(_with_next_question(ANSWER_TO_SAMPLES, prior,
+                                                 script_missing(prior, meta), language))
     if objects_to_the_price(message):
-        return _intent_result(_with_next_question(ANSWER_TO_A_PRICE_OBJECTION, prior, missing_fields(prior)))
+        return _intent_result(_with_next_question(ANSWER_TO_A_PRICE_OBJECTION, prior,
+                                                 script_missing(prior, meta), language))
     if offers_a_phone_number(message):
         meta["awaiting_contact"] = True
         meta["last_asked"] = "phone"
@@ -467,23 +633,108 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         meta["last_asked"] = "phone"
         meta.setdefault("asks", {})["email"] = MAX_ASKS
         return _intent_result(NO_EMAIL_THEN_PHONE)
+    _start_over = low in ("start over", "new order", "start again", "reset",
+                          "new quote", "start fresh")
+    # Finished quote picked back up (old whatToDoWithFinishedChat /
+    # closingLineFor): NOT a fresh enquiry. A pleasantry gets a
+    # sign-off (never the same one twice), "did you email me" gets
+    # "not yet", a question gets answered and the chat stays
+    # finished, a new detail is noted. Only a new order statement
+    # restarts (handled below), and start-over restarts too.
+    if meta.get("complete") and not _is_order and not _start_over:
+        _last_bot = meta.get("last_bot_question", "")
+        if is_pleasantry(message):
+            _last_sign = _tr("signoff_b", language, SIGN_OFFS[1]) \
+                if _tr("signoff_a", language, SIGN_OFFS[0]) in _last_bot else \
+                _tr("signoff_a", language, SIGN_OFFS[0])
+            _save_session(store, session_id, prior)
+            _save_meta(store, session_id, meta)
+            return {"reply": _last_sign, "language": language, "slots": prior,
+                    "missing": script_missing(prior, meta), "sources": [],
+                    "handoff": None, "llm_used": False, "suggestions": []}
+        if asks_if_it_arrived(message):
+            if language in ("es", "ur-roman"):
+                _reply = _tr("not_sent", language, NOT_SENT_YET)
+            else:
+                _reply = (f"Not yet — the quote has not gone out. "
+                          f"You will have it {when_the_team_replies()}.")
+            _save_session(store, session_id, prior)
+            _save_meta(store, session_id, meta)
+            return {"reply": _reply, "language": language, "slots": prior,
+                    "missing": script_missing(prior, meta), "sources": [],
+                    "handoff": None, "llm_used": False, "suggestions": []}
+        if "?" in message or visitor_is_asking(message):
+            _facts = retrieve(message)
+            _reply = _fact_reply_text(_facts[0]["text"]) if _facts else \
+                ("I don't want to give you a wrong answer on that — I'll include "
+                 "it in your quote for the team.")
+            _save_session(store, session_id, prior)
+            _save_meta(store, session_id, meta)
+            return {"reply": _reply, "language": language, "slots": prior,
+                    "missing": script_missing(prior, meta),
+                    "sources": [f["source"] for f in _facts],
+                    "handoff": None, "llm_used": False, "suggestions": []}
+        try:
+            _extra = extract_from_message(without_template_blanks(message))
+        except Exception:
+            _extra = {}
+        _slots2 = merge_slots(prior, _extra)
+        _save_session(store, session_id, _slots2)
+        _save_meta(store, session_id, meta)
+        return {"reply": _tr("noted", language, NOTED_AFTER_THE_QUOTE),
+                "language": language, "slots": _slots2,
+                "missing": script_missing(_slots2, meta), "sources": [],
+                "handoff": None, "llm_used": False, "suggestions": []}
     # Extraction must never crash the chat: a parser bug used to turn
     # into a 500 and the visitor saw "Message didn't send" (the
     # "15 thousand" case: float("15 thousand") raised ValueError).
+    # Template blanks are stripped first: "Qty: __ Size: __" from an
+    # ad pre-fill is not an answer to anything.
     try:
-        extracted = extract_from_message(message)
+        extracted = extract_from_message(without_template_blanks(message))
     except Exception:
         extracted = {}
-    _is_fact_q = "?" in message or any(w in low for w in _FACT_WORDS)
-    _is_order = any(ph in low for ph in ("i need", "i want", "i'd like",
-                                          "i would like", "order", "get a quote",
-                                          "quote for", "buy"))
-    if _is_fact_q and not _is_order:
-        # A question's numbers/sizes are what it ASKS about, not an
-        # order spec — drop them so no guard ever fires on them.
-        extracted.pop("quantity", None)
-        extracted.pop("sizes", None)
+    # A question is never an answer (old isAQuestionNotAnAnswer):
+    # "Do you make 4x6 mylar bags?" must not fill product or sizes —
+    # it gets a capability answer, then the script asks product.
+    # An order statement ("I need…") still extracts.
+    if visitor_is_asking(message) and not _is_order:
+        extracted = {}
+    # Our own menu echoed back ("boxes, bags, or labels") is not an
+    # answer either — re-ask instead of storing it.
+    _menu_echo = is_our_own_menu(message.strip())
+    if _menu_echo:
+        extracted = {}
+    # Model read for what code could not parse (old extractor's
+    # second half), validated by code before anything is stored.
+    # Only when code found nothing, and never for a question.
+    if not extracted and not visitor_is_asking(message) and not _menu_echo:
+        try:
+            extracted = llm_extract(message)
+        except Exception:
+            extracted = {}
     slots = merge_slots(prior, extracted)
+    # A contact answer is not an order: while awaiting contact, a
+    # phone number ("5551234567") must never overwrite the quantity
+    # — digits answered to the phone question are a phone number,
+    # not a new order. Only a real order statement merges while
+    # awaiting contact (the name_is_order free turn below).
+    if meta.get("awaiting_contact") and not _is_order:
+        slots = prior
+        extracted = {}
+    # Track what the visitor actually said: script_missing must not
+    # mistake merge defaults (skus="1", extras="none") for answers —
+    # the old script asks "How many designs?" even though skus
+    # defaults to 1, because the default is what the rep is handed,
+    # not what the visitor said.
+    if extracted:
+        meta.setdefault("answered_fields", [])
+        for _k in extracted:
+            if _k not in meta["answered_fields"]:
+                meta["answered_fields"].append(_k)
+    # Plain packaging: no designs exist, so skus is 1 and never asked.
+    if wants_plain_packaging(visitor_messages):
+        slots["skus"] = "1"
     # Finished chat + a new order statement = a new enquiry, not a
     # continuation with stale size/quantity (old whatToDoWithFinishedChat).
     if meta.get("complete") and _is_order and not meta.get("awaiting_contact"):
@@ -497,11 +748,22 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _em = email_in(message)
     if _em and is_contact_value_usable("email", _em):
         contact["email"] = _em
+    _phone_volunteered = False
     for _ph in phones_in(message):
         if is_contact_value_usable("phone", _ph):
             contact["phone"] = _ph
+            _phone_volunteered = True
             break
     meta["contact"] = contact
+    # Same class of bug mid-quote: "my number is 5551234567" shares a
+    # phone number, not a quantity. When a phone number was just
+    # stored from this message and the message carries no quantity
+    # wording, the quantity slot must not move this turn.
+    if _phone_volunteered and not re.search(r"\b(units?|pieces?|pcs|qty|quantity|order)\b", low):
+        if prior.get("quantity"):
+            slots["quantity"] = prior["quantity"]
+        else:
+            slots.pop("quantity", None)
     # A bare unit answers a unit question ('mm' after 'inches, cm or
     # mm?'): put it onto the size in code, like the old bot did.
     _unit = unit_answer(message)
@@ -554,8 +816,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                         "llm_used": False, "suggestions": [], "contact": contact,
                     }
                 meta["last_asked"] = _next
-                _q = contact_field_by_key(_next)["question"]
-                if repeats_the_question(_q, meta.get("last_bot_question", "")):
+                _q = _contact_question(_next, language)
+                if language == "en" and repeats_the_question(_q, meta.get("last_bot_question", "")):
                     _q = _QUESTION_VARIANTS[_next]
                 meta["last_bot_question"] = _q
                 _save_session(store, session_id, slots)
@@ -591,7 +853,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     }
                 if _next != _field:
                     meta["last_asked"] = _next
-                    _q = contact_field_by_key(_next)["question"]
+                    _q = _contact_question(_next, language)
                     meta["last_bot_question"] = _q
                     _save_session(store, session_id, slots)
                     _save_meta(store, session_id, meta)
@@ -603,21 +865,19 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _save_session(store, session_id, slots)
                 _save_meta(store, session_id, meta)
                 return {
-                    "reply": contact_field_by_key(_field)["question"], "language": language,
+                    "reply": _contact_question(_field, language), "language": language,
                     "slots": slots, "missing": missing_fields(slots),
                     "sources": _slot_sources(slots), "handoff": None,
                     "llm_used": False, "suggestions": [], "contact": contact,
                 }
-    if low in ("start over", "new order", "start again", "reset",
-               "new quote", "start fresh"):
+    if _start_over:
         _save_session(store, session_id, {})
         _save_meta(store, session_id, {})
         return {
             "reply": "Sure — starting fresh. What product are you looking for?",
             "language": language, "slots": {}, "missing": ["product"],
             "sources": [], "handoff": None, "llm_used": False,
-            "suggestions": ["I need mylar bags", "I need custom boxes",
-                            "I need labels", "What do you offer?"],
+            "suggestions": _suggestions({}, ["product"], language=language),
         }
 
     # Confirmation chips must actually work: "Change quantity" clears
@@ -627,23 +887,23 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         slots.pop("quantity", None)
         _save_session(store, session_id, slots)
         return {
-            "reply": QUESTIONS["quantity"], "language": language, "slots": slots,
-            "missing": missing_fields(slots), "sources": _slot_sources(slots),
+            "reply": _question("quantity", slots, language), "language": language, "slots": slots,
+            "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
             "handoff": None, "llm_used": False,
-            "suggestions": ["1000 units", "5000 units", "Not sure about quantity"],
+            "suggestions": _suggestions(slots, ["quantity"], language=language),
         }
     if "change size" in low:
         slots.pop("sizes", None)
         _save_session(store, session_id, slots)
         return {
-            "reply": QUESTIONS["sizes"], "language": language, "slots": slots,
-            "missing": missing_fields(slots), "sources": _slot_sources(slots),
+            "reply": _question("sizes", slots, language), "language": language, "slots": slots,
+            "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
             "handoff": None, "llm_used": False,
-            "suggestions": ["Size 4x6 inches", "Size 100x150mm", "Not sure about size"],
+            "suggestions": _suggestions(slots, ["sizes"], language=language),
         }
     if low in ("yes", "yes, that's correct", "yes thats correct",
                "yes, that's right", "confirm", "confirmed", "correct") \
-            and guards.is_complete(slots):
+            and script_complete(slots, meta):
         # Whole-chat not-a-customer check: a job seeker who later
         # typed an order word is still not a lead if the chat as a
         # whole never became an enquiry.
@@ -658,15 +918,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             }
         _contact = dict(meta.get("contact") or {})
         _next_contact = (_missing_contact(meta, _contact) or [None])[0]
+        _gave_up = meta.get("gave_up") or []
         if _next_contact is None and has_reachable_contact(_contact):
             meta["awaiting_contact"] = False
             meta["complete"] = True
             _save_session(store, session_id, slots)
             _save_meta(store, session_id, meta)
             return {
-                "reply": _perfect_reply(slots) + " " + get_chat_complete_message(),
+                "reply": _perfect_reply(slots, language, _gave_up, meta.get("qty_split")) + " " + get_chat_complete_message(),
                 "language": language, "slots": slots,
-                "missing": missing_fields(slots), "sources": _slot_sources(slots),
+                "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
                 "handoff": "complete", "llm_used": False, "suggestions": [],
                 "contact": _contact,
             }
@@ -674,14 +935,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         # confirmation summary stays, then the first contact question.
         meta["awaiting_contact"] = True
         meta["last_asked"] = _next_contact or "name"
-        _q = contact_field_by_key(meta["last_asked"])["question"]
+        _q = _contact_question(meta["last_asked"], language)
         meta["last_bot_question"] = _q
         _save_session(store, session_id, slots)
         _save_meta(store, session_id, meta)
         return {
-            "reply": _perfect_reply(slots) + " " + _q,
+            "reply": _perfect_reply(slots, language, _gave_up, meta.get("qty_split")) + " " + _q,
             "language": language, "slots": slots,
-            "missing": missing_fields(slots), "sources": _slot_sources(slots),
+            "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
             "handoff": None, "llm_used": False, "suggestions": [],
             "contact": _contact,
         }
@@ -697,71 +958,200 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "reply": _POLICY_BEYOND_HANDOFF, "language": language,
                 "slots": slots, "missing": missing_fields(slots),
                 "sources": [], "handoff": reason, "llm_used": False,
-                "suggestions": _suggestions(slots, missing_fields(slots)),
+                "suggestions": _suggestions(slots, script_missing(slots, meta), language=language),
             }
     if reason and reason != "policy_question":
         _save_session(store, session_id, slots)
         return {
             "reply": "Of course — I am connecting you with a team member who can help directly.",
             "language": language, "slots": slots,
-            "missing": missing_fields(slots), "sources": [],
+            "missing": script_missing(slots, meta), "sources": [],
             "handoff": reason, "llm_used": False,
-            "suggestions": _suggestions(slots, missing_fields(slots)),
+            "suggestions": _suggestions(slots, script_missing(slots, meta), language=language),
         }
 
-    moq = guards.moq_check(slots)
     if not facts:
         facts = retrieve(message)
     sources = [f["source"] for f in facts]
-    missing = missing_fields(slots)
+    missing = script_missing(slots, meta)
+    _gave_up = list(meta.get("gave_up") or [])
 
-    # "Not sure" used to loop forever: the bot re-asked the same
-    # MOQ question because no quantity was ever collected. Instead,
-    # offer the MOQ as a starting point (quantity) or a common size
-    # (sizes), so the visitor can move forward in one tap.
-    # ORDER FIX: sizes must be checked BEFORE quantity. Slot order is
-    # product -> sizes -> quantity, so after "Not sure about size"
-    # both sizes AND quantity are missing — the old quantity-first
-    # check fired and offered quantity chips for a size question.
-    if ("not sure" in low or says_they_do_not_know(message)) and missing:
-        if "sizes" in missing:
-            _save_session(store, session_id, slots)
-            return {
-                "reply": ("No problem — tell me what will go inside the pack, "
-                          "or pick a common size to start with."),
-                "language": language, "slots": slots, "missing": missing,
-                "sources": _slot_sources(slots) or sources,
-                "handoff": None, "llm_used": False,
-                "suggestions": ["Size 4x6 inches", "Size 100x150mm",
-                                "I will send artwork later"],
-            }
-        if "quantity" in missing:
-            _save_session(store, session_id, slots)
-            return {
-                "reply": ("No problem — most orders start at the minimum of 1000 units "
-                          "per size. Would you like to start with 1000, or a rough range?"),
-                "language": language, "slots": slots, "missing": missing,
-                "sources": _slot_sources(slots) or sources,
-                "handoff": None, "llm_used": False,
-                "suggestions": ["1000 units", "5000 units", "More than 5000"],
-            }
-
-    if not moq["ok"]:
-        _bot_said = meta.get("bot_replies") or []
-        if any("minimum order is 1000" in b for b in _bot_said):
-            _reply = ("As mentioned, the minimum is 1000 units per size — would 1000 units "
-                      "work for you, or should I note the smaller run for the team?")
-        else:
-            _reply = moq["message"]
-        meta.setdefault("bot_replies", []).append(_reply)
+    def _final_return(reply, handoff=None, llm_used=False, srcs=None):
         _save_session(store, session_id, slots)
         _save_meta(store, session_id, meta)
-        return {
-            "reply": _reply, "language": language, "slots": slots,
-            "missing": missing, "sources": sources,
-            "handoff": None, "llm_used": False,
-            "suggestions": _suggestions(slots, missing),
-        }
+        return {"reply": reply, "language": language, "slots": slots,
+                "missing": script_missing(slots, meta),
+                "sources": srcs if srcs is not None else _slot_sources(slots),
+                "handoff": handoff, "llm_used": llm_used,
+                "suggestions": _suggestions(slots, script_missing(slots, meta),
+                                            reply=reply, language=language)}
+
+    def _confirmation_text() -> str:
+        intro = _tr("confirm_intro", language, "Just to confirm — do you want")
+        return (f"{intro} {_spec_parts(slots, _gave_up, meta.get('qty_split'))}?"
+                f"{_below_min_note(slots, language)}")
+
+    # Multi-design quantity scope (old quantity_split_question):
+    # "5000 units, 3 designs" does not say whether 5000 is the total
+    # or per design — and a quantity given before the designs were
+    # known is just as ambiguous. Ask it (at most twice, the old
+    # cap), then default to per-design, the standing rule. Scope is
+    # read from VISITOR words only: the bot's own quantity question
+    # carries the MOQ line ("1000 per size and per design"), which
+    # would falsely count as the visitor stating per-design. An
+    # answer to a per-design question counts as stated via the
+    # asked_per_design flag set when that question went out.
+    try:
+        _n_designs = int(slots.get("skus", "1"))
+    except (TypeError, ValueError):
+        _n_designs = 1
+    if _n_designs > 1 and slots.get("quantity") and not meta.get("split_resolved"):
+        _scope_total = quantity_is_total(slots.get("quantity"), visitor_messages) \
+            or "total" in low
+        _scope_each = quantity_is_per_design(slots.get("quantity"), visitor_messages) \
+            or meta.get("asked_per_design") or "per design" in low or "each" in low
+        if _scope_total and not _scope_each:
+            meta["split_resolved"] = True
+            meta["qty_split"] = "total"
+        elif _scope_each:
+            meta["split_resolved"] = True
+            meta["qty_split"] = "per_design"
+        elif meta.get("split_asked", 0) >= 2:
+            meta["split_resolved"] = True
+            meta["qty_split"] = "per_design"
+        else:
+            _asked_n = meta.get("split_asked", 0)
+            meta["split_asked"] = _asked_n + 1
+            _n_fmt = f"{int(float(str(slots.get('quantity')).replace(',', ''))):,}"
+            if _asked_n == 0:
+                _split_q = (f"Just to price it right: is that {_n_fmt} in total, "
+                            f"or {_n_fmt} of each of your {_n_designs} designs?")
+            else:
+                _split_q = (f"Sorry, one more check: {_n_fmt} in total, "
+                            f"or {_n_fmt} of each design?")
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {"reply": _split_q, "language": language, "slots": slots,
+                    "missing": script_missing(slots, meta),
+                    "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                    "suggestions": ["In total", "Per design"]}
+
+    # Price question (old visitorQuestions): a price is a rep's to
+    # give, and it comes with the quote — never a figure, never the
+    # minimum as the answer. Answer it, then the script question
+    # (or the confirmation, when the script is complete).
+    if asks_about_price(message):
+        _price_line = _tr("price_line", language, PRICING_COMES_WITH_THE_QUOTE)
+        if not missing:
+            return _final_return(_price_line + " " + _confirmation_text())
+        return _final_return(_price_line + " " + _next_question_text(slots, missing, language))
+
+    # Bare fact topic ("Moq" alone): answer it, then the script
+    # question. Without this, "MOQ" typed in answer to the designs
+    # question went onto the lead as the number of designs.
+    _bare = asks_bare_fact_topic(message)
+    if _bare and not _is_order:
+        _bfacts = retrieve(topic_query(_bare))
+        if _bfacts:
+            _text = _fact_reply_text(_bfacts[0]["text"])
+            _q = _next_question_text(slots, missing, language)
+            _tail = (" " + _q) if _q else ((" " + _confirmation_text()) if not missing else "")
+            return _final_return(_text + _tail, srcs=[f["source"] for f in _bfacts])
+
+    # "Did you email me?" (old dodgesHasItArrived): the one true
+    # answer is that it has not gone out yet, and when it will.
+    if asks_if_it_arrived(message):
+        if meta.get("complete"):
+            _reply = (f"Not yet — the quote has not gone out. "
+                      f"You will have it {when_the_team_replies()}.")
+            return _final_return(_reply, srcs=[])
+        _q = _next_question_text(slots, missing, language)
+        _reply = _tr("not_sent", language, NOT_SENT_YET)
+        return _final_return(_reply + (" " + _q if _q else ""), srcs=[])
+
+    # Smaller run after the minimum was stated: put it to the team
+    # (old ignoresTheSmallerRun) — never repeat the minimum at them,
+    # never turn them down.
+    if wants_smaller_run(message) and minimum_already_stated(meta.get("bot_replies") or []):
+        _q = _next_question_text(slots, missing, language)
+        _reply = _tr("smaller_run_note", language,
+                     "I'll put {qty} to the team and come back to you on it.",
+                     qty=slots.get("quantity"))
+        return _final_return(_reply + (" " + _q if _q else ""))
+
+    # "Not sure" used to loop forever: the bot re-asked the same
+    # question because no answer was ever collected. For sizes and
+    # quantity, offer a starting point; for finishes/extras/material/
+    # style/skus, "not sure" IS an answer (old NOT_SURE) — record the
+    # default and move on instead of looping.
+    if ("not sure" in low or says_they_do_not_know(message)) and missing:
+        _first = missing[0]
+        if _first == "sizes":
+            return _final_return(
+                _tr("not_sure_sizes", language,
+                    "No problem — tell me what will go inside the pack, "
+                    "or pick a common size to start with."),
+                srcs=_slot_sources(slots) or sources)
+        if _first == "quantity":
+            return _final_return(
+                _tr("not_sure_quantity", language,
+                    "No problem — most orders start at the minimum of 1000 units "
+                    "per size. Would you like to start with 1000, or a rough range?"),
+                srcs=_slot_sources(slots) or sources)
+        if _first in ("finishes", "extras", "material", "style", "skus"):
+            slots[_first] = "1" if _first == "skus" else "none"
+            meta.setdefault("answered_fields", [])
+            if _first not in meta["answered_fields"]:
+                meta["answered_fields"].append(_first)
+            _missing2 = script_missing(slots, meta)
+            if not _missing2:
+                return _final_return(_confirmation_text())
+            return _final_return(_next_question_text(slots, _missing2, language))
+
+    # Below-minimum note (old composer: lead with what we can do,
+    # give the minimum after it, never a flat refusal). Prepended to
+    # the next question reply below, once — the quantity question
+    # itself already states the MOQ, so it never repeats.
+    _moq_note = ""
+    try:
+        _qty = int(float(str(slots.get("quantity", "0")).replace(",", "")))
+    except (TypeError, ValueError):
+        _qty = 0
+    if _qty and _qty < 1000 and guards.minimum_applies(slots.get("product")) \
+            and not minimum_already_stated(meta.get("bot_replies") or []):
+        _moq_note = _tr("moq_note", language, BELOW_MIN_NOTE, qty=_qty)
+
+    # Per-field answer handling for the last script question:
+    # a decline ("no"/"none") of finishes/extras/material/style is
+    # recorded as "none" (skus: "1"); "yes" to the extras question
+    # means zipper + tear notch; a bare number answers the skus
+    # question. Product/sizes/quantity declines are NOT answers —
+    # those fields are re-asked until given up.
+    _last = meta.get("last_asked")
+    if _last in ("finishes", "extras", "material", "style", "skus") \
+            and not visitor_is_asking(message):
+        if _DECLINE.match(message.strip()):
+            slots[_last] = "1" if _last == "skus" else "none"
+            meta.setdefault("answered_fields", [])
+            if _last not in meta["answered_fields"]:
+                meta["answered_fields"].append(_last)
+        elif _last == "extras" and _YES.match(message.strip()):
+            slots["extras"] = "zipper, tear notch"
+            meta.setdefault("answered_fields", [])
+            if "extras" not in meta["answered_fields"]:
+                meta["answered_fields"].append("extras")
+        elif _last == "skus":
+            _m = _BARE_NUMBER.match(message.strip())
+            if _m:
+                slots["skus"] = _m.group(1)
+            elif message.strip().lower() in _BARE_SPELLED:
+                slots["skus"] = _BARE_SPELLED[message.strip().lower()]
+            if slots.get("skus"):
+                meta.setdefault("answered_fields", [])
+                if "skus" not in meta["answered_fields"]:
+                    meta["answered_fields"].append("skus")
+        missing = script_missing(slots, meta)
+        _gave_up = list(meta.get("gave_up") or [])
 
     # ANSWER ROUTING — the fix for the live box/SKU transcript:
     # - Slot collection (no fact question) NEVER goes to the LLM.
@@ -774,75 +1164,149 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     #   was sitting in its own fact block. The KB text itself is
     #   the answer, verbatim, frontmatter stripped.
     # - Only a multi-file / open fact question goes to the LLM,
-    #   with the OKF leash, and falls back to deterministic.
+    #   with the OKF leash, then the composer validator fixes it in
+    #   code (or falls back to deterministic when unsalvageable).
     is_fact_question = "?" in message or any(w in low for w in _FACT_WORDS)
     # Asking what is usual ('what is a standard size?') is a question
     # about the field, not an answer to it: answer it first, then
     # re-ask the field. There is no standard — everything is made to
     # fit what goes inside.
     if asks_what_is_usual(message) and missing:
-        reply = ("There's no standard one — everything is made to fit what goes inside. "
-                 + _next_question_text(slots, missing))
+        reply = (_tr("no_standard", language,
+                     "There's no standard one — everything is made to fit what goes inside.")
+                 + " " + _next_question_text(slots, missing, language))
         llm_used = False
         sources = _slot_sources(slots)
     elif not is_fact_question or (is_fact_question and len(facts) == 1):
         # Ask-attempt accounting (old askAttempts.ts): an attempt is
         # spent only when the visitor had a go and the field is still
         # missing. Exhausted fields are skipped for the next question
-        # instead of being asked a third time.
+        # instead of being asked a third time. Product is never given
+        # up — nothing else on the script may be asked before it.
         _last = meta.get("last_asked")
         _asks = dict(meta.get("asks") or {})
-        if _last in ("product", "sizes", "quantity"):
-            _have_now = not missing_fields(slots) or _last not in missing_fields(slots)
+        if _last in ("product", "sizes", "style", "finishes", "quantity",
+                     "skus", "extras", "material"):
+            _have_now = _last not in script_missing(slots, meta)
             _asks[_last] = apply_ask_outcome(_asks.get(_last, 0),
                                              ask_outcome(_last, message, _have_now))
             meta["asks"] = _asks
+            if _asks[_last] >= MAX_ASKS and _last != "product" \
+                    and _last in script_missing(slots, meta):
+                meta.setdefault("gave_up", [])
+                if _last not in meta["gave_up"]:
+                    meta["gave_up"].append(_last)
+                missing = script_missing(slots, meta)
+                _gave_up = list(meta["gave_up"])
         _askable = [f for f in missing if _asks.get(f, 0) < MAX_ASKS]
         if missing and not _askable:
+            if "product" in missing:
+                reply = _QUESTION_VARIANTS["product"]
+                llm_used = False
+                sources = _slot_sources(slots)
+                meta["last_asked"] = "product"
+                meta["last_bot_question"] = reply
+                meta.setdefault("bot_replies", []).append(reply)
+                meta["bot_replies"] = meta["bot_replies"][-20:]
+                _save_session(store, session_id, slots)
+                _save_meta(store, session_id, meta)
+                return {"reply": reply, "language": language, "slots": slots,
+                        "missing": missing, "sources": sources,
+                        "handoff": None, "llm_used": False,
+                        "suggestions": _suggestions(slots, missing, reply=reply,
+                                                    language=language)}
             _reply = ("Thanks — I've got " + ", ".join(
-                f"{k}: {slots[k]}" for k in ("product", "sizes", "quantity") if slots.get(k))
+                f"{k}: {slots[k]}" for k in ("product", "sizes", "quantity",
+                                             "finishes", "material", "style")
+                if slots.get(k))
                 + f". For {', '.join(missing)}, the team will confirm it with you directly.")
             _save_session(store, session_id, slots)
             _save_meta(store, session_id, meta)
             return {"reply": _reply, "language": language, "slots": slots,
                     "missing": missing, "sources": _slot_sources(slots),
                     "handoff": "needs_followup", "llm_used": False,
-                    "suggestions": _suggestions(slots, missing)}
-        reply = _deterministic_reply(message, slots, facts, _askable or missing)
+                    "suggestions": _suggestions(slots, missing, language=language)}
+        reply = _deterministic_reply(message, slots, facts, _askable or missing,
+                                     language, _gave_up, meta.get("qty_split"))
         llm_used = False
-        if reply in set(QUESTIONS.values()) | {"How many units do you need per design?"}:
+        _asked_field = _askable[0] if _askable else (missing[0] if missing else None)
+        if _asked_field and not is_fact_question:
+            # Pure question reply: slot sources, and the repeat guard
+            # (old repeatedQuestion.ts) — never send a question
+            # already asked, reword it instead.
             sources = _slot_sources(slots)
-            # Repeat guard (old repeatedQuestion.ts): never send a
-            # question already asked — reword it instead.
-            if repeats_the_question(reply, meta.get("last_bot_question", "")):
-                _field = _askable[0] if _askable else missing[0]
-                reply = _QUESTION_VARIANTS.get(_field, reply) \
-                    if _field != "quantity" or int(slots.get("skus", "1")) <= 1 \
+            # Repeat guard (English variants only): for a translated
+            # session, repeating the translated question beats
+            # switching language mid-chat for a rewording.
+            if language == "en" and repeats_the_question(reply, meta.get("last_bot_question", "")):
+                reply = _QUESTION_VARIANTS.get(_asked_field, reply) \
+                    if _asked_field != "quantity" or not per_design_quantity(slots) \
                     else _QUESTION_VARIANTS["per_design"]
-            meta["last_asked"] = _askable[0] if _askable else None
+            meta["last_asked"] = _asked_field
+            # A quantity answer to a per-design question IS per-design
+            # by construction — the split question must never re-ask it.
+            meta["asked_per_design"] = bool(_asked_field == "quantity"
+                                            and per_design_quantity(slots))
         elif not is_fact_question:
             sources = _slot_sources(slots) or sources
     else:
         reply = _llm_reply(message, language, slots, facts, reply_to=reply_to)
         llm_used = reply is not None
         if not llm_used:
-            reply = _deterministic_reply(message, slots, facts, missing)
+            reply = _deterministic_reply(message, slots, facts, missing, language, _gave_up,
+                                     meta.get("qty_split"))
         # Composer validator (old chatComposer.ts problemsWith): a
         # reply carrying template blanks is fixed in code, not sent.
         if llm_used and "__" in (reply or ""):
-            reply = _deterministic_reply(message, slots, facts, missing)
+            reply = _deterministic_reply(message, slots, facts, missing, language, _gave_up,
+                                     meta.get("qty_split"))
             llm_used = False
+        if llm_used:
+            _next_q = _next_question_text(slots, missing, language)
+            _ctx = {
+                "visitor_text": message,
+                "visitor_texts": visitor_messages,
+                "visitor_asking": visitor_is_asking(message),
+                "last_bot_text": meta.get("last_bot_question", ""),
+                "slots": slots,
+                "answered_fields": meta.get("answered_fields") or [],
+                "contact": meta.get("contact") or {},
+                "is_banner": is_banner_family(slots.get("product")),
+                "is_plain": wants_plain_packaging(visitor_messages),
+                "minimum_due": bool(_qty and _qty < 1000),
+                "asked_price": asks_about_price(message),
+                "asked_usual": asks_what_is_usual(message),
+                "asked_arrived": asks_if_it_arrived(message),
+                "unclear": False,
+            }
+            _fixed = fix_reply(reply, _ctx, _next_q, _kb_first_sentence)
+            if _fixed is None:
+                reply = _deterministic_reply(message, slots, facts, missing, language, _gave_up,
+                                     meta.get("qty_split"))
+                llm_used = False
+            else:
+                reply = _fixed
+    # Below-minimum note, once, on a question reply that does not
+    # already state the minimum (the quantity question does).
+    if _moq_note and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():
+        reply = _moq_note + " " + reply
+    # Old max-turns rule: 12 AI messages, then a human takes over.
+    meta["ai_count"] = meta.get("ai_count", 0) + 1
+    _handoff = None
+    if meta["ai_count"] >= 12 and not meta.get("complete"):
+        reply = "Let me hand this over to a team member who can pick it up from here."
+        _handoff = "max_turns"
     meta["last_bot_question"] = reply
     meta.setdefault("bot_replies", []).append(reply)
     meta["bot_replies"] = meta["bot_replies"][-20:]
     _save_session(store, session_id, slots)
     _save_meta(store, session_id, meta)
 
-    result = {
+    return {
         "reply": reply, "language": language, "slots": slots,
-        "missing": missing, "sources": sources,
-        "handoff": "complete" if guards.is_complete(slots) else None,
+        "missing": script_missing(slots, meta), "sources": sources,
+        "handoff": _handoff,
         "llm_used": llm_used,
-        "suggestions": _suggestions(slots, missing, reply=reply),
+        "suggestions": _suggestions(slots, script_missing(slots, meta),
+                                    reply=reply, language=language),
     }
-    return result

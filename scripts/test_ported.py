@@ -176,23 +176,26 @@ r = run("p-cust", ["I already ordered labels and haven't received them"])
 check("brain: existing customer handed off", r["handoff"] == "existing_customer")
 r = run("p-rep", ["I was working with Jessica Joe before"])
 check("brain: rep named hands over", "Jessica" in r["reply"] and r["handoff"] == "visitor_asked")
-r = run("p-contact", ["I need 5000 mylar bags, size 4x6 inches", "Yes, that's correct",
-                      "Sara", "sara@example.com", "5551234567"])
+_SCRIPT = ["I need 5000 mylar bags, size 4x6 inches", "stand-up", "matte",
+           "1 design", "zipper", "kraft"]
+r = run("p-contact", _SCRIPT + ["Yes, that's correct",
+                                "Sara", "sara@example.com", "5551234567"])
 check("brain: yes -> name -> email -> phone -> Texas complete",
-      r["handoff"] == "complete" and r.get("contact", {}).get("email") == "sara@example.com")
-r = run("p-contact2", ["I need 5000 mylar bags, size 4x6 inches", "Yes, that's correct",
-                       "no", "no", "no"])
+      r["handoff"] == "complete" and r.get("contact", {}).get("email") == "sara@example.com"
+      and r["slots"].get("quantity") == "5000")
+r = run("p-contact2", _SCRIPT + ["Yes, that's correct",
+                                 "no", "no", "no"])
 check("brain: contact refusals still finish, flagged no-contact",
       r["handoff"] == "complete_no_contact")
 r = run("p-unit", ["I need labels", "50x30", "mm"])
 check("brain: bare unit answers unit question", r["slots"].get("sizes") == "50x30 mm")
-r = run("p-fresh", ["I need 5000 mylar bags, size 4x6 inches", "Yes, that's correct",
-                    "Sara", "sara@example.com", "5551234567",
-                    "I need custom boxes"])
+r = run("p-fresh", _SCRIPT + ["Yes, that's correct",
+                              "Sara", "sara@example.com", "5551234567",
+                              "I need custom boxes"])
 check("brain: finished chat + new order starts fresh",
       r["slots"].get("product") == "box" and "sizes" not in r["slots"])
-r = run("p-ours", ["I need 5000 mylar bags, size 4x6 inches", "Yes, that's correct",
-                   "Sara", "Support@print247.us", "8328073429"])
+r = run("p-ours", _SCRIPT + ["Yes, that's correct",
+                             "Sara", "Support@print247.us", "8328073429"])
 check("brain: our own email/phone never stored as visitor's",
       r.get("contact", {}).get("email") is None and r["handoff"] != "complete")
 
