@@ -77,8 +77,8 @@ from .retrieval import retrieve
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
 from .size_unit import apply_unit_answer, size_missing_unit, unit_answer
-from .slots import (_PRODUCTS, _find, extract_from_message, merge_slots,
-                     missing_fields)
+from .slots import (_PRODUCTS, _find, extract_from_message, fuzzy_product,
+                     merge_slots, missing_fields)
 
 # A decline of a script field ("no", "none", "no preference"): the
 # field is recorded as "none"/"1" and the script moves on, instead
@@ -546,13 +546,25 @@ def _direct_answer(question: str, text: str) -> str:
                 for w in words}
 
     q = _norm(q)
+    # A number in a sentence only breaks ties when the question is
+    # about numbers (price, time, quantity, phone): "3D Raised UV"
+    # made the EXTRA finishes sentence outscore the main finishes
+    # list for a plain finishes question (Oct 30). For other
+    # questions the first best-scoring sentence wins, and the next
+    # scoring sentence after it is appended as completion.
+    _digit_matters = bool(q & {"price", "cost", "pricing", "time",
+                               "turnaround", "days", "minimum", "moq",
+                               "units", "many", "much", "quantity",
+                               "long", "number", "phone", "call",
+                               "telephone"})
     scored = []
     for s in sentences:
         words = _norm(set(re.findall(r"[a-z0-9]+", s.lower())))
         # Ties break toward the sentence carrying a number: policy,
         # time and price answers live in the numbered sentence, not
         # in a header line like "Refund and Returns summary".
-        scored.append((s, (len(q & words), any(ch.isdigit() for ch in s))))
+        scored.append((s, (len(q & words),
+                           _digit_matters and any(ch.isdigit() for ch in s))))
     best_idx, (best, best_score) = 0, (sentences[0], (-1, 0))
     for i, (s, score) in enumerate(scored):
         if score > best_score:
@@ -1952,7 +1964,17 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if _attr_word and ("?" in message or visitor_is_asking(message)):
         # Bare "mylar" is a family word, not an alias — "mylar
         # finishes" is a pouch question, not an unknown product.
-        _known = bool(re.search(r"\bmylar\b", low)) or any(
+        # And a typo'd product ("buissness cards") must count as
+        # known: the old block echoed the typo as a fake product
+        # ("Buissness aren't a listed product", Oct 30). fuzzy
+        # matching is the same fallback the capability branch uses
+        # for "lables".
+        _fuzzy_prod = None
+        try:
+            _fuzzy_prod = fuzzy_product(low)
+        except Exception:
+            _fuzzy_prod = None
+        _known = bool(re.search(r"\bmylar\b", low)) or _fuzzy_prod is not None or any(
             re.search(rf"\b{re.escape(a)}\b", low)
             for _, _aliases in _PRODUCTS for a in _aliases)
         if not _known:
@@ -2002,6 +2024,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     if re.search(rf"\b{re.escape(_al)}\b", low):
                         if _best is None or len(_al) > len(_best[1]):
                             _best = (_canon, _al)
+            if _best is None and _fuzzy_prod:
+                _best = (_fuzzy_prod, _fuzzy_prod)
             if _best is None and re.search(r"\bmylar\b", low):
                 _best = ("mylar bag", "mylar")
             if _best:
@@ -2154,7 +2178,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # (chips that all parse) instead of jumping to size, and other
     # products continue with the normal next question.
     _types_prod = None
+    # "what KIND of finishes" is a finishes question, not a types
+    # question: the generic kind/type trigger must yield to an
+    # explicit attribute word, or the finishes question gets the
+    # include-list sentence instead of the finishes (Oct 30).
     if re.search(r"\b(types?|kinds?)\b", low) \
+            and not re.search(r"\b(materials?|finish(?:es)?|styles?)\b", low) \
             and ("?" in message or visitor_is_asking(message)):
         for _w, _p in (("business cards", "business card"),
                        ("business card", "business card"),

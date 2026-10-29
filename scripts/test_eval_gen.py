@@ -1085,6 +1085,29 @@ check("confirmation carries the open qualifier as team-to-confirm",
       and "size 4x6 inches (width x height)" in _s[5]["reply"],
       f"reply={_s[5]['reply'][:300]!r}")
 
+# ---------- section 29: Oct 30 typo + finishes round ----------
+r = run("ev-s29-typo-fin", ["what kind of finishes do you provide for buissness cards?"])
+check("typo'd product in finishes question is fuzzy-matched, never echoed as fake product",
+      "Buissness" not in r["reply"]
+      and r["slots"].get("product") == "business card"
+      and "Gloss UV" in r["reply"],
+      f"reply={r['reply'][:300]!r} slots={r['slots']}")
+r = run("ev-s29-fin", ["what kind of finishes do you provide for Business cards?"])
+check("business card finishes question returns the finishes lists, not the include sentence",
+      "Gloss UV" in r["reply"] and "Softouch Lamination" in r["reply"]
+      and "Spot Foil" in r["reply"]
+      and "What size do you need?" in r["reply"],
+      f"reply={r['reply'][:300]!r}")
+r = run("ev-s29-lables", ["what finishes do you provide for lables?"])
+check("typo'd labels in finishes question stores label, never short-circuits",
+      r["slots"].get("product") == "label"
+      and "isn't a listed product" not in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s29-kindfin", ["what kind of finishes do you provide for boxes?"])
+check("'kind of finishes' is a finishes question, not a types question",
+      "Which type would you like?" not in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)
