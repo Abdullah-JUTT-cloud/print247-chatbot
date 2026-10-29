@@ -154,13 +154,12 @@ def question_for(field: str, slots: dict) -> str:
         return QUESTIONS["style_boxes"] if "box" in (slots.get("product") or "").lower() \
             else QUESTIONS["style_bags"]
     if field == "quantity":
-        base = QUESTIONS["quantity_banner"] if is_banner_family(slots.get("product")) \
+        # Senior directive (Oct 30): the MOQ is NOT shown with the
+        # quantity question — it comes only when the visitor asks
+        # about the minimum, or once with a below-minimum quantity
+        # (BELOW_MIN_NOTE). The question is just the question.
+        return QUESTIONS["quantity_banner"] if is_banner_family(slots.get("product")) \
             else QUESTIONS["quantity"]
-        # Old live-chat rule: state the MOQ with the quantity
-        # question (banners exempt), so nobody answers "maybe 50".
-        if is_banner_family(slots.get("product")):
-            return base
-        return base + " " + MOQ_LINE
     return QUESTIONS[field]
 
 

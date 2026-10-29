@@ -51,6 +51,9 @@ _PRODUCTS = [
 _MATERIALS = [
     "kraft", "pet", "mpet", "pe", "foil", "vinyl", "cardboard",
     "corrugated", "matte bopp", "sbs", "plastic", "paper",
+    # Rigid chipboard is a real box material (boxes.md: 32-80pt):
+    # "plain rigid box" as a material answer must store it, not loop.
+    "rigid",
 ]
 
 _FINISHES = [
@@ -283,6 +286,16 @@ _STYLE_WORDS = [
     ("standup", "stand-up"),
     ("spout", "spout"),
     ("3-side", "flat"),
+    # Box style chips the bot itself offers (Oct 30 transcript):
+    # NONE of these parsed, so the box style question looped twice
+    # and gave up on every box quote. A chip the bot shows must
+    # always be a value the parser accepts.
+    ("mailer", "mailer"),
+    ("tuck-end", "tuck-end"),
+    ("tuck end", "tuck-end"),
+    ("folding carton", "folding carton"),
+    ("folding", "folding carton"),
+    ("rigid", "rigid"),
 ]
 
 

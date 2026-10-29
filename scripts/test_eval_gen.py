@@ -712,6 +712,79 @@ check("mid-quote 'what is my order?' answered from slots + script continues",
       and "What style" in r["reply"],
       f"reply={r['reply'][:200]!r}")
 
+# --- 23. box-quote disaster round (Oct 30, 2026, live transcript):
+# every box style chip looped (none parsed), the quantity question
+# stated the MOQ unasked (senior: MOQ only when asked), "plain
+# rigid box" looped the material question, a mind-changed
+# cancellation re-asked the confirmation, and the 12-message cap
+# then bricked the chat so every later question got a handoff. ---
+_s = _steps("ev-boxfix-full", [
+    "i need large box", "Shipping", "40x90", "Inches", "Folding carton",
+    "No preference", "1000 units", "none", "plain rigid box", "Kraft",
+    "no i dont need now my mind chnaged", "i dont neeed",
+    "What is your refund policy?"])
+check("box style chip parses first try, finish asked next",
+      _s[4]["slots"].get("style") == "folding carton"
+      and "What finish" in _s[4]["reply"],
+      f"reply={_s[4]['reply'][:140]!r} slots={_s[4]['slots']}")
+check("quantity question states no MOQ until asked",
+      "What quantity are you looking to order for your first run?" in _s[5]["reply"]
+      and "MOQ" not in _s[5]["reply"] and "1000" not in _s[5]["reply"],
+      f"reply={_s[5]['reply'][:160]!r}")
+check("'plain rigid box' stores rigid material, confirmation follows",
+      _s[8]["slots"].get("material") == "rigid"
+      and "Just to confirm" in _s[8]["reply"],
+      f"reply={_s[8]['reply'][:160]!r} slots={_s[8]['slots']}")
+check("material correction at confirmation re-confirms with the new value",
+      _s[9]["slots"].get("material") == "kraft"
+      and "kraft material" in _s[9]["reply"],
+      f"reply={_s[9]['reply'][:160]!r}")
+check("mind-changed cancels gracefully, draft cleared, no handoff",
+      "No problem at all" in _s[10]["reply"]
+      and _s[10]["slots"] == {} and _s[10].get("handoff") is None,
+      f"reply={_s[10]['reply'][:140]!r}")
+check("repeated refusal after cancel stays graceful, never a handoff",
+      "No problem at all" in _s[11]["reply"]
+      and _s[11].get("handoff") is None,
+      f"reply={_s[11]['reply'][:140]!r}")
+check("refund policy answered after cancel, never the handoff loop",
+      "5 business days" in _s[12]["reply"]
+      and _s[12].get("handoff") is None,
+      f"reply={_s[12]['reply'][:160]!r}")
+for _chip, _want in [("Mailer", "mailer"), ("Tuck-end", "tuck-end"),
+                     ("Rigid", "rigid"), ("Folding carton", "folding carton")]:
+    r = run(f"ev-boxchip-{_want}", ["i need boxes", "10x12 inches", _chip])
+    check(f"box chip {_chip!r} parses as style {_want}",
+          r["slots"].get("style") == _want and "What finish" in r["reply"],
+          f"reply={r['reply'][:120]!r} slots={r['slots']}")
+r = run("ev-boxfix-moqasked", ["What is the minimum order?"])
+check("MOQ still answered when the visitor asks",
+      "1000" in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+r = run("ev-boxfix-belowmin", ["I need boxes", "10x12 inches", "mailer",
+                               "matte", "300 units"])
+check("sub-1000 quantity still accepted with the once-only note",
+      "We can look at 300" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-boxfix-fieldrefusal", ["I need mylar bags", "4x6 inches", "stand-up",
+                                   "matte", "1000 units", "1 design",
+                                   "i dont need a zipper"])
+check("field refusal ('dont need a zipper') is not a cancellation",
+      "No problem at all" not in r["reply"] and r.get("handoff") is None,
+      f"reply={r['reply'][:160]!r}")
+_s = _steps("ev-boxfix-cap", [
+    "Is shipping free?", "What is the turnaround time?", "Where are you located?",
+    "What are your support hours?", "What payment methods do you accept?",
+    "Do you offer samples?", "What is the minimum order?", "What sizes do you offer?",
+    "What finishes do you offer?", "What materials do you offer?",
+    "Do you offer free design support?", "What is your proof approval process?",
+    "What is your refund policy?"])
+check("12-message cap hands off exactly once, then Q&A resumes",
+      _s[11].get("handoff") == "max_turns"
+      and "5 business days" in _s[12]["reply"]
+      and _s[12].get("handoff") is None,
+      f"cap={_s[11]['reply'][:80]!r} next={_s[12]['reply'][:120]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

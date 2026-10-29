@@ -178,6 +178,34 @@ _OWN_DATA_FIELD = {"email": "email", "e-mail": "email", "mail": "email",
                    "order": "order", "quote": "order", "details": "order"}
 
 
+_CANCEL_PATTERNS = re.compile(
+    r"\bmy\s+mind\b[^.?!]{0,25}\bch[a-z]+nged\b"
+    r"|\bch[a-z]+nged\s+my\s+mind\b"
+    r"|\b(don'?t|dont|do not|no longer)\s+nee+d\b"
+    r"|\b(don'?t|dont|do not)\s+want\b"
+    r"|\bcancel\b|\bnever mind\b|\bforget it\b|\bnot interested\b",
+    re.IGNORECASE)
+# A field refusal is not a cancellation: "i dont need a zipper"
+# refuses the extra, "i dont want to share my phone" refuses the
+# contact field — neither cancels the quote.
+_CANCEL_GUARD = re.compile(
+    r"\b(zipper|tear\s*notch|notch|matte|gloss|soft\s*touch|kraft|foil|vinyl|"
+    r"corrugated|cardboard|window|spout|handle|pet|plastic|paper|phone|email|"
+    r"number|share|give|tell|personal|private|contact|call|message|inches|cm|mm|"
+    r"size|style|finish|material|quantity|units|pcs)\b",
+    re.IGNORECASE)
+
+
+def is_cancellation(text: str) -> bool:
+    """The visitor abandons the quote ("my mind changed", "i dont
+    need", "cancel") — not a field refusal (guarded above) and not a
+    bare "no" (which at confirmation means "not correct", not "go
+    away"). Typo-tolerant: "chnaged", "neeed" still match."""
+    if not text or _CANCEL_GUARD.search(text or ""):
+        return False
+    return bool(_CANCEL_PATTERNS.search(text or ""))
+
+
 def _own_data_answer(message: str, slots: dict, contact: dict) -> str | None:
     """An answer about the VISITOR's own submitted info, from the
     session — never from the KB. "What is my email?" must return
@@ -885,6 +913,24 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         first = _named.split()[0]
         return _intent_result(f"Yes, {first} is on our team. I'm passing you to {first} now.",
                               handoff="visitor_asked")
+    # Cancellation BEFORE everything that would re-ask: "no i dont
+    # need now my mind chnaged" at confirmation used to fall through
+    # to the main flow, which re-asked the confirmation — then the
+    # 12-message cap bricked the chat and every later question got
+    # a handoff (Oct 30 transcript). Cancelling clears the draft
+    # and invites a fresh start, without pushing a new question.
+    # A STOP ("NO I DONT WANT NOW") is not a cancellation: it keeps
+    # its own "stop here" handling in the contact flow.
+    if not meta.get("complete") and is_cancellation(message) \
+            and not wants_to_stop(message):
+        _save_session(store, session_id, {})
+        _save_meta(store, session_id, {})
+        return {
+            "reply": "No problem at all — if you change your mind, just tell me what you need.",
+            "language": language, "slots": {}, "missing": ["product"],
+            "sources": [], "handoff": None, "llm_used": False,
+            "suggestions": [],
+        }
     # Own-data questions BEFORE the already-customer and catalog
     # branches: "what you added?" matched the catalog intent and
     # dumped the whole catalog, and "what is my order?" matched
@@ -2160,11 +2206,18 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if _moq_note and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():
         reply = _moq_note + " " + reply
     # Old max-turns rule: 12 AI messages, then a human takes over.
+    # Delivered ONCE: the old code overrode EVERY later reply with
+    # the handoff, so a visitor who then asked a real question
+    # ("What is your refund policy?") got the handoff forever and
+    # the chat was bricked (Oct 30 transcript). After the one
+    # handoff, normal Q&A resumes.
     meta["ai_count"] = meta.get("ai_count", 0) + 1
     _handoff = None
-    if meta["ai_count"] >= 12 and not meta.get("complete"):
+    if meta["ai_count"] >= 12 and not meta.get("complete") \
+            and not meta.get("cap_handoff_delivered"):
         reply = "Let me hand this over to a team member who can pick it up from here."
         _handoff = "max_turns"
+        meta["cap_handoff_delivered"] = True
     meta["last_bot_question"] = reply
     meta.setdefault("bot_replies", []).append(reply)
     meta["bot_replies"] = meta["bot_replies"][-20:]
