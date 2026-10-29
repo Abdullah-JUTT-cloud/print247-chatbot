@@ -417,11 +417,17 @@ def _direct_answer(question: str, text: str) -> str:
         if score > best_score:
             best_idx, best, best_score = i, s, score
     if best_score[0] < 1:
-        return best
-    for s, score in scored[best_idx + 1:]:
-        if score[0] >= 1:
-            return best + " " + s
-    return best
+        result = best
+    else:
+        result = best
+        for s, score in scored[best_idx + 1:]:
+            if score[0] >= 1:
+                result = best + " " + s
+                break
+    # KB files wrap lines mid-sentence, so a reply could read "the
+    # team\nwill confirm" and fail a plain substring check (and look
+    # broken to a visitor). Collapse all whitespace in the answer.
+    return " ".join(result.split())
 
 
 def _fact_reply_text(text: str) -> str:

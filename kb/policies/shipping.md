@@ -15,13 +15,12 @@ emailed once the order ships.
 
 International delivery is not published in this policy. For
 delivery outside the USA — including China, India, the UK, Canada,
-Australia and anywhere else abroad — the policy names no carrier,
-no cost and no promise, so the bot must never promise it. The
-correct answer is: shipping is free nationwide via UPS, and for
-delivery to your country the team will confirm whether delivery is
-possible and what it costs when they send the quote. The delivery
-question goes into the quote for the team; it is never answered
-with a guessed carrier or price.
+Australia and anywhere else abroad — the policy names no carrier
+and no cost, so no delivery promise can be made here. Shipping is
+free nationwide via UPS, and for delivery to your country the team
+will confirm whether delivery is possible and what it costs when
+they send the quote. The delivery question goes into the quote
+for the team; it is never answered with a guessed carrier or price.
 
 Timeline: after design approval, production moves forward within
 48 hours; manufacturing takes 4 to 5 business days; UPS transit
