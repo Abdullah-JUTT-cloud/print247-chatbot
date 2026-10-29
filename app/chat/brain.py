@@ -53,13 +53,16 @@ from .finished import (NOTED_AFTER_THE_QUOTE, NOT_SENT_YET, SIGN_OFFS,
                        asks_if_it_arrived, is_pleasantry)
 from .i18n import tr as _tr
 from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A_PRICE_OBJECTION,
-                      ANSWER_TO_ARE_YOU_A_BOT, ANSWER_TO_SAMPLES, DONE_WITH_US_MESSAGE, JOB_MESSAGE,
-                      LATER_MESSAGE, NO_EMAIL_THEN_PHONE, PITCH_MESSAGE, YES_SEND_YOUR_NUMBER,
-                      asks_for_a_catalog, asks_for_samples, asks_only_if_we_are_a_bot,
-                      chat_is_a_pitch, chat_is_not_a_customer, is_already_a_customer,
-                      is_done_with_us, is_looking_for_work, objects_to_the_price,
-                      offers_a_phone_number, puts_it_off_for_now, rep_named_in,
-                      wants_a_person, wants_it_in_the_chat)
+                      ANSWER_TO_ARE_YOU_A_BOT, ANSWER_TO_SAMPLES, BYE_ANSWER, DONE_WITH_US_MESSAGE,
+                      HARM_ANSWER, HOW_ARE_YOU_ANSWER, JOB_MESSAGE, LATER_MESSAGE, LIED_ANSWER,
+                      NO_EMAIL_THEN_PHONE, PITCH_MESSAGE, THANKS_ANSWER, TRUST_ANSWER,
+                      YES_SEND_YOUR_NUMBER, asks_about_trust, asks_for_a_catalog,
+                      asks_for_samples, asks_how_are_you, asks_only_if_we_are_a_bot,
+                      chat_is_a_pitch, chat_is_not_a_customer, claims_harm, claims_we_lied,
+                      is_already_a_customer, is_done_with_us, is_looking_for_work,
+                      objects_to_the_price, offers_a_phone_number, puts_it_off_for_now,
+                      rep_named_in, says_bye, says_thanks, wants_a_person,
+                      wants_it_in_the_chat)
 from .language import detect_language
 from .llm_extract import llm_extract
 from .price_questions import PRICING_COMES_WITH_THE_QUOTE, asks_about_price
@@ -691,6 +694,30 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if wants_a_person(message):
         return _intent_result("Of course — I am connecting you with a team member who can help directly.",
                               handoff="visitor_asked_for_human")
+    # Trust, hostility and small talk, before retrieval: a "?" must
+    # never turn "are you fake?" into a KB fact dump again. Harm
+    # first ("you scammed me" is a complaint, not a quiz), then
+    # lied-to, then trust questions, then plain small talk. All
+    # guarded by not _is_order, so "thanks, I need 500 bags" still
+    # flows into the order.
+    if not _is_order and claims_harm(message):
+        return _intent_result(HARM_ANSWER, handoff="existing_customer")
+    if not _is_order and claims_we_lied(message):
+        return _intent_result(LIED_ANSWER)
+    if not _is_order and asks_about_trust(message):
+        return _intent_result(_with_next_question(TRUST_ANSWER, prior,
+                                                 script_missing(prior, meta), language))
+    # Small talk only while the chat is open: after completion the
+    # finished branch owns pleasantries (sign-off, never the close
+    # again), and these branches run before it.
+    if not _is_order and not meta.get("complete") and says_thanks(message):
+        return _intent_result(_with_next_question(THANKS_ANSWER, prior,
+                                                 script_missing(prior, meta), language))
+    if not _is_order and not meta.get("complete") and says_bye(message):
+        return _intent_result(BYE_ANSWER)
+    if not _is_order and not meta.get("complete") and asks_how_are_you(message):
+        return _intent_result(_with_next_question(HOW_ARE_YOU_ANSWER, prior,
+                                                 script_missing(prior, meta), language))
     _named = rep_named_in(message, _session_rep(session_id))
     if _named:
         first = _named.split()[0]

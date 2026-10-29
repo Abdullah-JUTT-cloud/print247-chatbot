@@ -114,6 +114,34 @@ for _msg, _want, _banned in [
           and all(b not in r["reply"] for b in _banned),
           f"reply={r['reply'][:160]!r}")
 
+# --- trust, hostility, small talk: never a KB fact dump ---
+for _msg, _want, _banned in [
+    ("you guys are fake and scam right?", "real company",
+     ["Minimum order quantity", "1000"]),
+    ("are you legit?", "real company", ["Minimum order quantity"]),
+    ("is this company real?", "real company", ["Minimum order quantity"]),
+    ("tum fake ho", "real company", ["Minimum order quantity"]),
+    ("you are liars", "wrong answer", ["Minimum order quantity"]),
+    ("you scammed me", "order number", ["Minimum order quantity"]),
+    ("thanks", "welcome", ["Minimum order quantity"]),
+    ("bye", "Goodbye", ["Minimum order quantity"]),
+    ("how are you?", "doing well", ["Minimum order quantity"]),
+]:
+    r = run("b2-trust-" + _msg.replace(" ", "-")[:30], [_msg])
+    check(f"conversational '{_msg}'",
+          _want.lower() in r["reply"].lower()
+          and all(b not in r["reply"] for b in _banned),
+          f"reply={r['reply'][:160]!r}")
+r = run("b2-trust-order-wins", ["thanks, I need 500 mylar bags"])
+check("trust guard: order beats thanks",
+      r["slots"].get("product") == "mylar bag"
+      and r["slots"].get("quantity") == "500",
+      f"slots={r['slots']!r}")
+r = run("b2-trust-product-q", ["is this box real cardboard?"])
+check("trust guard: product question is not a trust question",
+      "real company" not in r["reply"],
+      f"reply={r['reply'][:120]!r}")
+
 # --- location + foreign country: plain not-here answer ---
 for _msg, _disp in [("where it located in pakistan", "Pakistan"),
                     ("are you located in india?", "India"),

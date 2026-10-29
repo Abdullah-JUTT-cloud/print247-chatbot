@@ -324,6 +324,30 @@ for msg, want in [("I need milar bags", "mylar bag"),
           r["slots"].get("product") == want and "What size" in r["reply"],
           f"slots={r['slots']!r} reply={r['reply'][:100]!r}")
 
+# --- 17. trust, hostility, small talk: never a fact dump ---
+for msg, want in [
+    ("you guys are fake and scam right?", "real company"),
+    ("are you fake?", "real company"),
+    ("is this a scam?", "real company"),
+    ("are you legit?", "real company"),
+    ("is this company real?", "real company"),
+    ("tum fake ho", "real company"),
+    ("ye scam hai", "real company"),
+    ("you are liars", "wrong answer"),
+    ("you are lying", "wrong answer"),
+    ("you scammed me", "order number"),
+    ("you cheated me", "order number"),
+    ("thanks", "welcome"),
+    ("thank you", "welcome"),
+    ("bye", "Goodbye"),
+    ("how are you?", "doing well"),
+]:
+    r = run(f"ev-trust-{msg[:12]}", [msg])
+    check(f"conversational {msg!r}",
+          want.lower() in r["reply"].lower()
+          and "Minimum order quantity" not in r["reply"],
+          f"reply={r['reply'][:140]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

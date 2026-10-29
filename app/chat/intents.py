@@ -188,6 +188,71 @@ def is_already_a_customer(text: str) -> bool:
     return bool(_ALREADY_A_CUSTOMER.search(text or ""))
 
 
+# --- Trust, hostility, small talk: a conversational message must
+# never reach retrieval. "you guys are fake and scam right?" used
+# to come back with an MOQ fact dump, because "?" made it a fact
+# question and retrieval ranked a form page first. These are code,
+# answered directly, before any slot work or retrieval. "real" and
+# "trust" alone are NOT triggers — "is this box real cardboard?"
+# is a product question, not a trust question.
+_TRUST_INQUIRY = re.compile(
+    r"\b(?:fake|frod|fraud|scam|scammer|scammers|legit|legitimate|trustworthy|dhoka|dhokha|jhoot|jhot)\b"
+    r"|\b(?:are you|are u|r u|is this|is it)\s+(?:guys\s+|company\s+)?(?:a\s+)?(?:fake|scam|fraud|legit|real)\b"
+    r"|\bcan i trust you\b",
+    re.IGNORECASE)
+_LIED_TO_US = re.compile(
+    r"\b(?:liar|liars|lying|lied|jhoot)\b|\bdon'?t lie\b",
+    re.IGNORECASE)
+_HARM_CLAIM = re.compile(
+    r"\b(?:scammed|cheated|robbed|stole|stolen)\b[^.?!]{0,20}\bme\b"
+    r"|\btook my money\b",
+    re.IGNORECASE)
+_SAYS_THANKS = re.compile(r"\b(?:thanks|thank you|thx|shukriya)\b", re.IGNORECASE)
+_SAYS_BYE = re.compile(r"\b(?:bye|goodbye|good bye|allah hafiz|see you)\b", re.IGNORECASE)
+_ASKS_HOW_ARE_YOU = re.compile(
+    r"\bhow (?:are|r) (?:you|u)\b|\bhow'?s it going\b|\bkais[ey] ho\b|\bkese ho\b",
+    re.IGNORECASE)
+TRUST_ANSWER = (
+    "No — we're a real company. Print247 has been making custom "
+    "packaging since 2018, based in Rosenberg, Texas, USA. You can "
+    "check us at print247.us or reach the team at +1 (832) 807-3429.")
+LIED_ANSWER = (
+    "I'm sorry — I only answer from our published facts, and I never "
+    "want to give you a wrong answer. Tell me which detail looked "
+    "wrong and I'll get the team to confirm it.")
+HARM_ANSWER = (
+    "I'm really sorry to hear that. If something went wrong with your "
+    "order, share your order number or the email you ordered with "
+    "and I'll pass it straight to the team to sort out.")
+THANKS_ANSWER = "You're welcome!"
+BYE_ANSWER = "Goodbye — and thanks for stopping by! If you need packaging later, we're here."
+HOW_ARE_YOU_ANSWER = "I'm doing well, thanks!"
+
+
+def claims_harm(text: str) -> bool:
+    return bool(_HARM_CLAIM.search(text or ""))
+
+
+def claims_we_lied(text: str) -> bool:
+    return bool(_LIED_TO_US.search(text or ""))
+
+
+def asks_about_trust(text: str) -> bool:
+    return bool(_TRUST_INQUIRY.search(text or ""))
+
+
+def says_thanks(text: str) -> bool:
+    return bool(_SAYS_THANKS.search(text or ""))
+
+
+def says_bye(text: str) -> bool:
+    return bool(_SAYS_BYE.search(text or ""))
+
+
+def asks_how_are_you(text: str) -> bool:
+    return bool(_ASKS_HOW_ARE_YOU.search(text or ""))
+
+
 # --- Rep named (repPool.ts: repNamedIn, deterministic half) ---
 def rep_named_in(text: str, session_rep: str | None = None):
     """A rep named by the visitor, other than the rep already on this
