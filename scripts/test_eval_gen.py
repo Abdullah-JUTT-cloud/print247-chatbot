@@ -406,22 +406,25 @@ check("label materials from the labels file, no PET",
        or "film" in r["reply"].lower()) and "PET" not in r["reply"],
       f"reply={r['reply'][:140]!r}")
 r = run("ev-col-labelpet", ["I need labels", "can I get PET labels?"])
-check("PET labels not confirmed",
-      "can't confirm" in r["reply"] and not r["reply"].startswith("Yes"),
+check("PET labels get a Yes (reference, not whitelist)",
+      r["reply"].startswith("Yes") and "can't confirm" not in r["reply"],
       f"reply={r['reply'][:140]!r}")
 
-# Capability guard: a Yes must never confirm an unlisted option.
+# REFERENCE, NOT WHITELIST (Oct 29): the old capability guard
+# ("can't confirm" for options the files do not name) is deleted.
+# A packaging company makes the product family, so PET, a handle
+# and a spout pouch all get a Yes now.
 r = run("ev-col-handle", ["do you make mylar bags with a handle?"])
-check("handle on a mylar bag not confirmed",
-      "can't confirm" in r["reply"] and "handle" in r["reply"],
+check("handle on a mylar bag gets a Yes",
+      r["reply"].startswith("Yes") and "can't confirm" not in r["reply"],
       f"reply={r['reply'][:140]!r}")
 r = run("ev-col-spout", ["do you make spout pouches?"])
-check("spout pouch gallery-only, never a bare Yes",
-      "gallery" in r["reply"] and not r["reply"].startswith("Yes"),
+check("spout pouch gets a Yes (gallery item, company makes it)",
+      r["reply"].startswith("Yes") and "can't confirm" not in r["reply"],
       f"reply={r['reply'][:140]!r}")
 r = run("ev-col-petbag", ["do you make PET mylar bags?"])
-check("PET mylar bags not confirmed (not in our KB)",
-      "can't confirm" in r["reply"] and "pet" in r["reply"].lower(),
+check("PET mylar bags get a Yes (PET is a standard pouch film)",
+      r["reply"].startswith("Yes") and "can't confirm" not in r["reply"],
       f"reply={r['reply'][:140]!r}")
 r = run("ev-col-kraftbag", ["do you make kraft bags?"])
 check("kraft bags still a Yes (kraft is listed)",

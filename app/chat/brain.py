@@ -47,8 +47,9 @@ from .composer import fix_reply
 from .contacts import (CONTACT_FIELDS, contact_field_by_key, email_in, has_reachable_contact,
                        is_contact_value_usable, is_our_reps_name, is_placeholder_name,
                        missing_contact_fields, phones_in, REP_NAMES)
-from .capability import (capability_fact, capability_product, capability_source,
-                         unlisted_options)
+from .capability import (capability_fact, capability_product, capability_source)
+from .learn import save_learned
+from .websearch import web_search
 from .fact_topics import asks_bare_fact_topic, fact_topics_asked, topic_query
 from .finished import (NOTED_AFTER_THE_QUOTE, NOT_SENT_YET, SIGN_OFFS,
                        asks_if_it_arrived, is_pleasantry)
@@ -582,28 +583,19 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
         # Capability question about a real product ("Can you print
         # boxes?") deserves a Yes first, not a bare list. Restricted
         # to kb/products files, so a turnaround/policy question can
-        # never be falsely turned into a Yes. The Yes is withheld
-        # exactly like in the capability branch when the question
-        # names an option the files do not list ("can I get PET
-        # labels?" once got a Yes followed by sheet-label text),
-        # and for a spout pouch (gallery-only, team must confirm).
+        # never be falsely turned into a Yes. REFERENCE, NOT
+        # WHITELIST (Oct 29): the KB listing is not the limit of
+        # what the company makes — a packaging company makes the
+        # product family, so options the files do not name (PET
+        # labels, a handle, a spout pouch in the gallery) still get
+        # a Yes here; the open-question LLM path adds general
+        # packaging detail. "Team will confirm" is reserved for
+        # truly out-of-domain requests and company hard facts the
+        # KB does not hold, never for a packaging option.
         is_capability = low.startswith(("can you", "do you", "can i", "could you"))
-        if is_capability and "/products/" in facts[0]["source"]:
-            _src = facts[0]["source"]
-            _cap2 = ("label" if "labels" in _src else
-                     "mylar bag" if "pouches" in _src else
-                     "box" if "boxes" in _src else
-                     "banner" if "banners" in _src else
-                     "business card" if "business-cards" in _src else None)
-            _unl2 = unlisted_options(message, _cap2) if _cap2 else []
-            if _cap2 == "mylar bag" and re.search(r"\bspout\b", low):
-                text = ("Spout pouches appear in our gallery, but the quote form "
-                        "doesn't list them — I'll note it for the team to confirm.")
-            elif _unl2:
-                text = (f"I can't confirm {_unl2[0]} for this product here — "
-                        "I'll include it in the quote for the team.")
-            elif not text.lower().startswith("yes"):
-                text = "Yes — " + (text[0].lower() + text[1:] if text else text)
+        if is_capability and "/products/" in facts[0]["source"] \
+                and not text.lower().startswith("yes"):
+            text = "Yes — " + (text[0].lower() + text[1:] if text else text)
         return f"{text} {next_q}" if next_q else text
     if missing:
         return next_q
@@ -625,13 +617,19 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
                reply_to: str | None = None) -> str | None:
     """gpt-5-mini answer, or None if no key / call fails.
 
-    The prompt is the leash: facts come ONLY from the retrieved OKF
-    chunks below. No chunk about it -> the model must say it will
-    include it in the quote for the team, never guess. Numbers are
-    copied verbatim. The composer rules below are the old brain's
-    problemsWith list, restated as prompt rules — and they are ALSO
-    enforced in code afterwards, because a prompt rule is followed
-    "most of the time".
+    REFERENCE, NOT WHITELIST (Oct 29): the KB chunks below are the
+    reference for the company's offerings and the source of truth
+    for its HARD facts (MOQ, turnaround, location, hours, payments,
+    policies) — those override general knowledge and are copied
+    verbatim. But packaging-domain questions (product types,
+    materials, finishes, styles, uses, how things work) are answered
+    from the model's own packaging knowledge too: the company's
+    listings are a reference, not the limit of what it makes. Only
+    company-specific facts absent from the KB (other locations,
+    team details, exact prices, dates) are off-limits — those go to
+    the team with the quote, never invented. The composer rules are
+    ALSO enforced in code afterwards, because a prompt rule is
+    followed "most of the time".
     """
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
@@ -649,10 +647,17 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
             "You are a Print247 sales assistant. Reply in the visitor's "
             f"language ({language}). If skus is more than 1, quantity means "
             "PER DESIGN: ask for quantity per design and, when confirming, "
-            "state quantity per design and the total. Use ONLY the facts below and the "
-            "collected order details. If a fact is not in them, say you "
-            "will include it in the quote for the team — never guess, never invent a "
-            "price, policy, or date. Copy numbers verbatim. Keep it short.\n"
+            "state quantity per design and the total. The facts below are your "
+            "REFERENCE for what the company offers, and the source of truth for its "
+            "hard facts (minimum order, turnaround, location, support hours, payments, "
+            "policies) — state those exactly, copy numbers verbatim. For "
+            "packaging-domain questions (product types, materials, finishes, styles, "
+            "uses, how things work), use your own packaging knowledge freely and answer "
+            "gracefully: the company's listings are a reference, not the limit of what "
+            "it makes — a packaging company makes the product family. Never invent a "
+            "company-specific fact (another location, team details, an exact price, a "
+            "date): if it is not in the facts below, say the team will confirm it with "
+            "the quote. Never state a price figure. Keep it short.\n"
             "SCRIPT (ask one question at a time, in this order): product, size, "
             "style (bags/boxes), finish, quantity, designs/SKUs, extras (bags only: "
             "zipper and tear notch), material. Never ask for a detail already "
@@ -1553,22 +1558,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                         _box_variant = _disp
                         break
             _ctext = _fact_reply_text(_ctext_raw)
-            # Never a Yes for an option the product's own files do
-            # not list (PET labels, a handle on a mylar bag), and
-            # never a bare Yes for a spout pouch: it appears in the
-            # gallery but the quote form does not list it, so the
-            # team must confirm it. The product interest is still
-            # stored; only the confirmation is withheld.
-            _unlisted = unlisted_options(message, _cap)
-            _is_pouch_family = _cap in ("mylar bag", "pouch", "bag", "stand-up pouch",
-                                        "flat pouch", "flat-bottom pouch")
-            if _is_pouch_family and re.search(r"\bspout\b", low):
-                _ctext = ("Spout pouches appear in our gallery, but the quote form "
-                          "doesn't list them — I'll note it for the team to confirm.")
-            elif _unlisted:
-                _ctext = (f"I can't confirm {_unlisted[0]} for this product here — "
-                          "I'll include it in the quote for the team.")
-            elif _box_variant:
+            # REFERENCE, NOT WHITELIST (Oct 29): a packaging company
+            # makes the product family — an option the files do not
+            # name (PET, a handle, a spout pouch shown in the
+            # gallery) still gets a Yes. The old "can't confirm"
+            # guard is gone by design; "team will confirm" survives
+            # only for out-of-domain requests and company hard facts
+            # the KB does not hold.
+            if _box_variant:
                 _ctext = f"Yes — we make {_box_variant} boxes. " + _ctext
             elif not _ctext.lower().startswith("yes"):
                 _ctext = "Yes — " + (_ctext[0].lower() + _ctext[1:] if _ctext else _ctext)
@@ -1833,6 +1830,18 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         elif not is_fact_question:
             sources = _slot_sources(slots) or sources
     else:
+        # LIVE SEARCH + LEARN (Oct 29, "both"): a fact question
+        # with zero KB facts is searched on the web instead of
+        # answered "not in our data" — and the searched answer is
+        # SAVED as a learned KB fact (kb/learned/*.md + Qdrant
+        # point) so the next visitor gets it from the cache, fast,
+        # with no search. Price questions never search: no figure
+        # may reach a visitor, from any source.
+        _searched = None
+        if not facts and not asks_about_price(message):
+            _searched = web_search(message)
+            if _searched:
+                facts = [{"source": "web-search", "text": _searched["answer"]}]
         reply = _llm_reply(message, language, slots, facts, reply_to=reply_to)
         llm_used = reply is not None
         if not llm_used:
@@ -1869,6 +1878,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 llm_used = False
             else:
                 reply = _fixed
+                # Only a reply that actually reached the visitor is
+                # worth learning: a composer-rejected search answer
+                # is never cached.
+                if _searched:
+                    save_learned(message, _searched["answer"], _searched["urls"])
+                    sources = [u["url"] for u in _searched["urls"] if u.get("url")]
     # Below-minimum note, once, on a question reply that does not
     # already state the minimum (the quantity question does).
     if _moq_note and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():

@@ -116,82 +116,10 @@ def capability_fact(product: str) -> str | None:
         return None
 
 
-# Option words a capability question can name: films/stocks and
-# features. A bare "Yes — ..." must never confirm one that the
-# product's own files never list: "do you make PET labels?" got a
-# Yes followed by sheet-label text, and "mylar bags with a handle"
-# got a Yes followed by the pouch list, though neither PET-for-
-# labels nor handles are listed anywhere. Finish words (matte,
-# gloss, soft touch) and box types (corrugated, rigid) are NOT
-# here: they are real variants answered by their own tables, and
-# flagging them would wrongly defer true Yes answers.
-_OPTION_WORDS = (
-    "pet", "pe", "hdpe", "ldpe", "pp", "bopp", "foil", "kraft", "vinyl",
-    "paper", "board", "sbs", "chipboard", "aluminum", "aluminium",
-    "nylon", "polyester", "polyethylene", "polypropylene",
-    "window", "handle", "hang", "hole", "valve", "gusset", "corner",
-    "corners", "embossed", "embossing", "debossed", "holographic",
-    "zipper",
-)
-# General file + family files an option word must appear in for
-# the Yes to stand. Materials live in the family files, not the
-# general file (kraft/foil for mylar bags live in the mylar
-# materials file), so checking only the general file would defer
-# true answers.
-_PRODUCT_OPTION_FILES = {
-    "box": ("kb/products/boxes.md", "kb/products/boxes-campaign-styles.md",
-            "kb/materials/boxes-campaign-materials.md"),
-    "mylar bag": ("kb/products/pouches.md", "kb/products/pouches-mylar-styles.md",
-                  "kb/products/pouches-mylar-sizes.md",
-                  "kb/products/pouches-mylar-filling-use.md",
-                  "kb/materials/pouches-mylar-materials-finishes.md"),
-    "pouch": ("kb/products/pouches.md", "kb/products/pouches-mylar-styles.md",
-              "kb/products/pouches-mylar-sizes.md",
-              "kb/products/pouches-mylar-filling-use.md",
-              "kb/materials/pouches-mylar-materials-finishes.md"),
-    "bag": ("kb/products/pouches.md", "kb/products/pouches-mylar-styles.md",
-            "kb/products/pouches-mylar-sizes.md",
-            "kb/products/pouches-mylar-filling-use.md",
-            "kb/materials/pouches-mylar-materials-finishes.md"),
-    "stand-up pouch": ("kb/products/pouches.md", "kb/products/pouches-mylar-styles.md",
-                       "kb/products/pouches-mylar-sizes.md",
-                       "kb/products/pouches-mylar-filling-use.md",
-                       "kb/materials/pouches-mylar-materials-finishes.md"),
-    "flat pouch": ("kb/products/pouches.md", "kb/products/pouches-mylar-styles.md",
-                   "kb/products/pouches-mylar-sizes.md",
-                   "kb/products/pouches-mylar-filling-use.md",
-                   "kb/materials/pouches-mylar-materials-finishes.md"),
-    "flat-bottom pouch": ("kb/products/pouches.md", "kb/products/pouches-mylar-styles.md",
-                          "kb/products/pouches-mylar-sizes.md",
-                          "kb/products/pouches-mylar-filling-use.md",
-                          "kb/materials/pouches-mylar-materials-finishes.md"),
-    "label": ("kb/products/labels.md", "kb/products/labels-bottle-wine-spirits.md"),
-    "sticker": ("kb/products/labels.md",),
-    "business card": ("kb/products/business-cards.md",),
-    "banner": ("kb/products/banners.md",),
-}
-
-
-def unlisted_options(text: str, product: str) -> list[str]:
-    """Option words the visitor named that the product's own files
-    never list — each one is a Yes the bot must not give. Empty
-    when the question names no option word, or every option word
-    it names is listed."""
-    paths = _PRODUCT_OPTION_FILES.get(product or "")
-    if not paths:
-        return []
-    hay = ""
-    for path in paths:
-        try:
-            with open(path, encoding="utf-8") as f:
-                hay += f.read().lower() + "\n"
-        except OSError:
-            pass
-    low = (text or "").lower()
-    # "pet treats" is animal treats, not the PET film: without this
-    # strip, the word "pet" looks listed for mylar bags and a PET
-    # question wrongly keeps its Yes.
-    hay = re.sub(r"\bpet (?:treats|food)\b", "", hay)
-    return [w for w in _OPTION_WORDS
-            if re.search(rf"\b{re.escape(w)}\b", low)
-            and re.search(rf"\b{re.escape(w)}\b", hay) is None]
+# NOTE (Oct 29, philosophy correction): the whitelist guard that
+# lived here (unlisted_options + option tables) is DELETED. The KB
+# is a reference, not the limit of what the company makes — a
+# packaging company makes the product family, so an option the
+# files do not name still gets a Yes. "Team will confirm" survives
+# only for out-of-domain requests and company hard facts the KB
+# does not hold.
