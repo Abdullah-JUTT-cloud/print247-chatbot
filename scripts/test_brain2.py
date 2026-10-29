@@ -92,7 +92,8 @@ for _msg, _prod in [
 r = run("b2-cap-pizza-size", ["do you make 13 inch pizza boxes"])
 check("capability pizza: stated size stored, style asked next",
       r["slots"].get("sizes") == "13 inch"
-      and "What style of box" in r["reply"],
+      and "What style of box" in r["reply"]
+      and "(see facts/moq.md for context" not in r["reply"],
       f"slots={r['slots']!r} reply={r['reply'][-100:]!r}")
 r = run("b2-cap-unknown", ["do you make t-shirts"])
 check("capability unknown product gets no Yes",

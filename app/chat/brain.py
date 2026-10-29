@@ -315,12 +315,19 @@ def _clean_fact_text(text: str) -> str:
         if end != -1:
             t = t[end + 4:].strip()
     if len(t) > 800:
-        # Never cut mid-word: the old 800-char cut left replies
-        # ending in "bu" for "but". Back off to the last space.
+        # Never cut mid-sentence: the old word cut left capability
+        # replies ending in "(see facts/moq.md for context" with
+        # the closing "notes)." dropped. Prefer the last sentence
+        # end inside the window, else the last space.
         cut = t[:800]
-        last_space = cut.rfind(" ")
-        if last_space > 600:
-            cut = cut[:last_space]
+        sent_end = max(cut.rfind(". "), cut.rfind(".\n"),
+                       cut.rfind("! "), cut.rfind("? "))
+        if sent_end > 600:
+            cut = cut[:sent_end + 1]
+        else:
+            last_space = cut.rfind(" ")
+            if last_space > 600:
+                cut = cut[:last_space]
         return cut
     return t
 
