@@ -99,6 +99,12 @@ def _question(field: str, slots: dict, language: str) -> str:
         key = "q_style_boxes" if "box" in (slots.get("product") or "").lower() else "q_style_bags"
         english = question_for(field, slots)
         return _tr(key, language, english)
+    if field == "type":
+        # The type question is the product file's own list sentence
+        # (same text the types branch answers with), not the bare
+        # "Which type would you like?" fallback.
+        _tl = _type_list_sentence(slots.get("product") or "box")
+        return (_tl + " Which type would you like?") if _tl else question_for(field, slots)
     if field == "quantity" and per_design_quantity(slots):
         return _tr("q_per_design", language, "How many units do you need per design?")
     key = {"product": "q_product", "sizes": "q_sizes", "finishes": "q_finishes",
@@ -139,6 +145,10 @@ def _suggestions(slots: dict, missing: list[str], reply: str = "", language: str
         return [_tr("chip_size_4x6", language, "Size 4x6 inches"),
                 _tr("chip_size_mm", language, "Size 100x150mm"),
                 _tr("chip_not_sure_size", language, "Not sure about size")]
+    if "type" in missing:
+        # Checked BEFORE style: both are in missing until the type
+        # is answered, and the type chips must win while it is.
+        return ["Corrugated", "Rigid", "Mailer", "Folding carton"]
     if "style" in missing:
         # Chips follow the product family, like _question() already
         # does: pouch styles under a box question were the "mylar
@@ -703,6 +713,8 @@ def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None 
             elif _n == 2:
                 _sz = f"{_sz} (width x height)"
         parts.append(f"size {_sz}")
+    if slots.get("type"):
+        parts.append(f"{slots.get('type')} type")
     if slots.get("style") and slots.get("style") != "none":
         parts.append(f"{slots.get('style')} style")
     if slots.get("finishes") and slots.get("finishes") != "none":
@@ -1413,6 +1425,22 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             if re.search(rf"\b{re.escape(_mq)}\b\s*(?:units?|pcs|pieces)\b",
                          (message or "").lower()):
                 extracted["quantity"] = _mq
+    # Box type before style (Oct 30): a type word must land in the
+    # type field, not leak into style ("rigid") or material
+    # ("corrugated") — otherwise the type question is answered and
+    # the quote still has no type. Exceptions: the style question
+    # itself (a style word there is a style answer), a type already
+    # stored, and questions (a question is never an answer).
+    _tprod = extracted.get("product") or prior.get("product")
+    if _tprod == "box" and not prior.get("type") and _pend_pre != "style" \
+            and not (visitor_is_asking(message) and not _is_order):
+        _twords = _named_types(message, "box")
+        if _twords:
+            extracted["type"] = _twords[0]
+            if extracted.get("style") == _twords[0]:
+                extracted.pop("style", None)
+            if extracted.get("material") == _twords[0]:
+                extracted.pop("material", None)
     # Bare number answering the designs question ("22" after "How
     # many designs?") is a design count, not a quantity: code's
     # quantity reader grabs it first and corrupts the quote (Oct 30
@@ -1791,7 +1819,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _mt = _named_types(message, _mt_prod) if _mt_prod else []
     if len(_mt) >= 2 and not visitor_is_asking(message) and "?" not in message \
             and not meta.get("awaiting_contact"):
-        for _f in ("style", "material"):
+        for _f in ("style", "material", "type"):
             if _f in extracted and slots.get(_f) in _mt:
                 if prior.get(_f) is not None:
                     slots[_f] = prior[_f]
@@ -2215,6 +2243,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             if "product" not in meta.setdefault("answered_fields", []):
                 meta["answered_fields"].append("product")
             _tchips = _TYPE_CHIPS.get(_types_prod)
+            # Type already answered (the script asks it before
+            # style since Oct 30): a repeat types question gets
+            # the list and the pending question, not a second
+            # "Which type would you like?" that derails the flow.
+            if _tchips and slots.get("type"):
+                _tchips = None
             if _tchips:
                 _treply = _types_list + " Which type would you like?"
                 return _final_return(_treply, srcs=[_TYPE_FILES[_types_prod]],

@@ -11,6 +11,10 @@ Script order (generic): product -> sizes -> style -> finishes ->
 quantity -> skus -> extras -> material.
 Family trims: boxes skip extras (extras are a bag thing — the old
 weHave rule); labels and banners skip style and extras.
+Boxes ask type before style (Oct 30 transcript: style-first let
+the visitor reach the finish question without ever being asked
+the type, so they had to ask "what box types do you offer"
+mid-quote and the flow derailed).
 
 A field counts as answered when the visitor said it (tracked in
 meta["answered_fields"]), when it was given up after MAX_ASKS, or
@@ -49,6 +53,7 @@ _ABOUT_THE_QUOTE = re.compile(
 QUESTIONS = {
     "product": "What product are you looking for — for example mylar bags, pouches, boxes, or labels?",
     "sizes": "What size do you need? Width x height x depth, in inches or mm.",
+    "type": "Which type would you like?",
     "style_bags": "What style of Mylar bag do you need: Flat, Standup or which one?",
     "style_boxes": "What style of box do you need?",
     "finishes": "What finish do you prefer: matte, gloss or soft touch?",
@@ -99,7 +104,7 @@ def family_order(product: str | None) -> list[str]:
     if is_banner_family(product):
         return ["product", "sizes", "finishes", "quantity", "skus", "material"]
     if "box" in low:
-        return ["product", "sizes", "style", "finishes", "quantity", "skus", "material"]
+        return ["product", "sizes", "type", "style", "finishes", "quantity", "skus", "material"]
     if "label" in low or "sticker" in low:
         return ["product", "sizes", "finishes", "quantity", "skus", "material"]
     if is_bag_family(product):
@@ -137,7 +142,7 @@ def script_missing(slots: dict, meta: dict) -> list[str]:
             continue
         if field in answered:
             continue
-        if field in ("product", "sizes", "quantity", "style", "finishes", "material"):
+        if field in ("product", "sizes", "quantity", "type", "style", "finishes", "material"):
             if not _is_placeholder(slots.get(field)):
                 continue
         missing.append(field)

@@ -205,8 +205,8 @@ check("gibberish does not crash", bool(r["reply"]),
 FLOW_CASES = [
     ["I need mylar bags", "4x6 inches", "stand-up", "matte", "5000 units",
      "3 designs", "per design", "zipper", "kraft"],
-    ["I need custom boxes", "100x150mm", "flat-bottom", "gloss", "1000 units",
-     "3 designs", "in total", "no preference"],
+    ["I need custom boxes", "100x150mm", "corrugated", "mailer", "gloss",
+     "1000 units", "3 designs", "in total", "no preference"],
 ]
 for i, msgs in enumerate(FLOW_CASES):
     prod = msgs[0].replace("I need ", "")
@@ -595,18 +595,18 @@ check("bare 3x4 asks inches/cm/mm/feet, stored pending, never quantity",
       and not r["slots"].get("quantity"),
       f"reply={r['reply'][:140]!r} slots={r['slots']}")
 r = run("ev-box-unit-ans", ["i need large box", "shipping", "3x4", "mm"])
-check("unit answer completes size, style asked with BOX chips",
+check("unit answer completes size, type asked with BOX chips",
       r["slots"].get("sizes") == "3x4 mm"
-      and "What style of box do you need?" in r["reply"]
-      and r["suggestions"] == ["Mailer", "Tuck-end", "Rigid", "Folding carton"],
+      and "Which type would you like?" in r["reply"]
+      and r["suggestions"] == ["Corrugated", "Rigid", "Mailer", "Folding carton"],
       f"reply={r['reply'][:140]!r} chips={r['suggestions']} slots={r['slots']}")
 r = run("ev-box-complaint", ["i need large box", "shipping", "3x4", "mm",
                              "bro i want boxes you gave me mylar bag suggestions"])
-check("complaint acknowledged, style re-asked with box chips, no dump",
+check("complaint acknowledged, type re-asked with box chips, no dump",
       "sorry about that" in r["reply"]
-      and "What style of box do you need?" in r["reply"]
-      and "stand-up" not in r["reply"] and "display boxes" not in r["reply"]
-      and r["suggestions"] == ["Mailer", "Tuck-end", "Rigid", "Folding carton"],
+      and "Which type would you like?" in r["reply"]
+      and "stand-up" not in r["reply"]
+      and r["suggestions"] == ["Corrugated", "Rigid", "Mailer", "Folding carton"],
       f"reply={r['reply'][:160]!r} chips={r['suggestions']}")
 r = run("ev-box-pouch-chips", ["i need mylar bags", "4x6 inches"])
 check("pouch style chips unchanged (Flat/Stand-up/Flat-bottom)",
@@ -720,40 +720,47 @@ check("mid-quote 'what is my order?' answered from slots + script continues",
 # then bricked the chat so every later question got a handoff. ---
 _s = _steps("ev-boxfix-full", [
     "i need large box", "Shipping", "40x90", "Inches", "Folding carton",
-    "No preference", "1000 units", "none", "plain rigid box", "Kraft",
-    "no i dont need now my mind chnaged", "i dont neeed",
+    "Mailer", "No preference", "1000 units", "none", "plain rigid box",
+    "Kraft", "no i dont need now my mind chnaged", "i dont neeed",
     "What is your refund policy?"])
-check("box style chip parses first try, finish asked next",
-      _s[4]["slots"].get("style") == "folding carton"
-      and "What finish" in _s[4]["reply"],
+check("box type chip parses first try, style asked next",
+      _s[4]["slots"].get("type") == "folding carton"
+      and "What style of box do you need?" in _s[4]["reply"],
       f"reply={_s[4]['reply'][:140]!r} slots={_s[4]['slots']}")
+check("box style chip parses first try, finish asked next",
+      _s[5]["slots"].get("style") == "mailer"
+      and "What finish" in _s[5]["reply"],
+      f"reply={_s[5]['reply'][:140]!r} slots={_s[5]['slots']}")
 check("quantity question states no MOQ until asked",
-      "What quantity are you looking to order for your first run?" in _s[5]["reply"]
-      and "MOQ" not in _s[5]["reply"] and "1000" not in _s[5]["reply"],
-      f"reply={_s[5]['reply'][:160]!r}")
+      "What quantity are you looking to order for your first run?" in _s[6]["reply"]
+      and "MOQ" not in _s[6]["reply"] and "1000" not in _s[6]["reply"],
+      f"reply={_s[6]['reply'][:160]!r}")
 check("'plain rigid box' stores rigid material, confirmation follows",
-      _s[8]["slots"].get("material") == "rigid"
-      and "Just to confirm" in _s[8]["reply"],
-      f"reply={_s[8]['reply'][:160]!r} slots={_s[8]['slots']}")
+      _s[9]["slots"].get("material") == "rigid"
+      and "Just to confirm" in _s[9]["reply"],
+      f"reply={_s[9]['reply'][:160]!r} slots={_s[9]['slots']}")
 check("material correction at confirmation re-confirms with the new value",
-      _s[9]["slots"].get("material") == "kraft"
-      and "kraft material" in _s[9]["reply"],
-      f"reply={_s[9]['reply'][:160]!r}")
+      _s[10]["slots"].get("material") == "kraft"
+      and "kraft material" in _s[10]["reply"],
+      f"reply={_s[10]['reply'][:160]!r}")
 check("mind-changed cancels gracefully, draft cleared, no handoff",
-      "No problem at all" in _s[10]["reply"]
-      and _s[10]["slots"] == {} and _s[10].get("handoff") is None,
-      f"reply={_s[10]['reply'][:140]!r}")
-check("repeated refusal after cancel stays graceful, never a handoff",
       "No problem at all" in _s[11]["reply"]
-      and _s[11].get("handoff") is None,
+      and _s[11]["slots"] == {} and _s[11].get("handoff") is None,
       f"reply={_s[11]['reply'][:140]!r}")
-check("refund policy answered after cancel, never the handoff loop",
-      "5 business days" in _s[12]["reply"]
+check("repeated refusal after cancel stays graceful, never a handoff",
+      "No problem at all" in _s[12]["reply"]
       and _s[12].get("handoff") is None,
-      f"reply={_s[12]['reply'][:160]!r}")
+      f"reply={_s[12]['reply'][:140]!r}")
+check("refund policy answered after cancel, never the handoff loop",
+      "5 business days" in _s[13]["reply"]
+      and _s[13].get("handoff") is None,
+      f"reply={_s[13]['reply'][:160]!r}")
 for _chip, _want in [("Mailer", "mailer"), ("Tuck-end", "tuck-end"),
                      ("Rigid", "rigid"), ("Folding carton", "folding carton")]:
-    r = run(f"ev-boxchip-{_want}", ["i need boxes", "10x12 inches", _chip])
+    # Type is asked before style now: the chip is answered after a
+    # type pick, so it lands in style, not type.
+    r = run(f"ev-boxchip-{_want}",
+            ["i need boxes", "10x12 inches", "Corrugated", _chip])
     check(f"box chip {_chip!r} parses as style {_want}",
           r["slots"].get("style") == _want and "What finish" in r["reply"],
           f"reply={r['reply'][:120]!r} slots={r['slots']}")
@@ -887,9 +894,9 @@ check("two types named at once ask which one, store neither",
       and _s[1]["suggestions"] == ["Corrugated", "Rigid"]
       and "style" not in _s[1]["slots"] and "material" not in _s[1]["slots"],
       f"reply={_s[1]['reply'][:160]!r} slots={_s[1]['slots']}")
-check("type pick after the which-one question goes to size",
+check("type pick after the which-one question stores type, goes to size",
       "What size do you need?" in _s[2]["reply"]
-      and _s[2]["slots"].get("style") == "rigid",
+      and _s[2]["slots"].get("type") == "rigid",
       f"reply={_s[2]['reply'][:160]!r} slots={_s[2]['slots']}")
 r = run("ev-s25-pouchtypes", ["what type of mylar bags do you have?"])
 check("mylar types question lists pouch types with pouch chips",
@@ -996,7 +1003,7 @@ try:
     check("model filling size drops code's leaked quantity=1",
           _s[1]["slots"].get("sizes") == "1x2 feet"
           and "quantity" not in _s[1]["slots"]
-          and "style" in _s[1]["reply"].lower(),
+          and "Which type would you like?" in _s[1]["reply"],
           f"reply={_s[1]['reply'][:120]!r} slots={_s[1]['slots']}")
     _s = _steps("ev-s27-modelqty", ["I need custom boxes",
                                     "1 foot wide, 2 foot tall, 500 units"])
@@ -1107,6 +1114,32 @@ r = run("ev-s29-kindfin", ["what kind of finishes do you provide for boxes?"])
 check("'kind of finishes' is a finishes question, not a types question",
       "Which type would you like?" not in r["reply"],
       f"reply={r['reply'][:200]!r}")
+
+# ---------- section 30: Oct 30 type-before-style round ----------
+r = _steps("ev-s30-flow", ["hi i need boxes", "Size 4x6 inches", "Corrugated", "Mailer", "Matte", "1000 units", "1 design", "No preference"])
+check("box flow asks type after size, before style",
+      "Which type would you like?" in r[1]["reply"]
+      and "What style of box do you need?" in r[2]["reply"]
+      and r[2]["slots"].get("type") == "corrugated"
+      and "material" not in r[2]["slots"]
+      and r[3]["slots"].get("style") == "mailer"
+      and "corrugated type, mailer style" in r[7]["reply"],
+      f"turns={[t['reply'][:120] for t in r]} slots={r[7]['slots']}")
+r = run("ev-s30-vol", ["I need corrugated boxes"])
+check("volunteered box type stores type, not material",
+      r["slots"].get("type") == "corrugated" and "material" not in r["slots"],
+      f"slots={r['slots']}")
+r = _steps("ev-s30-rigid", ["hi i need boxes", "4x6 inches", "Rigid"])
+check("'Rigid' as a type answer stores type only, never style+material",
+      r[2]["slots"].get("type") == "rigid"
+      and "style" not in r[2]["slots"] and "material" not in r[2]["slots"]
+      and "What style of box do you need?" in r[2]["reply"],
+      f"slots={r[2]['slots']}")
+r = _steps("ev-s30-two", ["hi i need boxes", "4x6 inches", "Corrugated Boxes, Rigid Boxes"])
+check("two types in one message stores neither and asks which one",
+      "Which type would you like" in r[2]["reply"]
+      and "type" not in r[2]["slots"],
+      f"reply={r[2]['reply'][:150]!r} slots={r[2]['slots']}")
 
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:

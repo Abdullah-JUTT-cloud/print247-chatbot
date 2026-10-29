@@ -57,8 +57,8 @@ for _form in ["Soft touch", "soft-touch", "softtouch", "soft touch finish"]:
           and "finish" not in r["reply"].lower())
 
 # --- contact flow: a refusal ends it, never re-asks the same field ---
-r = run("b2-stop", ["I need custom boxes", "100x150mm", "flat-bottom", "gloss",
-                    "1000 units", "3 designs", "in total", "no preference",
+r = run("b2-stop", ["I need custom boxes", "100x150mm", "corrugated", "mailer",
+                    "gloss", "1000 units", "3 designs", "in total", "no preference",
                     "Yes, that's correct", "NO I DONT WANT NOW"])
 check("stop: first refusal closes contact flow, no email question",
       "stop here" in r["reply"] and "email" not in r["reply"].lower())
@@ -87,12 +87,13 @@ for _msg, _prod in [
     check(f"capability '{_msg}'",
           r["reply"].startswith("Yes") and r["slots"].get("product") == _prod
           and "What product are you looking for" not in r["reply"]
-          and ("What size" in r["reply"] or "What style" in r["reply"]),
+          and ("What size" in r["reply"] or "What style" in r["reply"]
+               or "Which type" in r["reply"]),
           f"reply={r['reply'][:110]!r} slots={r['slots']!r}")
 r = run("b2-cap-pizza-size", ["do you make 13 inch pizza boxes"])
-check("capability pizza: stated size stored, style asked next",
+check("capability pizza: stated size stored, type asked next",
       r["slots"].get("sizes") == "13 inch"
-      and "What style of box" in r["reply"]
+      and "Which type would you like?" in r["reply"]
       and "(see facts/moq.md for context" not in r["reply"],
       f"slots={r['slots']!r} reply={r['reply'][-100:]!r}")
 r = run("b2-cap-unknown", ["do you make t-shirts"])
@@ -206,8 +207,8 @@ check("bare: answered from moq file, skus untouched",
       and "What size" in r["reply"])
 
 # --- plain packaging: skus never asked ---
-r = run("b2-plain", ["I need a plain white box", "10x8x4 inches", "flat",
-                     "matte", "1000 units", "kraft"])
+r = run("b2-plain", ["I need a plain white box", "10x8x4 inches", "corrugated",
+                     "mailer", "matte", "1000 units", "kraft"])
 check("plain: confirmation with no designs question asked",
       r["missing"] == [] and "design" not in r["reply"].lower())
 

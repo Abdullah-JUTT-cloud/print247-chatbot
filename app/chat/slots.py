@@ -21,7 +21,7 @@ import re
 from .finishes_norm import finish_in, normalise_finish
 from .quantity_parse import spelled_number_in
 
-FIELDS = ["product", "material", "sizes", "finishes", "quantity", "extras", "skus", "style"]
+FIELDS = ["product", "material", "sizes", "finishes", "quantity", "extras", "skus", "style", "type"]
 # "style" is a script question, not one of the old 7 quote fields:
 # the bag/box style question ("Flat, Standup or which one?") is
 # asked after sizes, and its answer is stored here, never guessed.
