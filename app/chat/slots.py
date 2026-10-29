@@ -80,6 +80,35 @@ _SIZE = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?"
     r"(?:\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm)?",
     re.IGNORECASE)
+# Spelled-out dimensions ("10 inches length and 6 inches width",
+# "6 inches wide, 10 inches long"): _SIZE needs an x/by/* between
+# the numbers, so this phrasing fell through — and then "10" leaked
+# into quantity while the size stayed missing (live transcript,
+# Oct 29). Same shape, both orders, hyphen tolerated ("10-inch
+# length"). Stored normalized as NxM + unit, never raw.
+_LW = re.compile(
+    r"\b(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:length|long)\b"
+    r"\s*(?:and|,)?\s*"
+    r"(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:width|wide)\b"
+    r"|\b(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:width|wide)\b"
+    r"\s*(?:and|,)?\s*"
+    r"(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:length|long)\b",
+    re.IGNORECASE)
+_UNIT_WORD = {"in": " inches", "inch": " inches", "inches": " inches",
+              "mm": " mm", "cm": " cm"}
+
+
+def _lw_size(low: str) -> str | None:
+    m = _LW.search(low)
+    if not m:
+        return None
+    gs = m.groups()
+    if gs[0] is not None:
+        n1, u1, n2, u2 = gs[0], gs[1], gs[2], gs[3]
+    else:
+        n1, u1, n2, u2 = gs[4], gs[5], gs[6], gs[7]
+    unit = _UNIT_WORD.get((u1 or u2 or "").lower().strip(), "")
+    return f"{n1}x{n2}{unit}"
 # A rejected option must never be stored as the choice: "not matte"
 # stored matte, "without zipper" stored zipper. The negation is
 # checked right before the label, so "zipper, no window" still keeps
@@ -217,6 +246,9 @@ def _quantity_in(text: str) -> str | None:
     cleaned = _PACK_COUNT.sub(" ", cleaned)
     # Remove size spans so "4 by 6 inches" never leaks its first
     # dimension (4) into quantity — same class of bug as designs.
+    # Length/width spans too: "10 inches length and 6 inches width"
+    # otherwise leaks its 10 into quantity while the size is lost.
+    cleaned = _LW.sub(" ", cleaned)
     cleaned = _SIZE.sub(" ", cleaned)
     m = _NUMBER.search(cleaned)
     if m:
@@ -294,9 +326,13 @@ def extract_from_message(text: str) -> dict:
                 continue
             out["material"] = mat
             break
-    size = _SIZE.search(low)
-    if size and not _PACK_COUNT.search(low.split("x")[0] if "x" in low else low):
-        out["sizes"] = size.group(0).strip()
+    lw = _lw_size(low)
+    if lw:
+        out["sizes"] = lw
+    else:
+        size = _SIZE.search(low)
+        if size and not _PACK_COUNT.search(low.split("x")[0] if "x" in low else low):
+            out["sizes"] = size.group(0).strip()
     finish = _find(low, _FINISHES)
     if finish:
         out["finishes"] = normalise_finish(finish)

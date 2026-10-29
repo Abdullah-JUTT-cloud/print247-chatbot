@@ -63,7 +63,8 @@ from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A
                       is_already_a_customer, is_dismissal, is_done_with_us, is_looking_for_work,
                       objects_to_the_price, offers_a_phone_number, puts_it_off_for_now,
                       rep_named_in, says_bye, says_thanks, shared_a_file, wants_a_person,
-                      wants_it_in_the_chat)
+                      wants_it_in_the_chat, asks_for_suggestion, suggestion_product,
+                      suggestion_use)
 from .language import detect_language
 from .llm_extract import llm_extract
 from .price_questions import PRICING_COMES_WITH_THE_QUOTE, asks_about_price
@@ -302,6 +303,25 @@ def _with_next_question(answer: str, slots: dict, missing: list[str], language: 
     return f"{answer} {q}" if q else answer
 
 
+# Suggestion answers, every word KB-grounded: jerky sizes and
+# finishes from kb/products/beef-jerky-bags.md, food-box board
+# weights and the food-and-beverage line from kb/products/boxes.md,
+# coffee pouches from kb/products/pouches.md. Nothing here is
+# invented for a use the KB does not cover.
+_SUGGESTION_ANSWERS = {
+    ("jerky", "mylar bag"):
+        "For pieces of dry meat (beef jerky), we suggest food-grade mylar pouches "
+        "with resealable zippers — popular sizes are 5x8+3 for snack retail (2-3 oz) "
+        "and 6x9+3.5 for standard retail (3-5 oz).",
+    ("jerky", "box"):
+        "For beef jerky boxes, food boxes work — 14pt to 16pt lightweight, "
+        "18pt to 20pt standard, 24pt heavy duty.",
+    ("coffee", "mylar bag"):
+        "For coffee, we suggest coffee pouches.",
+    ("coffee", "box"):
+        "For coffee, food and beverage boxes work — 14pt to 16pt lightweight, "
+        "18pt to 20pt standard, 24pt heavy duty.",
+}
 _FACT_WORDS = ["minimum", "moq", "turnaround", "shipping", "sample",
                "how long", "delivery", "lead time"]
 
@@ -398,6 +418,20 @@ def _direct_answer(question: str, text: str) -> str:
         q |= {"payment", "payments", "accepted"}
     if q & {"time", "long", "turnaround", "take"}:
         q |= {"turnaround", "days"}
+    # A country word means "outside the USA" even when the country
+    # itself is not listed in the shipping file ("do you deliver to
+    # Brazil?"): without this, the free-nationwide sentence
+    # outscores the outside-USA caveat and Brazil gets told
+    # shipping is free. USA words never trigger it (inside, not
+    # outside).
+    _countries = ("pakistan", "india", "china", "uk", "england", "canada",
+                  "australia", "germany", "france", "uae", "dubai",
+                  "bangladesh", "sri lanka", "nepal", "nigeria", "kenya",
+                  "south africa", "brazil", "mexico", "japan", "korea",
+                  "turkey", "saudi arabia", "qatar", "italy", "spain",
+                  "netherlands", "europe")
+    if any(re.search(rf"\b{re.escape(c)}\b", qlow) for c in _countries):
+        q |= {"outside", "abroad", "country"}
 
     def _norm(words):
         # Plural-insensitive matching, applied to both sides:
@@ -795,6 +829,26 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if shared_a_file(message):
         return _intent_result(_with_next_question(SHARED_FILE_ANSWER, prior,
                                                  script_missing(prior, meta), language))
+    # A suggestion request is answered with a recommendation, not
+    # the next script question: "suggest me a bag for dry meat"
+    # used to be met with "What size do you need?" and "which type
+    # of boxes is best?" with a mylar-bag style question. Only
+    # KB-grounded (use, product) pairs fire; anything else falls
+    # through to the normal flow instead of an invented pick.
+    if asks_for_suggestion(message):
+        _s_use = suggestion_use(message, meta.get("visitor_messages") or [])
+        _s_prod = suggestion_product(message, prior.get("product"))
+        _s_ans = _SUGGESTION_ANSWERS.get((_s_use, _s_prod)) if _s_use else None
+        if _s_ans:
+            prior["product"] = _s_prod
+            meta.setdefault("answered_fields", [])
+            if "product" not in meta["answered_fields"]:
+                meta["answered_fields"].append("product")
+            _s_reply = _with_next_question(_s_ans, prior,
+                                           script_missing(prior, meta), language)
+            meta["last_bot_question"] = _s_reply
+            meta["last_asked"] = (script_missing(prior, meta) or [None])[0]
+            return _intent_result(_s_reply)
     if objects_to_the_price(message):
         return _intent_result(_with_next_question(ANSWER_TO_A_PRICE_OBJECTION, prior,
                                                  script_missing(prior, meta), language))
@@ -812,10 +866,20 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # Ask which unit the size is in; a visitor who meant quantity
     # says so ("10 units") and the normal quantity path stores it.
     _last_q = (meta.get("last_bot_question") or "").lower()
-    if (re.fullmatch(r"[\d,\s.]+", message.strip() or "")
-            and "size" in _last_q and "quantity" not in _last_q
-            and not prior.get("quantity")):
-        return _intent_result(f"Got it — {message.strip()} inches or mm for the size?")
+    if "size" in _last_q and "quantity" not in _last_q \
+            and not prior.get("quantity") and not prior.get("sizes"):
+        # A single dimension ("10 inches") is a size fragment, not
+        # a quantity either: ask for the other dimension instead
+        # of storing 10 as the order quantity.
+        _single_dim = re.fullmatch(
+            r"(\d+(?:\.\d+)?)\s*(inches?|in\b|mm|cm)",
+            message.strip() or "", re.IGNORECASE)
+        if _single_dim:
+            return _intent_result(
+                f"Got it — {_single_dim.group(1)} {_single_dim.group(2)} for the size — "
+                "what is the other dimension (length x width)?")
+        if re.fullmatch(r"[\d,\s.]+", message.strip() or ""):
+            return _intent_result(f"Got it — {message.strip()} inches or mm for the size?")
     _start_over = low in ("start over", "new order", "start again", "reset",
                           "new quote", "start fresh")
     # Finished quote picked back up (old whatToDoWithFinishedChat /

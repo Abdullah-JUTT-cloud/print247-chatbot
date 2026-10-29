@@ -16,8 +16,7 @@ emailed once the order ships.
 International delivery is not published in this policy. For
 delivery outside the USA — including China, India, the UK, Canada,
 Australia and anywhere else abroad — the policy names no carrier
-and no cost, so no delivery promise can be made here. Shipping is
-free nationwide via UPS, and for delivery to your country the team
+and no cost, so no delivery promise can be made here; the team
 will confirm whether delivery is possible and what it costs when
 they send the quote. The delivery question goes into the quote
 for the team; it is never answered with a guessed carrier or price.

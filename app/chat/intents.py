@@ -97,6 +97,55 @@ def shared_a_file(text: str) -> bool:
     return bool(_SHARED_FILE.search(said))
 
 
+# --- Suggestion request ("suggest me a bag for dry meat",
+# "which type of boxes is best for me?") ---
+_SUGGEST = re.compile(
+    r"\b(?:suggest\w*|recommend\w*)\b"
+    r"|\bwhich\b[^.?!]{0,40}\b(?:best|type|kind)\b"
+    r"|\bbest\b[^.?!]{0,20}\b(?:bag|bags|box|boxes|pouch|pouches|label|labels)\b",
+    re.IGNORECASE)
+# Use -> what the visitor puts inside. Only uses with a KB-grounded
+# suggestion fire: anything else falls through to the normal flow
+# instead of an invented recommendation.
+_SUGGEST_USES = (
+    (("jerky", "dry meat", "dried meat", "beef"), "jerky"),
+    (("coffee",), "coffee"),
+)
+_SUGGEST_PRODUCTS = (("business card", "business card"), ("boxes", "box"),
+                     ("box", "box"), ("pouches", "mylar bag"),
+                     ("pouch", "mylar bag"), ("bags", "mylar bag"),
+                     ("bag", "mylar bag"), ("labels", "label"),
+                     ("label", "label"), ("banner", "banner"),
+                     ("banners", "banner"))
+
+
+def asks_for_suggestion(text: str) -> bool:
+    return bool(_SUGGEST.search(text or ""))
+
+
+def suggestion_use(text: str, history=()) -> str | None:
+    """The use, from this message first, then the session history:
+    "which type of boxes is best for me?" names no use itself, but
+    the session is about dry meat — the history carries it."""
+    for hay in [text or ""] + list(history or []):
+        low = hay.lower()
+        for keys, use in _SUGGEST_USES:
+            if any(k in low for k in keys):
+                return use
+    return None
+
+
+def suggestion_product(text: str, stored: str | None = None) -> str | None:
+    """Explicit product word in this message wins over the stored
+    product: a visitor redirecting from bags to boxes must get the
+    box suggestion, not the bag style question again."""
+    low = (text or "").lower()
+    for word, prod in _SUGGEST_PRODUCTS:
+        if re.search(rf"\b{re.escape(word)}\b", low):
+            return prod
+    return stored
+
+
 # --- Soft dismissal ("thanks though"): a polite goodbye, not
 # thanks-and-carry-on. The plain thanks branch would push the
 # next script question after it — the old bot's ignored-goodbye

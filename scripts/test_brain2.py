@@ -160,8 +160,8 @@ for _q in ["can you deliver in china?", "do you ship to india?",
            "delivery to canada?", "can you deliver to the uk?"]:
     r = run("b2-ship", [_q])
     check(f"delivery: '{_q}' grounded, never promised",
-          "free nationwide" in r["reply"] and "UPS" in r["reply"]
-          and "team will confirm" in r["reply"])
+          "outside the USA" in r["reply"] and "team will confirm" in r["reply"]
+          and "free nationwide" not in r["reply"])
 
 # --- multi-design quantity scope: total vs per design ---
 r = run("b2-split", ["I need 5000 mylar bags, size 4x6 inches", "stand-up", "matte",

@@ -110,8 +110,8 @@ for c in COUNTRIES:
                f"delivery to {c}?"]:
         r = run(f"ev-ship-{c}", [ph])
         check(f"delivery {ph}",
-              "free nationwide" in r["reply"] and "UPS" in r["reply"]
-              and "team will confirm" in r["reply"]
+              "outside the USA" in r["reply"] and "team will confirm" in r["reply"]
+              and "free nationwide" not in r["reply"]
               and f"deliver to {c}" not in r["reply"].lower()
               and f"ship to {c}" not in r["reply"].lower(),
               f"reply={r['reply'][:130]!r}")
@@ -162,7 +162,7 @@ TOPIC_CASES = [
     ("moq", "1000"), ("what is the moq?", "1000"),
     ("turnaround", "business days"), ("how long does it take?", "business days"),
     ("where are you located?", "Rosenberg"),
-    ("do you ship free?", "UPS"),
+    ("do you ship free?", "free nationwide"),
     ("what payment methods?", "PayPal"),
     ("samples?", "sample"),
 ]
@@ -258,8 +258,8 @@ for _sci, c in enumerate(["china", "india", "canada", "germany"]):
         msg = tmpl.format(c=c)
         r = run(f"ev-cship-{_sci}-{_sti}", [msg])
         check(f"combo delivery {msg!r}",
-              "free nationwide" in r["reply"] and "UPS" in r["reply"]
-              and "team will confirm" in r["reply"],
+              "outside the USA" in r["reply"] and "team will confirm" in r["reply"]
+              and "free nationwide" not in r["reply"],
               f"reply={r['reply'][:120]!r}")
 
 # --- 14. capability questions: every phrasing x product x typo ---
@@ -478,6 +478,69 @@ check("no re-introduction with a rep name mid-chat",
 check("no markdown leaks into chat replies",
       all("**" not in _r and not _r.lstrip().startswith("#") for _r in _replies),
       f"replies={_replies}")
+
+# --- 19. live-transcript battery (Oct 29, 2026): four bugs from a
+# real visitor session, verbatim where they matter ---
+r = run("ev-live-shipfree", ["Is shipping free?"])
+check("live shipping-free is just the free sentence, no country caveat",
+      "free nationwide" in r["reply"].lower()
+      and "your country" not in r["reply"]
+      and "outside the USA" not in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-live-shipbrazil", ["do you deliver to Brazil?"])
+check("live unlisted-country delivery gets the outside-USA caveat",
+      "outside the USA" in r["reply"] and "team will confirm" in r["reply"]
+      and "free nationwide" not in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-live-shipcanada", ["do you deliver to Canada?"])
+check("live Canada delivery gets caveat + team-confirm",
+      "team will confirm" in r["reply"] and "Canada" in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-live-lw", ["I need mylar bags", "10 inches length and 6 inches width"])
+check("live length/width phrasing stores size, not quantity",
+      r["slots"].get("sizes") == "10x6 inches" and not r["slots"].get("quantity")
+      and "style" in r["reply"].lower(),
+      f"reply={r['reply'][:100]!r} slots={r['slots']}")
+r = run("ev-live-lw-rev", ["I need mylar bags", "6 inches width and 10 inches length"])
+check("live width-first phrasing stores stated order",
+      r["slots"].get("sizes") == "6x10 inches" and not r["slots"].get("quantity"),
+      f"slots={r['slots']}")
+r = run("ev-live-lw-long", ["I need mylar bags", "10 inches long and 6 inches wide"])
+check("live long/wide phrasing stores size",
+      r["slots"].get("sizes") == "10x6 inches" and not r["slots"].get("quantity"),
+      f"slots={r['slots']}")
+r = run("ev-live-by", ["I need mylar bags", "10 by 6 inches"])
+check("live by-phrasing still stores size, not quantity",
+      r["slots"].get("sizes") and not r["slots"].get("quantity")
+      and "style" in r["reply"].lower(),
+      f"slots={r['slots']}")
+r = run("ev-live-dim", ["I need mylar bags", "10 inches"])
+check("live single dimension asks for the other dimension, not quantity",
+      "other dimension" in r["reply"] and not r["slots"].get("quantity"),
+      f"reply={r['reply'][:100]!r}")
+r = run("ev-live-sug1", ["suggest me a bag for my poduct which is peices of dry meat"])
+check("live jerky-bag suggestion recommends, then asks size",
+      "food-grade" in r["reply"] and "resealable" in r["reply"]
+      and "size" in r["reply"].lower() and r["slots"].get("product") == "mylar bag",
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-live-sug3", ["suggest me a bag for my poduct which is peices of dry meat",
+                         "10 by 6 inches",
+                         "i said you to suggest me which type of boxes is best for me??"])
+check("live boxes suggestion uses session context, switches product",
+      "food boxes" in r["reply"] and r["slots"].get("product") == "box",
+      f"reply={r['reply'][:140]!r} slots={r['slots']}")
+r = run("ev-live-sug4", ["you have to suggest beef jerky boxes you are not trained well"])
+check("live direct jerky-boxes suggestion",
+      "food boxes" in r["reply"] and r["slots"].get("product") == "box",
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-live-sug-coffee", ["suggest me a bag for coffee"])
+check("live coffee-bag suggestion",
+      "coffee pouches" in r["reply"],
+      f"reply={r['reply'][:140]!r}")
+r = run("ev-live-sug-nous", ["suggest me a bag"])
+check("live suggestion without a use invents nothing",
+      "food-grade" not in r["reply"] and "size" in r["reply"].lower(),
+      f"reply={r['reply'][:140]!r}")
 
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
