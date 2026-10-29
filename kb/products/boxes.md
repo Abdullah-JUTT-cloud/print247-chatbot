@@ -7,9 +7,9 @@ status: verified
 last_reviewed: 2026-10-28
 ---
 
-Custom boxes include display boxes, rigid boxes, metalized boxes,
-cosmetic boxes, CBD boxes, pharmaceutical boxes, apparel boxes, food
-and beverage boxes, mailer boxes and folding cartons.
+Custom boxes include display boxes, rigid boxes, corrugated boxes,
+metalized boxes, cosmetic boxes, CBD boxes, pharmaceutical boxes,
+apparel boxes, food and beverage boxes, mailer boxes and folding cartons.
 
 Tuck box styles: Straight Tuck End, Reverse Tuck End, Crash Lock,
 Snap Lock Bottom, Gable, Dispenser, Perforated, Double Wall, Window

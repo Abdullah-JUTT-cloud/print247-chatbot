@@ -8,9 +8,9 @@ last_reviewed: 2026-10-29
 ---
 
 Print247 offers custom packaging and print products across these
-categories: custom boxes (display, rigid, metalized, cosmetic, CBD,
-pharmaceutical, apparel, food and beverage, mailer, folding
-cartons); mylar bags and pouches (stand-up, flat, 3-side-seal,
+categories: custom boxes (display, rigid, corrugated, metalized,
+cosmetic, CBD, pharmaceutical, apparel, food and beverage, mailer,
+folding cartons); mylar bags and pouches (stand-up, flat, 3-side-seal,
 flat-bottom, spout, child-resistant, vape, coffee, chocolate,
 pre-roll, CBD, inside-printed, poly mailers); labels and stickers
 (custom, product, business, specialty, barcode, die-cut, roll,

@@ -594,6 +594,77 @@ def _fact_reply_text(text: str) -> str:
     return cleaned
 
 
+_TYPE_FILES = {"box": "kb/products/boxes.md",
+               "pouch": "kb/products/pouches.md",
+               "mylar bag": "kb/products/pouches.md",
+               "label": "kb/products/labels.md",
+               "sticker": "kb/products/labels.md",
+               "banner": "kb/products/banners.md",
+               "business card": "kb/products/business-cards.md"}
+# Types a visitor can pick from a chip (every one parses: corrugated
+# is a material, the rest are styles).
+_TYPE_CHIPS = {"box": ["Corrugated", "Rigid", "Mailer", "Folding carton"],
+               "pouch": ["Stand-up", "Flat", "Flat-bottom"],
+               "mylar bag": ["Stand-up", "Flat", "Flat-bottom"]}
+# Type words a visitor can name, canonical value first, longest
+# phrases first so "flat-bottom" never also counts as "flat".
+_TYPE_VOCAB = {
+    "box": [("folding carton", "folding carton"), ("folding", "folding carton"),
+            ("tuck-end", "tuck-end"), ("tuck end", "tuck-end"),
+            ("corrugated", "corrugated"), ("rigid", "rigid"),
+            ("mailer", "mailer"), ("display", "display"),
+            ("metalized", "metalized"), ("die-cut", "die-cut"),
+            ("diecut", "die-cut"), ("gable", "gable")],
+    "pouch": [("flat-bottom", "flat-bottom"), ("flat bottom", "flat-bottom"),
+              ("stand-up", "stand-up"), ("stand up", "stand-up"),
+              ("standup", "stand-up"), ("spout", "spout"),
+              ("child-resistant", "child-resistant"), ("3-side", "flat"),
+              ("flat", "flat")],
+    "mylar bag": [("flat-bottom", "flat-bottom"), ("flat bottom", "flat-bottom"),
+                  ("stand-up", "stand-up"), ("stand up", "stand-up"),
+                  ("standup", "stand-up"), ("spout", "spout"),
+                  ("child-resistant", "child-resistant"), ("3-side", "flat"),
+                  ("flat", "flat")],
+}
+
+
+def _type_list_sentence(product: str) -> str:
+    """The product file's type-list sentence ("Custom boxes include
+    ..."), or "" when the file has no include sentence. This is the
+    answer to a types question — never _direct_answer's best
+    sentence, whose digit tie-break preferred board specs over the
+    list (Oct 30 transcript)."""
+    _path = _TYPE_FILES.get(product or "")
+    if not _path:
+        return ""
+    try:
+        _raw = open(_path, encoding="utf-8").read()
+    except OSError:
+        return ""
+    _m = re.match(r"^---\n.*?\n---\n(.*)$", _raw, re.DOTALL)
+    _text = _clean_fact_text((_m.group(1).strip() if _m else _raw.strip()))
+    for _s in [s.strip() for s in re.split(SENTENCE_BREAK, _text) if s.strip()]:
+        if "includ" in _s.lower():
+            return _s
+    return ""
+
+
+def _named_types(text: str, product: str) -> list[str]:
+    """Distinct type words named in the message, canonical values,
+    for the product's family. Empty when the product has no type
+    vocabulary (labels, banners, business cards). "flat-bottom"
+    suppresses "flat": the hyphen is a word boundary, so "flat"
+    would otherwise match inside "flat-bottom" and fake two types."""
+    _out: list[str] = []
+    for _phrase, _canon in _TYPE_VOCAB.get(product or "", []):
+        if re.search(rf"\b{re.escape(_phrase)}\b", (text or "").lower()) \
+                and _canon not in _out:
+            _out.append(_canon)
+    if "flat-bottom" in _out and "flat" in _out:
+        _out.remove("flat")
+    return _out
+
+
 def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None = None) -> str:
     """The collected spec as one readable line for confirmations:
     product, size, style, finish, quantity (per design + total when
@@ -1632,6 +1703,37 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "handoff": None, "llm_used": False,
                     "suggestions": [f"Switch to {extracted['product']}",
                                     f"Keep {prior['product']}"]}
+    # Two types named in one message ("Corrugated Boxes, Rigid
+    # Boxes") are not a choice: storing both (rigid style +
+    # corrugated material) and jumping to size skips the
+    # confirmation the visitor expects (Oct 30 transcript). Ask
+    # which one, store neither from this message — the type fields
+    # revert to what the quote had before it.
+    _mt_prod = extracted.get("product") or prior.get("product") or slots.get("product")
+    _mt = _named_types(message, _mt_prod) if _mt_prod else []
+    if len(_mt) >= 2 and not visitor_is_asking(message) and "?" not in message \
+            and not meta.get("awaiting_contact"):
+        for _f in ("style", "material"):
+            if _f in extracted and slots.get(_f) in _mt:
+                if prior.get(_f) is not None:
+                    slots[_f] = prior[_f]
+                else:
+                    slots.pop(_f, None)
+                if _f not in prior:
+                    meta["answered_fields"] = [a for a in meta.get("answered_fields", [])
+                                               if a != _f]
+        _mt_names = " or ".join(_mt)
+        _mt_chips = [c[0].upper() + c[1:] for c in _mt]
+        _mt_reply = f"Which type would you like — {_mt_names}?"
+        meta["last_bot_question"] = _mt_reply
+        meta.setdefault("bot_replies", []).append(_mt_reply)
+        meta["bot_replies"] = meta["bot_replies"][-20:]
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {"reply": _mt_reply, "language": language, "slots": slots,
+                "missing": script_missing(slots, meta),
+                "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                "suggestions": _mt_chips}
     if _start_over:
         _save_session(store, session_id, {})
         _save_meta(store, session_id, {})
@@ -1850,20 +1952,73 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
                     "suggestions": _suggestions(slots, missing, _preply, language)}
 
-    def _final_return(reply, handoff=None, llm_used=False, srcs=None):
+    def _final_return(reply, handoff=None, llm_used=False, srcs=None,
+                      suggestions=None):
         _save_session(store, session_id, slots)
         _save_meta(store, session_id, meta)
         return {"reply": reply, "language": language, "slots": slots,
                 "missing": script_missing(slots, meta),
                 "sources": srcs if srcs is not None else _slot_sources(slots),
                 "handoff": handoff, "llm_used": llm_used,
-                "suggestions": _suggestions(slots, script_missing(slots, meta),
-                                            reply=reply, language=language)}
+                "suggestions": suggestions if suggestions is not None
+                else _suggestions(slots, script_missing(slots, meta),
+                                  reply=reply, language=language)}
 
     def _confirmation_text() -> str:
         intro = _tr("confirm_intro", language, "Just to confirm — do you want")
         return (f"{intro} {_spec_parts(slots, _gave_up, meta.get('qty_split'))}?"
                 f"{_below_min_note(slots, language)}")
+
+    # Types question ("what box types do you offer?", "what type of
+    # boxes do you have?"): answer with the product's type LIST
+    # from its own file, never _direct_answer's best sentence —
+    # its digit tie-break picked "Box board is generally 12 to
+    # 24pt" and "Pharmaceutical boxes primarily use..." over the
+    # list (Oct 30 transcript). The question names the product, so
+    # the product is stored; style products then ask WHICH type
+    # (chips that all parse) instead of jumping to size, and other
+    # products continue with the normal next question.
+    _types_prod = None
+    if re.search(r"\b(types?|kinds?)\b", low) \
+            and ("?" in message or visitor_is_asking(message)):
+        for _w, _p in (("business cards", "business card"),
+                       ("business card", "business card"),
+                       ("boxes", "box"), ("box", "box"),
+                       ("cajas", "box"), ("caja", "box"),
+                       ("pouches", "pouch"), ("pouch", "pouch"),
+                       ("mylar", "mylar bag"),
+                       ("labels", "label"), ("label", "label"),
+                       ("stickers", "sticker"), ("sticker", "sticker"),
+                       ("banners", "banner"), ("banner", "banner")):
+            if re.search(rf"\b{_w}\b", low):
+                _types_prod = _p
+                break
+        if not _types_prod:
+            _types_prod = slots.get("product") or prior.get("product")
+    if _types_prod:
+        _types_list = _type_list_sentence(_types_prod)
+        if _types_list:
+            _cur = slots.get("product")
+            if _cur and _cur != _types_prod:
+                # Cross-family question mid-quote: answer the list,
+                # keep the quote untouched (no silent overwrite).
+                _tmiss = script_missing(slots, meta)
+                _tq = _next_question_text(slots, _tmiss, language)
+                return _final_return(
+                    _types_list + (f" {_tq}" if _tq else ""),
+                    srcs=[_TYPE_FILES[_types_prod]])
+            slots["product"] = _types_prod
+            if "product" not in meta.setdefault("answered_fields", []):
+                meta["answered_fields"].append("product")
+            _tchips = _TYPE_CHIPS.get(_types_prod)
+            if _tchips:
+                _treply = _types_list + " Which type would you like?"
+                return _final_return(_treply, srcs=[_TYPE_FILES[_types_prod]],
+                                     suggestions=_tchips)
+            _tmiss = script_missing(slots, meta)
+            _tq = _next_question_text(slots, _tmiss, language)
+            _treply = _types_list + (f" {_tq}" if _tq else "")
+            return _final_return(_treply, srcs=[_TYPE_FILES[_types_prod]])
 
     # Multi-design quantity scope (old quantity_split_question):
     # "5000 units, 3 designs" does not say whether 5000 is the total

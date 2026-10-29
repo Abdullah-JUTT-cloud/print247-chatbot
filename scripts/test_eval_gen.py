@@ -864,6 +864,55 @@ check("llm_extract accepts the new context kwargs (no key in VM -> {})",
       _llm_extract("22", asked="How many designs?", product="pouch") == {},
       "llm_extract with context kwargs did not return {}")
 
+# ---------- section 25: Oct 30 types-question round ----------
+r = run("ev-s25-boxtypes", ["what box types do you offer?"])
+check("box types question answers with the type list, not a board spec",
+      "corrugated boxes" in r["reply"] and "folding cartons" in r["reply"]
+      and "12 to 24pt" not in r["reply"]
+      and "Which type would you like?" in r["reply"]
+      and r["suggestions"] == ["Corrugated", "Rigid", "Mailer", "Folding carton"]
+      and r["slots"].get("product") == "box",
+      f"reply={r['reply'][:200]!r} chips={r['suggestions']}")
+r = run("ev-s25-boxtypes2", ["what type of boxes do you have?"])
+check("box types variant never picks the pharmaceutical sentence",
+      "Pharmaceutical boxes primarily" not in r["reply"]
+      and "corrugated boxes" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+_s = _steps("ev-s25-multitype", ["what box types do you offer?",
+                                  "i asked about box types like Corrugated Boxes, Rigid Boxes",
+                                  "Rigid"])
+check("two types named at once ask which one, store neither",
+      "Which type would you like" in _s[1]["reply"]
+      and "corrugated or rigid" in _s[1]["reply"]
+      and _s[1]["suggestions"] == ["Corrugated", "Rigid"]
+      and "style" not in _s[1]["slots"] and "material" not in _s[1]["slots"],
+      f"reply={_s[1]['reply'][:160]!r} slots={_s[1]['slots']}")
+check("type pick after the which-one question goes to size",
+      "What size do you need?" in _s[2]["reply"]
+      and _s[2]["slots"].get("style") == "rigid",
+      f"reply={_s[2]['reply'][:160]!r} slots={_s[2]['slots']}")
+r = run("ev-s25-pouchtypes", ["what type of mylar bags do you have?"])
+check("mylar types question lists pouch types with pouch chips",
+      "stand-up pouches" in r["reply"]
+      and r["suggestions"] == ["Stand-up", "Flat", "Flat-bottom"],
+      f"reply={r['reply'][:200]!r} chips={r['suggestions']}")
+r = run("ev-s25-labeltypes", ["what type of labels do you have?"])
+check("label types question lists labels, then the normal size question",
+      "Labels and stickers include" in r["reply"]
+      and "What size do you need?" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s25-crossfam", ["I need custom labels for my honey jars", "Size 4x6 inches",
+                             "what type of boxes do you have?"])
+check("cross-family types question keeps the quote untouched",
+      "corrugated boxes" in r["reply"] and r["slots"].get("product") == "label"
+      and "What finish" in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s25-flatbottom", ["I need flat-bottom pouches", "4x6 inches"])
+check("flat-bottom alone never counts as two types",
+      "Which type would you like" not in r["reply"]
+      and "What finish" in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)
