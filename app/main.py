@@ -2,32 +2,34 @@
 
 Endpoints:
   GET  /            -> chat UI (browser page, talks to POST /chat).
-  GET  /admin       -> admin dashboard (DEV ONLY, no login yet —
-                       see app/web.py security note before public use).
+  GET  /admin       -> sessions-only admin page, READ-ONLY
+                       (DEV ONLY, no login yet — see app/web.py
+                       security note before public use). No drafts,
+                       no approve flow, no KB editing: improvement
+                       happens in code (user's call, Oct 29, 2026).
+  GET  /admin/session/{id} -> full transcript of one session.
   GET  /health      -> proves API + Mongo + Qdrant are reachable.
   POST /chat        -> the brain: language detect, slot extraction,
                        code guards, RAG retrieval, then a gpt-5-mini
                        answer when OPENAI_API_KEY is set, otherwise a
                        deterministic reply that never invents a fact.
-  GET  /api/admin/kb, POST /api/admin/okf,
-  POST /api/admin/okf/{id}/approve, POST /api/admin/ingest,
-  POST /api/admin/test, GET /api/admin/logs
-                     -> admin operations (see app/admin_api.py).
 
 Every chat is logged to Mongo (chat_logs collection, fail-soft)
-so the admin can see new and unanswered questions. Logging never
-breaks a chat: if Mongo is down, the chat still answers.
+so the admin can see past conversations session by session.
+Logging never breaks a chat: if Mongo is down, the chat still
+answers. Re-ingest runs from the terminal
+(docker compose exec api python scripts/ingest.py), not from
+the admin page.
 """
 import datetime
 import os
 
-from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
 
-from . import admin_api
 from .chat.brain import handle_message
 from .chat.store import get_store
 from .web import ADMIN_HTML, CHAT_HTML
@@ -77,79 +79,30 @@ def chat_ui():
     return CHAT_HTML
 
 
-def _kb_rows_html(files=None) -> str:
-    """Server-rendered KB table (SSR). The old admin relied only on
-    JS fetches: if JS never ran in the browser, the page sat on
-    Loading forever even though the server was healthy (proven by
-    the user's own logs: GET /admin 200, but no /api/* request ever
-    arrived). SSR rows mean the data is visible even with JS dead;
-    the JS loads then overwrite them with fresh data when it runs."""
+def _session_rows_html() -> str:
+    """Server-rendered session table (SSR): one row per
+    conversation, no JS needed. Sessions only — no draft, approve
+    or KB actions anywhere on this page anymore."""
     import html as _html
-    try:
-        if files is None:
-            files = admin_api.list_kb()
-    except Exception:
-        return "<p class='warn'>KB list server par nahi ban saki.</p>"
-    if not files:
-        return "<p>No KB files found.</p>"
-    btn = ("style=\"background:#f97316;color:#111827;padding:7px 14px;border-radius:8px;"
-           "text-decoration:none;font-weight:700;display:inline-block\"" )
-    rows = "".join(
-        f"<tr><td>{_html.escape(f['path'])}</td><td>{_html.escape(f['status'])}</td>"
-        f"<td><a href=\"/admin/kb/{_html.escape(f['id'])}\" {btn}>View</a>"
-        + (f" <form method=\"post\" action=\"/admin/kb/{_html.escape(f['id'])}/approve\" "
-           f"style=\"display:inline\"><button>Approve</button></form>"
-           if f['status'] == 'draft' else "") + "</td></tr>"
-        for f in files)
-    return ("<table><tr><th>File</th><th>Status</th><th>Action</th></tr>"
-            + rows + "</table>")
-
-
-def _session_rows_html(pending_only: bool = False) -> str:
-    import html as _html
-    import re as _re
     try:
         client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
                              serverSelectionTimeoutMS=2000)
         col = client.get_default_database()["chat_logs"]
         docs = list(col.find().sort("created_at", -1).limit(500))
         sessions = _group_sessions(docs)[:25]
-        if pending_only:
-            kept = []
-            for s in sessions:
-                slug = _re.sub(r"[^a-z0-9]+", "-", (s['session_id'] or "chat").lower()).strip("-")[:20] or "chat"
-                if not admin_api._find_kb_path(f"fact-from-session-{slug}"):
-                    kept.append(s)
-            sessions = kept
     except Exception:
         return "<p class='warn'>Chats server par nahi ban sake (Mongo down ho sakta hai).</p>"
     if not sessions:
         return "<p>No chats yet — send a chat from the chat page first.</p>"
     btn = ("style=\"background:#f97316;color:#111827;padding:7px 14px;border-radius:8px;"
            "text-decoration:none;font-weight:700;display:inline-block\"" )
-    import re as _re
     rows = ""
     for s in sessions:
         sid = _html.escape(s['session_id'])
-        # Draft status for this session, if any file exists for it.
-        draft_action = (f"<form method=\"post\" action=\"/admin/draft-from-session\" "
-                        f"style=\"display:inline\"><input type=\"hidden\" name=\"session_id\" "
-                        f"value=\"{sid}\"><button>Draft KB</button></form>")
-        slug = _re.sub(r"[^a-z0-9]+", "-", (s['session_id'] or "chat").lower()).strip("-")[:20] or "chat"
-        draft_id = f"fact-from-session-{slug}"
-        draft_path = admin_api._find_kb_path(draft_id)
-        if draft_path:
-            meta, _body = admin_api._read_kb(draft_path)
-            status = meta.get("status", "")
-            if status == "verified":
-                draft_action = "<b>Seekh liya (verified)</b>"
-            else:
-                draft_action = (f"<a href=\"/admin/kb/{draft_id}\" {btn}>Draft dekho (approve karo)</a>")
         rows += (f"<tr><td>{_html.escape(str(s['first_message']))}"
                  f"<br><small>{sid}</small></td>"
                  f"<td>{s['count']}</td>"
-                 f"<td><a href=\"/admin/session/{sid}\" {btn}>Chat dekho</a> "
-                 f"{draft_action}</td></tr>")
+                 f"<td><a href=\"/admin/session/{sid}\" {btn}>Chat dekho</a></td></tr>")
     return ("<table><tr><th>Chat (pehla message)</th><th>Messages</th><th>Action</th></tr>"
             + rows + "</table>")
 
@@ -181,17 +134,9 @@ def _mongo_docs(session_id: str | None = None) -> list:
 
 
 @app.get("/admin", response_class=HTMLResponse)
-def admin_ui(view: str = "all"):
+def admin_ui():
     import re as _re
-    pending = (view == "pending")
-    kb_files = None
-    if pending:
-        try:
-            kb_files = [f for f in admin_api.list_kb() if f["status"] == "draft"]
-        except Exception:
-            kb_files = None
-    html = (ADMIN_HTML.replace("{{KB_ROWS}}", _kb_rows_html(kb_files))
-                      .replace("{{SESSION_ROWS}}", _session_rows_html(pending_only=pending)))
+    html = ADMIN_HTML.replace("{{SESSION_ROWS}}", _session_rows_html())
     try:
         mongo, qdrant = _mongo_ok(), _qdrant_ok()
         health = (f"Server: {'OK' if mongo and qdrant else 'MASLA'} "
@@ -202,56 +147,6 @@ def admin_ui(view: str = "all"):
     return _re.sub(r'<p id="serverstatus"[^>]*>.*?</p>',
                    f'<p id="serverstatus" class="help">{health}</p>',
                    html, count=1)
-
-
-@app.get("/admin/kb/{file_id}", response_class=HTMLResponse)
-def admin_kb_page(file_id: str):
-    import html as _html
-    d = admin_api.get_kb_file(file_id)
-    if not d.get("ok"):
-        return _admin_shell("File nahi mili",
-                            f"<p class=\"warn\">{_html.escape(d.get('error', 'not found'))}</p>")
-    body = _html.escape(d["body"])
-    return _admin_shell(f"KB file: {d['path']}",
-        f"<p class=\"help\">Status: {d['status']} | Source: {_html.escape(d['source'])}</p>"
-        f"<pre>{body}</pre>"
-        f"<h2>Fact likho / Save karo</h2>"
-        f"<form method=\"post\" action=\"/admin/kb/{file_id}/save\">"
-        f"<textarea name=\"body\" rows=\"16\">{body}</textarea><br>"
-        f"<button>Save edits</button></form>"
-        f"<form method=\"post\" action=\"/admin/kb/{file_id}/approve\">"
-        f"<button>Approve this file</button></form>"
-        f"<p class=\"help\">Approve tabhi karo jab placeholder (VERIFIED FACT) "
-        f"ki jagah asal fact likh diya ho. Approve ke baad Re-ingest dabao.</p>")
-
-
-@app.post("/admin/kb/{file_id}/save")
-def admin_kb_save(file_id: str, body: str = Form(...)):
-    admin_api.save_kb_file(file_id, body)
-    return RedirectResponse(url=f"/admin/kb/{file_id}", status_code=303)
-
-
-@app.post("/admin/kb/{file_id}/approve", response_class=HTMLResponse)
-def admin_kb_approve(file_id: str):
-    import html as _html
-    r = admin_api.approve_okf(file_id)
-    if not r.get("ok"):
-        return _admin_shell("Approve nahi hua",
-            f"<p class=\"warn\">{_html.escape(r.get('error', 'unknown'))}</p>"
-            f"<p><a href=\"/admin/kb/{file_id}\">Wapas file par</a></p>")
-    return RedirectResponse(url=f"/admin/kb/{file_id}", status_code=303)
-
-
-@app.post("/admin/kb/create")
-def admin_kb_create(id: str = Form(...), title: str = Form(...),
-                    category: str = Form(...), source: str = Form(...),
-                    body: str = Form(...)):
-    r = admin_api.create_okf(id, title, category, source, body)
-    if not r.get("ok"):
-        import html as _html
-        return _admin_shell("Create nahi hua",
-            f"<p class=\"warn\">{_html.escape(r.get('error', 'unknown'))}</p>")
-    return RedirectResponse(url=f"/admin/kb/{r.get('id', id)}", status_code=303)
 
 
 @app.get("/admin/session/{session_id}", response_class=HTMLResponse)
@@ -269,59 +164,7 @@ def admin_session_page(session_id: str):
         lines.append(f"Bot: {_html.escape(str(d.get('reply', '')))}")
         lines.append("")
     return _admin_shell(f"Poori chat: {session_id}",
-        f"<pre>{chr(10).join(lines)}</pre>"
-        f"<form method=\"post\" action=\"/admin/draft-from-session\">"
-        f"<input type=\"hidden\" name=\"session_id\" value=\"{_html.escape(session_id)}\">"
-        f"<button>Is chat se Draft KB banao</button></form>")
-
-
-@app.post("/admin/draft-from-session", response_class=HTMLResponse)
-def admin_draft_from_session_page(session_id: str = Form(...)):
-    import html as _html
-    try:
-        docs = _mongo_docs(session_id)
-        msgs = [{"message": d.get("message"), "reply": d.get("reply", ""),
-                 "sources": d.get("sources", [])} for d in docs]
-        r = admin_api.draft_from_session(session_id, msgs)
-    except Exception as e:
-        r = {"ok": False, "error": str(e)}
-    if not r.get("ok"):
-        return _admin_shell("Draft nahi bana",
-            f"<p class=\"warn\">{_html.escape(r.get('error', 'unknown'))}</p>")
-    return RedirectResponse(url=f"/admin/kb/{r['id']}", status_code=303)
-
-
-@app.post("/admin/auto-draft-all", response_class=HTMLResponse)
-def admin_auto_draft_all_page():
-    import html as _html
-    try:
-        sessions = _group_sessions(_mongo_docs())
-        created, skipped = [], []
-        for s in sessions:
-            r = admin_api.draft_from_session(s["session_id"], s["messages"])
-            (created if r.get("ok") else skipped).append(s["session_id"])
-        body = (f"<p>Ban gaye: {len(created)}</p><pre>{_html.escape(chr(10).join(created))}</pre>"
-                f"<p>Pehle se drafted (skip): {len(skipped)}</p>"
-                f"<pre>{_html.escape(chr(10).join(skipped))}</pre>")
-    except Exception as e:
-        body = f"<p class=\"warn\">{_html.escape(str(e))}</p>"
-    return _admin_shell("Auto-draft result", body)
-
-
-@app.post("/admin/ingest", response_class=HTMLResponse)
-def admin_ingest_page():
-    import html as _html
-    r = admin_api.run_ingest()
-    return _admin_shell("Re-ingest result",
-        f"<p>{'OK' if r.get('ok') else 'FAIL'}</p><pre>{_html.escape(r.get('output', ''))}</pre>")
-
-
-@app.post("/admin/test", response_class=HTMLResponse)
-def admin_test_page():
-    import html as _html
-    r = admin_api.run_tests()
-    return _admin_shell("Tests result",
-        f"<p>{'OK' if r.get('ok') else 'FAIL'}</p><pre>{_html.escape(r.get('output', ''))}</pre>")
+        f"<pre>{chr(10).join(lines)}</pre>")
 
 
 @app.get("/health")
@@ -360,65 +203,6 @@ def chat_history(session_id: str):
                  "reply_to": d.get("reply_to")} for d in docs]
     except Exception:
         return []
-
-
-@app.get("/api/admin/kb")
-def admin_kb():
-    return admin_api.list_kb()
-
-
-class OkfIn(BaseModel):
-    id: str
-    title: str
-    category: str
-    source: str
-    body: str
-
-
-@app.post("/api/admin/okf")
-def admin_create_okf(payload: OkfIn):
-    return admin_api.create_okf(payload.id, payload.title, payload.category,
-                                payload.source, payload.body)
-
-
-@app.get("/api/admin/kb/{file_id}")
-def admin_get_kb(file_id: str):
-    return admin_api.get_kb_file(file_id)
-
-
-class SaveOkfIn(BaseModel):
-    body: str
-
-
-@app.post("/api/admin/okf/{file_id}/save")
-def admin_save_okf(file_id: str, payload: SaveOkfIn):
-    return admin_api.save_kb_file(file_id, payload.body)
-
-
-@app.post("/api/admin/okf/{file_id}/approve")
-def admin_approve_okf(file_id: str):
-    return admin_api.approve_okf(file_id)
-
-
-class DraftFromLogIn(BaseModel):
-    message: str
-    reply: str = ""
-    sources: list[str] = []
-
-
-@app.post("/api/admin/draft-from-log")
-def admin_draft_from_log(payload: DraftFromLogIn):
-    return admin_api.draft_from_chat(payload.message, payload.reply, payload.sources)
-
-
-@app.post("/api/admin/ingest")
-def admin_ingest():
-    return admin_api.run_ingest()
-
-
-@app.post("/api/admin/test")
-def admin_test():
-    return admin_api.run_tests()
 
 
 def _group_sessions(docs: list) -> list[dict]:
@@ -463,59 +247,4 @@ def _group_sessions(docs: list) -> list[dict]:
     return out
 
 
-@app.get("/api/admin/logs")
-def admin_logs():
-    """Sessions, not messages: one row per conversation. The old
-    version returned one row per message, which made one chat look
-    like dozens of separate chats."""
-    try:
-        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
-                             serverSelectionTimeoutMS=2000)
-        col = client.get_default_database()["chat_logs"]
-        docs = list(col.find().sort("created_at", -1).limit(500))
-        return _group_sessions(docs)[:25]
-    except Exception:
-        return []
 
-
-class DraftFromSessionIn(BaseModel):
-    session_id: str
-
-
-@app.post("/api/admin/draft-from-session")
-def admin_draft_from_session(payload: DraftFromSessionIn):
-    """Automatically draft ONE KB file from a whole session: the
-    server pulls the session's chat from Mongo, so the admin does
-    not paste or type anything — just Approve after writing the fact."""
-    try:
-        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
-                             serverSelectionTimeoutMS=2000)
-        col = client.get_default_database()["chat_logs"]
-        docs = list(col.find({"session_id": payload.session_id}).sort("created_at", 1))
-        if not docs:
-            return {"ok": False, "error": "no chats found for this session"}
-        msgs = [{"message": d.get("message"), "reply": d.get("reply", ""),
-                 "sources": d.get("sources", [])} for d in docs]
-        return admin_api.draft_from_session(payload.session_id, msgs)
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/api/admin/auto-draft-all")
-def admin_auto_draft_all():
-    """One draft per session, automatically, skipping sessions
-    that already have a draft. The admin then approves each draft
-    in the KB list — no per-message work at all."""
-    try:
-        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
-                             serverSelectionTimeoutMS=2000)
-        col = client.get_default_database()["chat_logs"]
-        docs = list(col.find().sort("created_at", -1).limit(500))
-        sessions = _group_sessions(docs)
-        created, skipped = [], []
-        for s in sessions:
-            r = admin_api.draft_from_session(s["session_id"], s["messages"])
-            (created if r.get("ok") else skipped).append(s["session_id"])
-        return {"ok": True, "created": created, "skipped_already_drafted": skipped}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
