@@ -44,6 +44,7 @@ _PRODUCTS = [
     ("box", ["box", "boxes", "carton", "cartons", "caja", "cajas"]),
     ("label", ["label", "labels", "etiqueta", "etiquetas"]),
     ("sticker", ["sticker", "stickers"]),
+    ("business card", ["business card", "business cards"]),
     ("banner", ["banner", "banners"]),
 ]
 
@@ -83,6 +84,72 @@ _SIZE = re.compile(
 # stored matte, "without zipper" stored zipper. The negation is
 # checked right before the label, so "zipper, no window" still keeps
 # the zipper and only drops the window.
+def mylar_like(text: str) -> bool:
+    """A token that is 'mylar' misspelled ('milar', 'mylarr',
+    'maylar'): 'milar bags' must be a mylar bag, not a plain bag —
+    the exact table matches 'bags' first and would call it 'bag'."""
+    import difflib
+
+    for token in re.findall(r"[a-z]+", (text or "").lower()):
+        if len(token) < 4:
+            continue
+        if sorted(token) == sorted("mylar"):
+            return True
+        if difflib.SequenceMatcher(None, token, "mylar").ratio() >= 0.8:
+            return True
+    return False
+
+
+def _word_match(token: str, word: str) -> float:
+    """Similarity of one token to one alias word: 1.0 on a
+    transposition (sorted letters equal — 'lables' vs 'labels' is
+    0.83 by difflib, same letters, two swapped), else difflib."""
+    import difflib
+
+    if sorted(token) == sorted(word):
+        return 1.0
+    return difflib.SequenceMatcher(None, token, word).ratio()
+
+
+def fuzzy_product(text: str) -> str | None:
+    """A misspelled product, matched when the exact table misses:
+    'lables' -> label, 'milar bags' -> mylar bag, 'puches' ->
+    pouch. Single-word aliases match one token (ratio >= 0.85).
+    Multi-word aliases need EVERY word matched by some token —
+    otherwise a style answer hijacks the product: 'flat-bottom'
+    matched the word 'flat' in 'flat pouch', and 'stand-up'
+    matched 'stand' in 'stand up pouch', flipping boxes and mylar
+    bags into pouches mid-flow. Only when the exact table found
+    nothing — so a real word never loses to a near-miss."""
+    low = (text or "").lower()
+    tokens = [t for t in re.findall(r"[a-z]+", low) if len(t) >= 4]
+    tokens_all = re.findall(r"[a-z]+", low)
+    best = None
+    for canonical, aliases in _PRODUCTS:
+        for alias in aliases:
+            words = alias.split()
+            if len(words) == 1:
+                if len(words[0]) < 4:
+                    continue
+                for token in tokens:
+                    r = _word_match(token, words[0])
+                    if r >= 0.85 and (best is None or r > best[0]):
+                        best = (r, canonical)
+            else:
+                rs = []
+                for word in words:
+                    if len(word) < 4:
+                        rs.append(1.0 if word in tokens_all else 0.0)
+                    else:
+                        rs.append(max((_word_match(t, word) for t in tokens),
+                                      default=0.0))
+                if rs and min(rs) >= 0.8:
+                    r = min(rs)
+                    if best is None or r > best[0]:
+                        best = (r, canonical)
+    return best[1] if best else None
+
+
 def _negated_labels(text: str, labels: list[str]) -> set[str]:
     low = (text or "").lower()
     out = set()
@@ -216,7 +283,9 @@ def extract_from_message(text: str) -> dict:
         "centímetros", "cm").replace("centimetros", "cm").replace(
         "milímetros", "mm").replace("milimetros", "mm")
     out: dict = {}
-    product = _find(low, _PRODUCTS)
+    product = _find(low, _PRODUCTS) or fuzzy_product(low)
+    if product == "bag" and mylar_like(low):
+        product = "mylar bag"
     if product:
         out["product"] = product
     for mat in _MATERIALS:

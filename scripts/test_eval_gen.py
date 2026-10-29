@@ -188,9 +188,10 @@ check("template blanks stored nothing",
       not r["slots"].get("quantity") and not r["slots"].get("sizes"),
       f"slots={r['slots']!r}")
 r = run("ev-adv-3", ["Do you make 4x6 mylar bags?"])
-check("question-as-answer stores nothing",
-      not r["slots"].get("product") and not r["slots"].get("sizes"),
-      f"slots={r['slots']!r}")
+check("capability question stores stated size, asks style next",
+      r["slots"].get("sizes") == "4x6"
+      and "What style of Mylar bag" in r["reply"],
+      f"slots={r['slots']!r} reply={r['reply'][:110]!r}")
 r = run("ev-adv-4", ["Do you print in 24 hours?"])
 check("24 hours is turnaround, not quantity",
       r["slots"].get("quantity") is None and "business days" in r["reply"],
@@ -217,48 +218,111 @@ for i, msgs in enumerate(FLOW_CASES):
           f"reply={r['reply'][:200]!r}")
 
 # --- 13. combinatorial expansion: same families, every phrasing ---
-for f in ["matte", "gloss", "soft touch", "spot uv", "foil stamping", "embossing"]:
-    for tmpl in ["{f}", "I want {f}", "{f} finish", "prefer {f}", "{f} please"]:
+for _fi, f in enumerate(["matte", "gloss", "soft touch", "spot uv", "foil stamping", "embossing"]):
+    for _ti, tmpl in enumerate(["{f}", "I want {f}", "{f} finish", "prefer {f}", "{f} please"]):
         msg = tmpl.format(f=f)
-        r = run(f"ev-cf-{f}-{tmpl[:4]}",
+        r = run(f"ev-cf-{_fi}-{_ti}",
                 ["I need mylar bags", "4x6 inches", "stand-up", msg])
         check(f"combo finish {msg!r}", r["slots"].get("finishes") == f,
               f"got {r['slots'].get('finishes')!r}")
-for n in ["80", "500", "1000", "5000", "15000", "100000"]:
-    for suf in ["units", "pcs", "pieces", ""]:
+for _ni, n in enumerate(["80", "500", "1000", "5000", "15000", "100000"]):
+    for _si, suf in enumerate(["units", "pcs", "pieces", ""]):
         msg = (n + " " + suf).strip()
-        r = run(f"ev-cq-{n}-{suf}",
+        r = run(f"ev-cq-{_ni}-{_si}",
                 ["I need mylar bags", "4x6 inches", "stand-up", "matte", msg])
         check(f"combo qty {msg!r}", r["slots"].get("quantity") == n,
               f"got {r['slots'].get('quantity')!r}")
-for d in ["4x6", "10x14", "100x150", "3x3x5", "10*14"]:
-    for u in ["inches", "mm", ""]:
+for _di, d in enumerate(["4x6", "10x14", "100x150", "3x3x5", "10*14"]):
+    for _ui, u in enumerate(["inches", "mm", ""]):
         msg = (d + " " + u).strip()
-        r = run(f"ev-cs-{d}-{u}", ["I need mylar bags", msg])
+        r = run(f"ev-cs-{_di}-{_ui}", ["I need mylar bags", msg])
         check(f"combo size {msg!r}", bool(r["slots"].get("sizes")),
               f"got {r['slots'].get('sizes')!r}")
-for f in ["matte", "gloss", "soft touch"]:
-    for tmpl in ["not {f}", "no {f}", "don't want {f}", "anything but {f}"]:
+for _nfi, f in enumerate(["matte", "gloss", "soft touch"]):
+    for _nti, tmpl in enumerate(["not {f}", "no {f}", "don't want {f}", "anything but {f}"]):
         msg = tmpl.format(f=f)
-        r = run(f"ev-cneg-{f}-{tmpl[:4]}",
+        r = run(f"ev-cneg-{_nfi}-{_nti}",
                 ["I need mylar bags", "4x6 inches", "stand-up", msg])
         check(f"combo neg finish {msg!r}",
               r["slots"].get("finishes") != f,
               f"stored {r['slots'].get('finishes')!r}")
-for msg in ["price?", "what is the price?", "how much?", "how much for boxes?",
+for _pi, msg in enumerate(["price?", "what is the price?", "how much?", "how much for boxes?",
             "price for 5000 mylar bags", "give me a price", "need price",
-            "price please", "what does it cost?", "how much does it cost?"]:
-    r = run(f"ev-cprice-{msg[:12]}", [msg])
+            "price please", "what does it cost?", "how much does it cost?"]):
+    r = run(f"ev-cprice-{_pi}", [msg])
     check(f"combo price {msg!r}", "can't price it here" in r["reply"],
           f"reply={r['reply'][:120]!r}")
-for c in ["china", "india", "canada", "germany"]:
-    for tmpl in ["do you deliver to {c}", "shipping to {c}?", "ship to {c}"]:
+for _sci, c in enumerate(["china", "india", "canada", "germany"]):
+    for _sti, tmpl in enumerate(["do you deliver to {c}", "shipping to {c}?", "ship to {c}"]):
         msg = tmpl.format(c=c)
-        r = run(f"ev-cship-{c}-{tmpl[:4]}", [msg])
+        r = run(f"ev-cship-{_sci}-{_sti}", [msg])
         check(f"combo delivery {msg!r}",
               "free nationwide" in r["reply"] and "UPS" in r["reply"]
               and "team will confirm" in r["reply"],
               f"reply={r['reply'][:120]!r}")
+
+# --- 14. capability questions: every phrasing x product x typo ---
+CAP_PRODUCTS = [
+    ("pizza boxes", "box"), ("corrugated boxes", "box"),
+    ("mylar bags", "mylar bag"), ("stand-up pouches", "pouch"),
+    ("labels", "label"), ("stickers", "sticker"), ("banners", "banner"),
+    ("business cards", "business card"), ("boxes", "box"), ("bags", "bag"),
+    ("lables", "label"), ("puches", "pouch"), ("milar bags", "mylar bag"),
+]
+CAP_TEMPLATES = [
+    "do you make {p}", "can you make {p}", "do you print {p}",
+    "can you print {p}", "do you offer {p}", "do you do {p}",
+    "can you produce {p}", "do you sell {p}", "do you make {p}?",
+    "ok do you make {p}", "hi, do you make {p}", "do you maqke {p}",
+    "do u make {p}", "do you mak {p}",
+]
+for _ci, (prod_text, want) in enumerate(CAP_PRODUCTS):
+    for _ti, tmpl in enumerate(CAP_TEMPLATES):
+        msg = tmpl.format(p=prod_text)
+        r = run(f"ev-cap-{_ci}-{_ti}", [msg])
+        check(f"capability {msg!r}",
+              r["reply"].startswith("Yes")
+              and r["slots"].get("product") == want
+              and "What product are you looking for" not in r["reply"]
+              and "What size" in r["reply"],
+              f"reply={r['reply'][:110]!r} slots={r['slots']!r}")
+
+# --- 15. location x country: the not-here answer, every phrasing ---
+LOC_COUNTRIES = [
+    ("pakistan", "Pakistan"), ("india", "India"), ("china", "China"),
+    ("uk", "the UK"), ("canada", "Canada"), ("australia", "Australia"),
+    ("germany", "Germany"), ("uae", "the UAE"),
+]
+LOC_TEMPLATES = [
+    "where are you located in {c}?", "are you located in {c}?",
+    "do you have an office in {c}?", "where it located in {c}",
+    "is there a branch in {c}?", "do you have a location in {c}?",
+]
+for _li, (c, disp) in enumerate(LOC_COUNTRIES):
+    for _ti, tmpl in enumerate(LOC_TEMPLATES):
+        msg = tmpl.format(c=c)
+        r = run(f"ev-loc-{_li}-{_ti}", [msg])
+        check(f"location {msg!r}",
+              "Rosenberg" in r["reply"]
+              and f"don't have a location in {disp}" in r["reply"],
+              f"reply={r['reply'][:130]!r}")
+
+# --- 16. human / robot questions + product typos as orders ---
+for msg in ["are you human", "are you a robot", "are you a real person",
+            "am i talking to a bot?", "are you ai"]:
+    r = run(f"ev-human-{msg[:8]}", [msg])
+    check(f"human {msg!r}", "automated assistant" in r["reply"],
+          f"reply={r['reply'][:120]!r}")
+for msg, want in [("I need milar bags", "mylar bag"),
+                  ("I need mylarr bags", "mylar bag"),
+                  ("I need labls", "label"),
+                  ("I need lables", "label"),
+                  ("I need puches", "pouch"),
+                  ("I need business cards", "business card")]:
+    r = run(f"ev-typo-{msg}", [msg])
+    check(f"typo order {msg!r}",
+          r["slots"].get("product") == want and "What size" in r["reply"],
+          f"slots={r['slots']!r} reply={r['reply'][:100]!r}")
 
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:

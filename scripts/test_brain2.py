@@ -22,8 +22,9 @@ from app.chat.quote_value import (is_a_question_not_an_answer,
 from app.chat.script import script_missing
 
 
-def check(name, cond):
-    print(("PASS " if cond else "FAIL ") + name)
+def check(name, cond, detail=""):
+    print(("PASS " if cond else "FAIL ") + name
+          + ((" :: " + detail) if detail and not cond else ""))
     assert cond, name
 
 
@@ -71,6 +72,42 @@ r = run("b2-stop-spec", ["I need mylar bags", "4x6 inches", "stand-up",
                          "I don't want matte"])
 check("stop: 'I don't want matte' is a finish answer, not a stop",
       r["slots"].get("finishes") in (None, "matte") and "stop asking" not in r["reply"])
+
+# --- capability questions: Yes + product stored + size asked ---
+for _msg, _prod in [
+    ("do you make 13 inch pizza boxes", "box"),
+    ("ok do you maqke corrogated boxes", "box"),
+    ("ok do you make corrogated boxes", "box"),
+    ("do you make lables", "label"),
+    ("do you make milar bags", "mylar bag"),
+    ("do you make business cards", "business card"),
+    ("can you print stickers", "sticker"),
+]:
+    r = run("b2-cap-" + _msg.replace(" ", "-")[:30], [_msg])
+    check(f"capability '{_msg}'",
+          r["reply"].startswith("Yes") and r["slots"].get("product") == _prod
+          and "What product are you looking for" not in r["reply"]
+          and ("What size" in r["reply"] or "What style" in r["reply"]),
+          f"reply={r['reply'][:110]!r} slots={r['slots']!r}")
+r = run("b2-cap-pizza-size", ["do you make 13 inch pizza boxes"])
+check("capability pizza: stated size stored, style asked next",
+      r["slots"].get("sizes") == "13 inch"
+      and "What style of box" in r["reply"],
+      f"slots={r['slots']!r} reply={r['reply'][-100:]!r}")
+r = run("b2-cap-unknown", ["do you make t-shirts"])
+check("capability unknown product gets no Yes",
+      not r["reply"].startswith("Yes") and r["slots"].get("product") is None,
+      f"reply={r['reply'][:110]!r}")
+
+# --- location + foreign country: plain not-here answer ---
+for _msg, _disp in [("where it located in pakistan", "Pakistan"),
+                    ("are you located in india?", "India"),
+                    ("do you have an office in china?", "China")]:
+    r = run("b2-loc-" + _disp, [_msg])
+    check(f"location '{_msg}'",
+          "Rosenberg" in r["reply"]
+          and f"don't have a location in {_disp}" in r["reply"],
+          f"reply={r['reply'][:130]!r}")
 
 # --- delivery scope: US published, international goes to the team ---
 for _q in ["can you deliver in china?", "do you ship to india?",
@@ -130,8 +167,11 @@ check("plain: confirmation with no designs question asked",
 
 # --- a question is never an answer; our own menu is not an answer ---
 r = run("b2-qna", ["Do you make 4x6 mylar bags?"])
-check("qna: capability question stores no product, answers Yes first",
-      "product" not in r["slots"] and r["reply"].startswith("Yes"))
+check("qna: capability question stores product+size, asks style next",
+      r["slots"].get("product") == "mylar bag"
+      and r["slots"].get("sizes") == "4x6"
+      and r["reply"].startswith("Yes")
+      and "What style of Mylar bag" in r["reply"])
 r = run("b2-menu", ["boxes, bags, or labels"])
 check("menu: own menu echoed back stores no product",
       "product" not in r["slots"])

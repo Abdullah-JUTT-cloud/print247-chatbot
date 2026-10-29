@@ -47,6 +47,7 @@ from .composer import fix_reply
 from .contacts import (CONTACT_FIELDS, contact_field_by_key, email_in, has_reachable_contact,
                        is_contact_value_usable, is_our_reps_name, is_placeholder_name,
                        missing_contact_fields, phones_in, REP_NAMES)
+from .capability import capability_fact, capability_product, capability_source
 from .fact_topics import asks_bare_fact_topic, fact_topics_asked, topic_query
 from .finished import (NOTED_AFTER_THE_QUOTE, NOT_SENT_YET, SIGN_OFFS,
                        asks_if_it_arrived, is_pleasantry)
@@ -1081,6 +1082,111 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "missing": script_missing(slots, meta),
                     "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
                     "suggestions": ["In total", "Per design"]}
+
+    # Capability question ("do you make pizza boxes?", with or
+    # without "?", typos included): the old question-not-answer
+    # rule sent this to the product question — the bot asked what
+    # the visitor had just told it. A capability question about a
+    # product we make IS the choice of product: answer Yes from the
+    # product file, store the product, and ask the next question
+    # (size, or quantity when the size was stated in the question).
+    # Unknown products fall through: never a Yes we cannot stand by.
+    _cap = capability_product(message) if not slots.get("product") else None
+    if _cap:
+        _ctext_raw = capability_fact(_cap)
+        if _ctext_raw:
+            slots["product"] = _cap
+            meta.setdefault("answered_fields", [])
+            if "product" not in meta["answered_fields"]:
+                meta["answered_fields"].append("product")
+            # A size stated inside the capability question ("13 inch
+            # pizza boxes", "4x6 mylar bags") is stored, and the next
+            # question becomes quantity — the competitor does exactly
+            # this, and re-asking a stated size is the annoyance in
+            # the Oct 29 transcript. Deliberate exception to the old
+            # question-not-answer rule, which is superseded here:
+            # the Yes still comes first, nothing is skipped silently.
+            from .slots import _SIZE as _SIZE_RE
+            _sm = _SIZE_RE.search(message)
+            if _sm:
+                slots["sizes"] = _sm.group(0).strip()
+            else:
+                _single = re.search(
+                    r"\b\d+(?:\.\d+)?\s*(?:inches|inch|in\b|mm|cm)\b",
+                    message, re.IGNORECASE)
+                if _single:
+                    slots["sizes"] = _single.group(0).strip()
+            if slots.get("sizes") and "sizes" not in meta["answered_fields"]:
+                meta["answered_fields"].append("sizes")
+            # A named box type gets a specific Yes, not the generic
+            # file dump: "corrugated" (and its typo "corrogated")
+            # must be answered as corrugated boxes.
+            _box_variant = None
+            if _cap == "box":
+                for _typo, _disp in (("corrogated", "corrugated"),
+                                     ("corrugated", "corrugated"),
+                                     ("rigid", "rigid"),
+                                     ("folding", "folding"),
+                                     ("mailer", "mailer"),
+                                     ("display", "display"),
+                                     ("cosmetic", "cosmetic"),
+                                     ("cbd", "CBD"),
+                                     ("pharmaceutical", "pharmaceutical"),
+                                     ("apparel", "apparel"),
+                                     ("kraft", "kraft"),
+                                     ("metalized", "metalized")):
+                    if re.search(rf"\b{_typo}\b", low):
+                        _box_variant = _disp
+                        break
+            _ctext = _fact_reply_text(_ctext_raw)
+            if _box_variant:
+                _ctext = f"Yes — we make {_box_variant} boxes. " + _ctext
+            elif not _ctext.lower().startswith("yes"):
+                _ctext = "Yes — " + (_ctext[0].lower() + _ctext[1:] if _ctext else _ctext)
+            _cmissing = script_missing(slots, meta)
+            _cq = _next_question_text(slots, _cmissing, language)
+            meta["last_asked"] = _cmissing[0] if _cmissing else None
+            meta["last_bot_question"] = (_ctext + " " + _cq) if _cq else _ctext
+            return _final_return((_ctext + " " + _cq) if _cq else _ctext,
+                                 srcs=[capability_source(_cap)])
+
+    # Location + a foreign country ("where it located in pakistan"):
+    # dumping the footer address never answers it — the visitor is
+    # asking whether we are THERE. We are in Rosenberg, Texas, USA,
+    # and no other location is published, so say so plainly.
+    _loc_trigger = any(w in low for w in
+                       ("located", "location", "office in", "branch in",
+                        "facility in", "based in"))
+    _countries = {"pakistan": "Pakistan", "india": "India", "china": "China",
+                  "uk": "the UK", "england": "the UK", "canada": "Canada",
+                  "australia": "Australia", "germany": "Germany",
+                  "france": "France", "uae": "the UAE", "dubai": "the UAE",
+                  "bangladesh": "Bangladesh", "sri lanka": "Sri Lanka",
+                  "nepal": "Nepal", "nigeria": "Nigeria", "kenya": "Kenya",
+                  "south africa": "South Africa", "brazil": "Brazil",
+                  "mexico": "Mexico", "japan": "Japan", "korea": "Korea",
+                  "turkey": "Turkey", "saudi arabia": "Saudi Arabia",
+                  "qatar": "Qatar", "italy": "Italy", "spain": "Spain",
+                  "netherlands": "the Netherlands", "europe": "Europe"}
+    _mentioned = [d for c, d in _countries.items()
+                  if re.search(rf"\b{re.escape(c)}\b", low)]
+    if _loc_trigger and _mentioned:
+        _lm = script_missing(slots, meta)
+        _lq = _next_question_text(slots, _lm, language)
+        _ltext = ("We're based in Rosenberg, Texas, USA — we don't have "
+                  f"a location in {_mentioned[0]}.")
+        meta["last_asked"] = _lm[0] if _lm else None
+        meta["last_bot_question"] = (_ltext + " " + _lq) if _lq else _ltext
+        return _final_return((_ltext + " " + _lq) if _lq else _ltext,
+                             srcs=["kb/facts/contact.md"])
+    if _loc_trigger and re.search(r"\b(usa|america|united states|us)\b", low):
+        _lm = script_missing(slots, meta)
+        _lq = _next_question_text(slots, _lm, language)
+        _ltext = "Yes — we're based in Rosenberg, Texas, USA."
+        meta["last_asked"] = _lm[0] if _lm else None
+        meta["last_bot_question"] = (_ltext + " " + _lq) if _lq else _ltext
+        return _final_return((_ltext + " " + _lq) if _lq else _ltext,
+                             srcs=["kb/facts/contact.md"])
 
     # Price question (old visitorQuestions): a price is a rep's to
     # give, and it comes with the quote — never a figure, never the
