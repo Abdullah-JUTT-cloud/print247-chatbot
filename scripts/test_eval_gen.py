@@ -629,6 +629,89 @@ check("real suggestion requests still work after complaint guard",
       "size" in r["reply"].lower(),
       f"reply={r['reply'][:140]!r}")
 
+# --- 22. contact + own-data system (Oct 29, 2026, live transcript):
+# the systemic rule, not one patch: validate EVERY field answer
+# before advancing; never claim what is not stored; own-data
+# questions always come from the session, never from the KB.
+# The transcript: "i can provide my name" was stored AS the name,
+# a clear phone refusal was re-asked, the close lied "no email"
+# while an email was stored, "i gave you email" got a false
+# "Noted — added", "what you added" dumped the catalog,
+# "what is my email?" returned the COMPANY's address, and
+# "my email which i gave you?" returned a boxes FAQ. ---
+def _steps(sid, msgs):
+    out = []
+    for m in msgs:
+        out.append(handle_message(m, session_id=sid, store=None))
+    return out
+
+
+_QUOTE = ["I need mylar bags", "Size 4x6 inches", "Stand-up", "No preference",
+          "1000 units", "3 designs", "Per design", "yes add a tear notch", "Kraft",
+          "Yes, that's correct"]
+_s = _steps("ev-own-full", _QUOTE + [
+    "i can provide my name", "Abdullah", "abdu@gmail.com",
+    "i cant share my personal phone number",
+    "i gave you email", "what you added/", "what is my email?",
+    "my email which i gave you?"])
+check("willingness sentence is not stored as a name, name re-asked",
+      "Could I take your name?" in _s[10]["reply"]
+      and (_s[10].get("contact") or {}).get("name") != "i can provide my name",
+      f"reply={_s[10]['reply'][:120]!r} contact={_s[10].get('contact')}")
+check("real name stored, email asked next",
+      (_s[11].get("contact") or {}).get("name") == "Abdullah"
+      and "email" in _s[11]["reply"].lower(),
+      f"reply={_s[11]['reply'][:120]!r} contact={_s[11].get('contact')}")
+check("first clear phone refusal closes at once, email named, no lie",
+      _s[13].get("handoff") == "complete_no_contact"
+      and "abdu@gmail.com" in _s[13]["reply"]
+      and "don't have an email" not in _s[13]["reply"],
+      f"reply={_s[13]['reply'][:160]!r}")
+check("'i gave you email' with no value gets honest list, never false added",
+      "Noted — I've added" not in _s[14]["reply"]
+      and "abdu@gmail.com" in _s[14]["reply"],
+      f"reply={_s[14]['reply'][:160]!r}")
+check("'what you added' lists stored data, never the catalog",
+      "Print247 offers" not in _s[15]["reply"]
+      and "abdu@gmail.com" in _s[15]["reply"],
+      f"reply={_s[15]['reply'][:160]!r}")
+check("'what is my email?' returns the visitor's email, not the company's",
+      "abdu@gmail.com" in _s[16]["reply"]
+      and "Support@print247.us" not in _s[16]["reply"],
+      f"reply={_s[16]['reply'][:160]!r}")
+check("'my email which i gave you?' returns the visitor's email, not a FAQ",
+      "abdu@gmail.com" in _s[17]["reply"]
+      and "Boxes campaign FAQs" not in _s[17]["reply"],
+      f"reply={_s[17]['reply'][:200]!r}")
+r = run("ev-own-nameis", _QUOTE + ["My name is Abdullah"])
+check("'My name is Abdullah' stores Abdullah, not the sentence",
+      (r.get("contact") or {}).get("name") == "Abdullah",
+      f"contact={r.get('contact')}")
+r = run("ev-own-refuse2", _QUOTE + ["Abdullah", "abdu@gmail.com",
+                                    "i cannot share my phone number"])
+check("'cannot share' first refusal closes at once with the email named",
+      r.get("handoff") == "complete_no_contact"
+      and "abdu@gmail.com" in r["reply"]
+      and "don't have an email" not in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+r = run("ev-own-nocontact", _QUOTE + ["no", "no", "no"])
+check("all three fields refused -> honest no-contact close",
+      r.get("handoff") == "complete_no_contact"
+      and "here in this chat" in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+r = run("ev-own-newemail", _QUOTE + ["Abdullah", "abdu@gmail.com",
+                                     "i cant share my phone number",
+                                     "my new email is bob@x.com"])
+check("finished chat + a real email in the message stores it and says so",
+      "Noted — I've added email bob@x.com" in r["reply"]
+      and (r.get("contact") or {}).get("email") == "bob@x.com",
+      f"reply={r['reply'][:160]!r} contact={r.get('contact')}")
+r = run("ev-own-midquote", ["I need mylar bags", "4x6 inches", "what is my order?"])
+check("mid-quote 'what is my order?' answered from slots + script continues",
+      "mylar bag" in r["reply"] and "4x6" in r["reply"]
+      and "What style" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

@@ -18,6 +18,13 @@ _IS_A_QUESTION = re.compile(
 _DECLINES = re.compile(
     r"^\s*(no|nope|nah|none|not now|later|skip|maybe later|n/a|na)\b"
     r"|\b(no|dont|don't|do not|haven't|havent|not|wont|won't) (have |got |a |give |share )?(phone|email|number|e-mail|mail|cell)\b"
+    # "i cant share my personal phone number" and "i cannot share my
+    # phone number" matched NOTHING above ("cant"/"cannot" were never
+    # listed), so a clear refusal was re-asked instead of retiring
+    # the field (Oct 29 live transcript). A negation with a contact
+    # noun within 30 chars is a refusal; the bound keeps "i cant
+    # decide, give me options" from falsely declining.
+    r"|\b(cant|can't|cannot|can not|will not|refuse to|not sharing)\b[^.?!]{0,30}\b(phone|email|number|e-mail|mail|cell)\b"
     r"|\bprefer not\b|\brather not\b"
     r"|\b(?:reach|contact|email|message|write|call)(?:\s+(?:me|out))?\s+(?:on|by|via|through)\s+(?:email|mail|phone|number)\b"
     r"|\b(?:just|only|use)\s+(?:email|mail|phone|number)\b"
@@ -48,6 +55,7 @@ _STOP_ALL = re.compile(
 # matte" stays a finish answer, not a contact refusal.
 _WONT_SHARE = re.compile(
     r"\b(dont|don't|do not) want to (share|give|tell)\b"
+    r"|\b(cant|can't|cannot|can not) (share|give|tell|provide)\b"
     r"|\bnot interested\b"
     r"|\bprefer not to (share|give)\b"
     r"|\brather not (share|give)\b",

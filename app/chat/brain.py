@@ -161,6 +161,67 @@ def _suggestions(slots: dict, missing: list[str], reply: str = "", language: str
             _tr("chip_refund", language, "What is your refund policy?")]
 
 
+_OWN_DATA_Q = re.compile(
+    r"what(?:'s| is) my (email|e-mail|mail|phone|number|name)\b"
+    # An order/quote question must END on the field: "what is my
+    # order status?" and "where is my order?" are tracking questions
+    # for a past order and must still reach the existing-customer
+    # handoff, not the draft-quote summary.
+    r"|what(?:'s| is) my (order|quote|details)\s*[.?!]?\s*$"
+    r"|\bmy (email|e-mail|mail|phone|number|name)\b[^.?!]*\?"
+    r"|what (did you add|you added|did i give|did i share|have you added|did you save)\b"
+    r"|which (email|phone|number|name)\b[^.?!]*\b(gave|shared|provided|sent)\b"
+    r"|\bthe (email|phone|number|name)\b[^.?!]*\b(i gave|i shared|i provided)\b",
+    re.IGNORECASE)
+_OWN_DATA_FIELD = {"email": "email", "e-mail": "email", "mail": "email",
+                   "phone": "phone", "number": "phone", "name": "name",
+                   "order": "order", "quote": "order", "details": "order"}
+
+
+def _own_data_answer(message: str, slots: dict, contact: dict) -> str | None:
+    """An answer about the VISITOR's own submitted info, from the
+    session — never from the KB. "What is my email?" must return
+    the email the visitor gave, not the company's Support@ address;
+    "my email which i gave you?" must never return a boxes FAQ;
+    "what you added?" must list what is stored, not the catalog.
+    Returns None when the message is not an own-data question, so
+    normal flow is untouched. A missing value is answered honestly
+    ("I don't have it saved"), never with a KB fact. Question-
+    shaped patterns only: "my email is bob@x.com" is a statement
+    giving the email, not a question about it, and falls through
+    to normal extraction."""
+    m = _OWN_DATA_Q.search(message or "")
+    if not m:
+        return None
+    _field_word = next((g for g in m.groups() if g), None)
+    _key = (_field_word or "").lower()
+    if _key in _OWN_DATA_FIELD:
+        _field = _OWN_DATA_FIELD[_key]
+        if _field == "order":
+            _spec = _spec_parts(slots, None, None) if slots.get("product") else ""
+            return f"Your order: {_spec}." if _spec else \
+                "You don't have an order saved yet in this chat."
+        _val = (contact or {}).get(_field)
+        if _val and is_contact_value_usable(_field, _val):
+            return f"Your {_field} is {_val}."
+        return f"I don't have your {_field} saved in this chat yet."
+    # The "what did you add" shape: list everything actually stored.
+    _have = []
+    _c = contact or {}
+    if _c.get("name") and is_contact_value_usable("name", _c.get("name")):
+        _have.append(f"name {_c['name']}")
+    if _c.get("email") and is_contact_value_usable("email", _c.get("email")):
+        _have.append(f"email {_c['email']}")
+    if _c.get("phone") and is_contact_value_usable("phone", _c.get("phone")):
+        _have.append(f"phone {_c['phone']}")
+    _spec = _spec_parts(slots, None, None) if slots.get("product") else ""
+    if _spec:
+        _have.append(f"order: {_spec}")
+    if not _have:
+        return "I don't have anything saved for you yet in this chat."
+    return "Here's what I have saved for you: " + "; ".join(_have) + "."
+
+
 def _slot_sources(slots: dict) -> list[str]:
     """Clean sources for a slot-collection step.
 
@@ -760,17 +821,22 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                                           "i would like", "order", "get a quote",
                                           "quote for", "buy"))
 
-    def _intent_result(reply, handoff=None, suggestions=None):
+    def _intent_result(reply, handoff=None, suggestions=None, contact=None):
         # Old max-turns rule (12 AI messages): count bot replies here
         # and in the final branch; the contact flow is bounded by its
         # 3 fields x 2 asks, so it cannot hit the cap on its own.
         meta["ai_count"] = meta.get("ai_count", 0) + 1
         _save_session(store, session_id, prior)
         _save_meta(store, session_id, meta)
-        return {"reply": reply, "language": language, "slots": prior,
+        _res = {"reply": reply, "language": language, "slots": prior,
                 "missing": script_missing(prior, meta), "sources": [],
                 "handoff": handoff, "llm_used": False,
                 "suggestions": suggestions if suggestions is not None else []}
+        # Callers that answer from stored data (own-data) carry the
+        # contact through; other intent results keep the old shape.
+        if contact is not None:
+            _res["contact"] = contact
+        return _res
 
     if is_looking_for_work(message) or chat_is_a_pitch([message]):
         return _intent_result(JOB_MESSAGE if is_looking_for_work(message) else PITCH_MESSAGE,
@@ -819,6 +885,23 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         first = _named.split()[0]
         return _intent_result(f"Yes, {first} is on our team. I'm passing you to {first} now.",
                               handoff="visitor_asked")
+    # Own-data questions BEFORE the already-customer and catalog
+    # branches: "what you added?" matched the catalog intent and
+    # dumped the whole catalog, and "what is my order?" matched
+    # already-customer and handed off (Oct 29 transcript). The
+    # visitor's own info comes from the session, never from a KB
+    # file. Mid-quote, the answer carries the next script question;
+    # finished, it stands alone.
+    _own = _own_data_answer(message, prior, meta.get("contact") or {})
+    if _own is not None:
+        if meta.get("complete"):
+            return _intent_result(_own, contact=meta.get("contact") or {})
+        _omissing = script_missing(prior, meta)
+        _oq = _next_question_text(prior, _omissing, language)
+        _oreply = f"{_own} {_oq}" if _oq else _own
+        return _intent_result(_oreply,
+                              suggestions=_suggestions(prior, _omissing, _oreply, language),
+                              contact=meta.get("contact") or {})
     # A policy QUESTION ('what is your refund policy?') matches the
     # already-customer pattern on the word 'refund' alone — it must
     # fall through to the policy KB answer, not a handoff. A real
@@ -1020,6 +1103,11 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # finished, a new detail is noted. Only a new order statement
     # restarts (handled below), and start-over restarts too.
     if meta.get("complete") and not _is_order and not _start_over:
+        # The finished branch used to drop the stored contact from
+        # every return, so post-completion turns could not see the
+        # email the visitor had given — own-data questions fell
+        # back to KB facts (Oct 29 transcript).
+        _fcontact = meta.get("contact") or {}
         _last_bot = meta.get("last_bot_question", "")
         if wants_to_stop(message):
             # A repeated refusal after the chat closed is a goodbye,
@@ -1031,7 +1119,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _save_meta(store, session_id, meta)
             return {"reply": _sign, "language": language, "slots": prior,
                     "missing": script_missing(prior, meta), "sources": [],
-                    "handoff": None, "llm_used": False, "suggestions": []}
+                    "handoff": None, "llm_used": False, "suggestions": [],
+                    "contact": _fcontact}
         if is_pleasantry(message):
             _last_sign = _tr("signoff_b", language, SIGN_OFFS[1]) \
                 if _tr("signoff_a", language, SIGN_OFFS[0]) in _last_bot else \
@@ -1040,7 +1129,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _save_meta(store, session_id, meta)
             return {"reply": _last_sign, "language": language, "slots": prior,
                     "missing": script_missing(prior, meta), "sources": [],
-                    "handoff": None, "llm_used": False, "suggestions": []}
+                    "handoff": None, "llm_used": False, "suggestions": [],
+                    "contact": _fcontact}
         if asks_if_it_arrived(message):
             if language in ("es", "ur-roman"):
                 _reply = _tr("not_sent", language, NOT_SENT_YET)
@@ -1051,7 +1141,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _save_meta(store, session_id, meta)
             return {"reply": _reply, "language": language, "slots": prior,
                     "missing": script_missing(prior, meta), "sources": [],
-                    "handoff": None, "llm_used": False, "suggestions": []}
+                    "handoff": None, "llm_used": False, "suggestions": [],
+                    "contact": _fcontact}
         if "?" in message or visitor_is_asking(message):
             _facts = retrieve(message)
             _reply = (_direct_answer(message, _facts[0]["text"]) or
@@ -1063,18 +1154,43 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             return {"reply": _reply, "language": language, "slots": prior,
                     "missing": script_missing(prior, meta),
                     "sources": [f["source"] for f in _facts],
-                    "handoff": None, "llm_used": False, "suggestions": []}
+                    "handoff": None, "llm_used": False, "suggestions": [],
+                    "contact": _fcontact}
+        # A finished chat + a new statement: only claim an addition
+        # when something was actually added. The old code returned
+        # "Noted — I've added that" for EVERY statement, including
+        # "i gave you email" with no email in it (Oct 29 transcript).
         try:
             _extra = extract_from_message(without_template_blanks(message))
         except Exception:
             _extra = {}
         _slots2 = merge_slots(prior, _extra)
+        _new_contact = {}
+        _em = email_in(message)
+        if _em and is_contact_value_usable("email", _em):
+            _new_contact["email"] = _em
+        _ph = phones_in(message)
+        if _ph and is_contact_value_usable("phone", _ph[0]):
+            _new_contact["phone"] = _ph[0]
+        if _new_contact:
+            _fcontact = dict(_fcontact)
+            _fcontact.update(_new_contact)
+            meta["contact"] = _fcontact
+            _added = " and ".join(f"{k} {v}" for k, v in _new_contact.items())
+            _nreply = f"Noted — I've added {_added} to your request."
+        elif _extra:
+            _nreply = _tr("noted", language, NOTED_AFTER_THE_QUOTE)
+        else:
+            # Nothing new in this message: say what is actually
+            # stored instead of falsely claiming an addition.
+            _nreply = _own_data_answer("what did you add?", _slots2, _fcontact)
         _save_session(store, session_id, _slots2)
         _save_meta(store, session_id, meta)
-        return {"reply": _tr("noted", language, NOTED_AFTER_THE_QUOTE),
+        return {"reply": _nreply,
                 "language": language, "slots": _slots2,
                 "missing": script_missing(_slots2, meta), "sources": [],
-                "handoff": None, "llm_used": False, "suggestions": []}
+                "handoff": None, "llm_used": False, "suggestions": [],
+                "contact": _fcontact}
     # Extraction must never crash the chat: a parser bug used to turn
     # into a 500 and the visitor saw "Message didn't send" (the
     # "15 thousand" case: float("15 thousand") raised ValueError).
@@ -1209,7 +1325,11 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _phones = phones_in(message)
                 _candidate = _phones[0] if _phones else None
             else:
-                _candidate = message.strip() or None
+                # "My name is Abdullah" answers with a name, not with
+                # the sentence: extract it, so the sentence itself is
+                # never stored as the name.
+                _m = re.search(r"\bmy name is\s+(.+)$", message.strip(), re.IGNORECASE)
+                _candidate = (_m.group(1).strip(" .!") if _m else message.strip()) or None
             _usable = bool(_candidate) and is_contact_value_usable(_field, _candidate)
             if _field == "name" and _candidate and is_our_reps_name(_candidate, visitor_messages):
                 _usable = False
@@ -1278,12 +1398,31 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 if _next is None:
                     meta["awaiting_contact"] = False
                     meta["complete"] = True
+                    # The close must describe the contact actually
+                    # stored: the old hardcoded "I don't have an
+                    # email or phone number" lied when an email HAD
+                    # been given and only the phone was refused
+                    # (Oct 29 transcript). Reachable channels only,
+                    # validated, never a stored-but-invalid value.
+                    _reach = []
+                    if contact.get("email") and is_contact_value_usable(
+                            "email", contact.get("email")):
+                        _reach.append(f"at {contact['email']}")
+                    if contact.get("phone") and is_contact_value_usable(
+                            "phone", contact.get("phone")):
+                        _reach.append(f"on {contact['phone']}")
+                    if _reach:
+                        _close = ("Thanks — I have your order. Our team will follow up "
+                                  f"with you {' and '.join(_reach)}. "
+                                  f"They will confirm the price and turnaround {when_the_team_replies()}.")
+                    else:
+                        _close = ("Thanks — I have your order. Since I don't have an email or "
+                                  "phone number, our team will follow up with you here in this chat. "
+                                  f"They will confirm the price and turnaround {when_the_team_replies()}.")
                     _save_session(store, session_id, slots)
                     _save_meta(store, session_id, meta)
                     return {
-                        "reply": ("Thanks — I have your order. Since I don't have an email or "
-                                  "phone number, our team will follow up with you here in this chat. "
-                                  f"They will confirm the price and turnaround {when_the_team_replies()}."),
+                        "reply": _close,
                         "language": language, "slots": slots, "missing": missing_fields(slots),
                         "sources": _slot_sources(slots), "handoff": "complete_no_contact",
                         "llm_used": False, "suggestions": [], "contact": contact,

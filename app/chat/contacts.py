@@ -125,6 +125,37 @@ def is_our_phone(phone: str | None) -> bool:
     return any(tail == ours[-10:] for ours in OUR_PHONE_DIGITS)
 
 
+_NAME_NON_NAME_WORDS = {
+    "i", "me", "my", "we", "can", "could", "will", "would", "shall", "should",
+    "provide", "share", "give", "tell", "send", "yes", "no", "sure", "ok", "okay",
+    "please", "here", "is", "am", "name", "the", "a", "an", "it", "not", "dont",
+    "don't", "cannot", "cant", "want", "need", "prefer", "use", "call", "have",
+    "got", "just", "only", "later", "maybe", "thanks", "thank", "hi", "hello", "hey",
+}
+
+
+def looks_like_person_name(value: str | None) -> bool:
+    """A name-shaped value, not a sentence about giving one. The old
+    check only rejected bare placeholders ("yes", "ok"), so "i can
+    provide my name" was stored AS the name and the bot moved on to
+    email — the "whatever the customer replies, next question" bug
+    (Oct 29 live transcript). A usable name is 1-4 alphabetic
+    words with no willingness/verb words in it."""
+    text = (value or "").strip().strip(".,!")
+    if not text or is_placeholder_name(text):
+        return False
+    words = text.split()
+    if not 1 <= len(words) <= 4:
+        return False
+    for w in words:
+        clean = w.strip(".,!'\"").lower()
+        if clean in _NAME_NON_NAME_WORDS:
+            return False
+        if not re.fullmatch(r"[A-Za-z][A-Za-z'\-]*", w.strip(".,!'\"")):
+            return False
+    return True
+
+
 def is_contact_value_usable(key: str, value: str | None) -> bool:
     text = (value or "").strip()
     if not text:
@@ -133,6 +164,8 @@ def is_contact_value_usable(key: str, value: str | None) -> bool:
         return looks_like_email(text) and not is_our_email(text)
     if key == "phone":
         return looks_like_phone(text) and not is_our_phone(text)
+    if key == "name":
+        return looks_like_person_name(text) and not is_our_reps_name(text)
     return not is_placeholder_name(text) and not is_our_reps_name(text)
 
 
