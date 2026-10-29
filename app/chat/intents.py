@@ -82,7 +82,10 @@ _ASKS_IF_BOT = re.compile(
     r"\b(?:are you|r u|is this|am i (?:talking|speaking|chatting) (?:to|with))\s+(?:an?\s+|the\s+)?(?:real\s+)?(?:ai|bot|robot|chat ?bot|automated|machine|human|person)\b",
     re.IGNORECASE)
 ANSWER_TO_ARE_YOU_A_BOT = (
-    "I'm Print247's automated assistant. I'll take down what you need, and our team will follow up with your quote.")
+    "I'm Print247's automated assistant, not a person — but everything "
+    "you share here goes to a real person on our team, who follows up "
+    "with your quote. I can help you pick the right product, size, "
+    "style and finish right here.")
 
 
 def wants_a_person(text: str) -> bool:

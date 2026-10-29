@@ -126,6 +126,8 @@ for _msg, _want, _banned in [
     ("thanks", "welcome", ["Minimum order quantity"]),
     ("bye", "Goodbye", ["Minimum order quantity"]),
     ("how are you?", "doing well", ["Minimum order quantity"]),
+    ("are you human?", "not a person", []),
+    ("are you a bot?", "automated assistant", []),
 ]:
     r = run("b2-trust-" + _msg.replace(" ", "-")[:30], [_msg])
     check(f"conversational '{_msg}'",
