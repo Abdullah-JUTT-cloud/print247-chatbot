@@ -322,6 +322,98 @@ def _clean_fact_text(text: str) -> str:
     return t
 
 
+_DIRECT_STOPWORDS = {
+    "what", "where", "when", "how", "why", "who", "do", "does", "did",
+    "can", "could", "will", "would", "is", "are", "was", "were", "you",
+    "your", "we", "our", "the", "a", "an", "i", "me", "my", "it", "in",
+    "on", "at", "to", "for", "of", "with", "about", "tell", "give",
+    "please", "there", "here", "any", "us", "get", "got",
+}
+
+
+def _direct_answer(question: str, text: str) -> str:
+    """Short answer to THIS question, from the grounded file.
+
+    The old behaviour returned the file's whole first paragraph, so
+    'where are you located?' dumped address + phone + email +
+    channels + founded year in one reply. A visitor asks one thing
+    and gets the best-matching sentence back, plus the next
+    scoring sentence after it when one exists — that second
+    sentence is what carries the completion of the answer
+    ('two seconds' for sealing, 'team will confirm' for delivery
+    abroad). The script question still follows. Sentences from
+    the internal 'Context notes' guard section are never
+    candidates, and neither is any 'do not …' guard sentence.
+    Falls back to the first sentence when nothing scores.
+    """
+    cleaned = _clean_fact_text(text)
+    # Cut at the first context-note marker, singular or plural:
+    # support-hours.md writes "Context note (" and its guard
+    # sentences otherwise outscore the real answer ("office hours"
+    # appears twice in the guard, once in the answer itself).
+    cleaned = cleaned.split("Context note")[0].strip()
+    sentences = [s.strip() for s in re.split(SENTENCE_BREAK, cleaned)
+                 if s.strip()]
+    sentences = [s for s in sentences
+                 if "do not" not in s.lower()
+                 and "without sales confirmation" not in s.lower()
+                 # Policy files open with a meta header line ("Refund
+                 # and Returns summary, from the published page.") —
+                 # a title, not an answer; it would otherwise outscore
+                 # the real sentence by matching two topic words.
+                 and "summary, from the" not in s.lower()]
+    if not sentences:
+        return ""
+    qlow = question.lower()
+    q = set(re.findall(r"[a-z]+", qlow)) - _DIRECT_STOPWORDS
+    if "where" in qlow or any("locat" in w for w in q):
+        q |= {"based", "address", "facility", "office", "headquarters",
+              "headquarter"}
+    if q & {"phone", "call", "number", "telephone"}:
+        q |= {"phone", "telephone"}
+    if q & {"email", "mail"}:
+        q |= {"email"}
+    if q & {"ship", "shipping", "deliver", "delivery"}:
+        q |= {"shipping", "delivery", "ships", "deliver"}
+    if q & {"price", "cost", "charge", "pricing"}:
+        q |= {"price", "pricing"}
+    if q & {"minimum", "moq", "order"}:
+        q |= {"minimum", "moq", "units"}
+    if q & {"refund", "return"}:
+        q |= {"refund", "return"}
+    if q & {"sample", "samples"}:
+        q |= {"sample", "samples"}
+    if q & {"payment", "payments", "pay", "accept"}:
+        q |= {"payment", "payments", "accepted"}
+    if q & {"time", "long", "turnaround", "take"}:
+        q |= {"turnaround", "days"}
+
+    def _norm(words):
+        # Plural-insensitive matching, applied to both sides:
+        # returns/return, samples/sample, payments/payment all match.
+        return {w[:-1] if len(w) > 3 and w.endswith("s") else w
+                for w in words}
+
+    q = _norm(q)
+    scored = []
+    for s in sentences:
+        words = _norm(set(re.findall(r"[a-z0-9]+", s.lower())))
+        # Ties break toward the sentence carrying a number: policy,
+        # time and price answers live in the numbered sentence, not
+        # in a header line like "Refund and Returns summary".
+        scored.append((s, (len(q & words), any(ch.isdigit() for ch in s))))
+    best_idx, (best, best_score) = 0, (sentences[0], (-1, 0))
+    for i, (s, score) in enumerate(scored):
+        if score > best_score:
+            best_idx, best, best_score = i, s, score
+    if best_score[0] < 1:
+        return best
+    for s, score in scored[best_idx + 1:]:
+        if score[0] >= 1:
+            return best + " " + s
+    return best
+
+
 def _fact_reply_text(text: str) -> str:
     """One-paragraph answer when the file opens with a real answer
     (bottle labels open with 'Yes — we print…'), otherwise the
@@ -420,7 +512,8 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
                 "for the team.")
         return f"{text} {next_q}" if next_q else text
     if facts and is_fact_question:
-        text = _fact_reply_text(facts[0]["text"])
+        text = _direct_answer(message, facts[0]["text"]) or \
+            _fact_reply_text(facts[0]["text"])
         # Capability question about a real product ("Can you print
         # boxes?") deserves a Yes first, not a bare list. Restricted
         # to kb/products files, so a turnaround/policy question can
@@ -440,7 +533,8 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
         return (f"{intro} {_spec_parts(slots, gave_up, qty_split)}?"
                 f"{_below_min_note(slots, language)}")
     if facts:
-        return _fact_reply_text(facts[0]["text"])
+        return _direct_answer(message, facts[0]["text"]) or \
+            _fact_reply_text(facts[0]["text"])
     return "Thanks — I have your details. A team member will confirm the quote shortly."
 
 
@@ -678,7 +772,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "handoff": None, "llm_used": False, "suggestions": []}
         if "?" in message or visitor_is_asking(message):
             _facts = retrieve(message)
-            _reply = _fact_reply_text(_facts[0]["text"]) if _facts else \
+            _reply = (_direct_answer(message, _facts[0]["text"]) or
+                      _fact_reply_text(_facts[0]["text"])) if _facts else \
                 ("I don't want to give you a wrong answer on that — I'll include "
                  "it in your quote for the team.")
             _save_session(store, session_id, prior)
@@ -1205,7 +1300,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if _bare and not _is_order:
         _bfacts = retrieve(topic_query(_bare))
         if _bfacts:
-            _text = _fact_reply_text(_bfacts[0]["text"])
+            _text = _direct_answer(message, _bfacts[0]["text"]) or \
+                _fact_reply_text(_bfacts[0]["text"])
             _q = _next_question_text(slots, missing, language)
             _tail = (" " + _q) if _q else ((" " + _confirmation_text()) if not missing else "")
             return _final_return(_text + _tail, srcs=[f["source"] for f in _bfacts])

@@ -99,6 +99,21 @@ check("capability unknown product gets no Yes",
       not r["reply"].startswith("Yes") and r["slots"].get("product") is None,
       f"reply={r['reply'][:110]!r}")
 
+# --- direct answers: one sentence for the asked fact, never a dump ---
+for _msg, _want, _banned in [
+    ("where are you located?", "Rosenberg", ["807-3429", "Support@"]),
+    ("what is your phone number?", "807-3429", ["Cottonwood"]),
+    ("what is your email address?", "Support@", ["Cottonwood"]),
+    ("What is your refund policy?", "5 business days", ["summary"]),
+    ("What payment methods do you accept?", "Visa", []),
+    ("Is shipping free?", "free nationwide", []),
+]:
+    r = run("b2-direct-" + _msg.replace(" ", "-")[:30], [_msg])
+    check(f"direct answer '{_msg}'",
+          _want in r["reply"]
+          and all(b not in r["reply"] for b in _banned),
+          f"reply={r['reply'][:160]!r}")
+
 # --- location + foreign country: plain not-here answer ---
 for _msg, _disp in [("where it located in pakistan", "Pakistan"),
                     ("are you located in india?", "India"),

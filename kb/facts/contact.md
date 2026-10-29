@@ -7,10 +7,11 @@ status: verified
 last_reviewed: 2026-10-28
 ---
 
-Main contact, from the footer on every page: 1631 Cottonwood
-School Rd, Rosenberg, TX 77471, USA; phone +1 (832) 807-3429;
-email Support@print247.us. Channels: Live Chat, WhatsApp,
-Instagram, Facebook, LinkedIn. Started in 2018 (About page).
+Print247 is based at 1631 Cottonwood School Rd, Rosenberg, TX 77471, USA.
+Phone: +1 (832) 807-3429.
+Email: Support@print247.us.
+Channels: Live Chat, WhatsApp, Instagram, Facebook, LinkedIn.
+Started in 2018 (About page).
 
 Rosenberg facility: the company runs a local packaging
 manufacturing plant in Rosenberg, equipped with automated pouch
