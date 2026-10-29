@@ -110,6 +110,13 @@ def check_reply(reply: str, ctx: dict) -> list[str]:
         problems.append("refuses to go on without something")
     if is_banner and _MINIMUM_STATED.search(reply or ""):
         problems.append("states a minimum for banners")
+    # A price figure must never reach a visitor (standing rule:
+    # "your quote will carry the pricing"). The LLM path is now
+    # used for open suggestions, so this guardrail has to live in
+    # code, not just in the prompt — a prompt rule is followed
+    # "most of the time".
+    if re.search(r"\$\s*\d", reply or ""):
+        problems.append("states a price")
     question = question_in(reply or "")
     asked_fields = fields_in_question(question)
     if is_plain and "skus" in asked_fields:
@@ -173,7 +180,8 @@ def fix_reply(reply: str, ctx: dict, next_question: str, fact_answer) -> str | N
     fatal = ("announces the quote", "promises to check/confirm something",
              "refuses to go on without something", "asks an off-script question",
              "asks something that is not on the script", "parrots their question",
-             "echoes their unusable words", "asks ahead of product")
+             "echoes their unusable words", "asks ahead of product",
+             "states a price")
     if any(p in problems for p in fatal):
         return None
     fixed = reply or ""

@@ -131,13 +131,16 @@ _FOOD_PHRASES = ("dry fruit", "dried fruit", "dry fruits", "dried fruits",
                  "pet treat", "pet treats")
 _FOOD_WORDS = ("fruit", "fruits", "nut", "nuts", "almond", "almonds",
                "snack", "snacks", "spice", "spices", "tea", "candy",
-               "chocolate", "food", "gummies", "powder", "treats")
+               "chocolate", "food", "gummies", "powder", "treats",
+               "honey", "rice", "beans", "seeds", "grain", "grains",
+               "flour", "cereal", "oats")
 # Fuzzy single words (len >= 4 only: "tea"/"nut" stay exact, or "eat"
 # would match "tea"). "dry fuits" must still find "fruits": the
 # visitor's typo is the common case, not the exception.
 _FUZZY_FOOD = ("fruit", "fruits", "nuts", "almonds", "snacks", "spices",
                "candy", "chocolate", "food", "gummies", "powder", "treats",
-               "jerky", "coffee", "beef")
+               "honey", "rice", "beans", "seeds", "grains", "flour",
+               "cereal", "jerky", "coffee", "beef")
 
 
 def _fuzzy_food(low: str) -> str | None:

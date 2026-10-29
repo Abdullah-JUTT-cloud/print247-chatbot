@@ -839,25 +839,106 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         return _intent_result(_with_next_question(SHARED_FILE_ANSWER, prior,
                                                  script_missing(prior, meta), language))
     # A suggestion request is answered with a recommendation, not
-    # the next script question: "suggest me a bag for dry meat"
-    # used to be met with "What size do you need?" and "which type
-    # of boxes is best?" with a mylar-bag style question. Only
-    # KB-grounded (use, product) pairs fire; anything else falls
-    # through to the normal flow instead of an invented pick.
+    # the next script question. THE ARCHITECTURE FLIP (Oct 29):
+    # deterministic maps can never cover "thousands of relevant
+    # things" — a list is not understanding, and patching it one
+    # word at a time never finishes. So understanding is the LLM's
+    # job now (it reads meaning, including typos), and code keeps
+    # only the guardrails: the product must be one of ours, facts
+    # come from the KB, no price, no invented claim — the composer
+    # validator enforces all of it, or the reply falls back. The
+    # maps below are only the fast path for known uses and the
+    # no-key fallback, never the ceiling.
     if asks_for_suggestion(message):
         _s_use = suggestion_use(message, meta.get("visitor_messages") or [])
         _s_prod = suggestion_product(message, prior.get("product"))
         _s_ans = _SUGGESTION_ANSWERS.get((_s_use, _s_prod)) if _s_use else None
-        if _s_ans:
+        if _s_prod:
             prior["product"] = _s_prod
             meta.setdefault("answered_fields", [])
             if "product" not in meta["answered_fields"]:
                 meta["answered_fields"].append("product")
+            # A size stated inside the suggestion ("suggest me a
+            # 4x6 bag for coffee") is stored, never re-asked.
+            from .slots import _SIZE as _SIZE_RE
+            _sm = _SIZE_RE.search(message)
+            if _sm:
+                prior["sizes"] = _sm.group(0).strip()
+            else:
+                _single = re.search(
+                    r"\b\d+(?:\.\d+)?\s*(?:inches|inch|in\b|mm|cm)\b",
+                    message, re.IGNORECASE)
+                if _single:
+                    prior["sizes"] = _single.group(0).strip()
+            if prior.get("sizes") and "sizes" not in meta["answered_fields"]:
+                meta["answered_fields"].append("sizes")
+        if _s_ans:
             _s_reply = _with_next_question(_s_ans, prior,
                                            script_missing(prior, meta), language)
             meta["last_bot_question"] = _s_reply
             meta["last_asked"] = (script_missing(prior, meta) or [None])[0]
             return _intent_result(_s_reply)
+        # Unmapped use: do NOT fall through to the bare script
+        # question — that ignored the suggestion entirely. First
+        # try the LLM with the KB leash + composer validation.
+        _s_facts = retrieve(message)
+        _s_llm = _llm_reply(message, language, prior, _s_facts,
+                            reply_to=meta.get("last_bot_question"))
+        if _s_llm and "__" not in _s_llm:
+            _s_missing = script_missing(prior, meta)
+            _s_next = _next_question_text(prior, _s_missing, language)
+            try:
+                _s_qty = int(float(str(prior.get("quantity", "0")).replace(",", "")))
+            except (TypeError, ValueError):
+                _s_qty = 0
+            _s_ctx = {
+                "visitor_text": message,
+                "visitor_texts": visitor_messages,
+                "visitor_asking": visitor_is_asking(message),
+                "last_bot_text": meta.get("last_bot_question", ""),
+                "slots": prior,
+                "answered_fields": meta.get("answered_fields") or [],
+                "contact": meta.get("contact") or {},
+                "is_banner": is_banner_family(prior.get("product")),
+                "is_plain": wants_plain_packaging(visitor_messages),
+                "minimum_due": bool(_s_qty and _s_qty < 1000),
+                "asked_price": asks_about_price(message),
+                "asked_usual": asks_what_is_usual(message),
+                "asked_arrived": asks_if_it_arrived(message),
+                "unclear": False,
+            }
+            _s_fixed = fix_reply(_s_llm, _s_ctx, _s_next, _kb_first_sentence)
+            if _s_fixed is not None:
+                meta["ai_count"] = meta.get("ai_count", 0) + 1
+                meta["last_bot_question"] = _s_fixed
+                meta["last_asked"] = _s_missing[0] if _s_missing else None
+                meta.setdefault("bot_replies", []).append(_s_fixed)
+                meta["bot_replies"] = meta["bot_replies"][-20:]
+                _save_session(store, session_id, prior)
+                _save_meta(store, session_id, meta)
+                return {"reply": _s_fixed, "language": language, "slots": prior,
+                        "missing": script_missing(prior, meta),
+                        "sources": [f["source"] for f in _s_facts],
+                        "handoff": None, "llm_used": True, "suggestions": []}
+        # No key, LLM failed, or the reply was unfixable: never
+        # invent a suggestion — but never ignore the request
+        # either. Show the product's own KB overview, then the
+        # script question. Without a product word, fall through to
+        # the normal flow (which asks the product).
+        if _s_prod:
+            _ov_raw = capability_fact(_s_prod)
+            if _ov_raw:
+                _s_missing = script_missing(prior, meta)
+                _s_reply = _with_next_question(_fact_reply_text(_ov_raw), prior,
+                                               _s_missing, language)
+                meta["last_bot_question"] = _s_reply
+                meta["last_asked"] = _s_missing[0] if _s_missing else None
+                _save_session(store, session_id, prior)
+                _save_meta(store, session_id, meta)
+                return {"reply": _s_reply, "language": language, "slots": prior,
+                        "missing": script_missing(prior, meta),
+                        "sources": [capability_source(_s_prod)],
+                        "handoff": None, "llm_used": False, "suggestions": []}
     if objects_to_the_price(message):
         return _intent_result(_with_next_question(ANSWER_TO_A_PRICE_OBJECTION, prior,
                                                  script_missing(prior, meta), language))
