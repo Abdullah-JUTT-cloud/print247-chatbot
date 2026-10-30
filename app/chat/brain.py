@@ -931,7 +931,10 @@ def _design_files_note(meta: dict) -> str:
     files = (meta or {}).get("design_files") or []
     if not files:
         return ""
-    names = ", ".join(f.get("name", "design file") for f in files)
+    # Uploads store dicts, but tolerate plain-string entries so a
+    # malformed meta entry can never crash the confirmation turn.
+    names = ", ".join(f.get("name", "design file") if isinstance(f, dict) else str(f)
+                      for f in files)
     return f" Design file attached: {names}."
 
 
@@ -1381,8 +1384,15 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _img_state = meta.pop("awaiting_design_image", None)
     if _img_state and _is_short_yes(low):
         _imiss = script_missing(prior, meta)
-        _ireply = ("Great — please attach it with the paperclip button "
-                   "below.")
+        # Oct 31 live transcript: the visitor had ALREADY uploaded
+        # the file (upload does not clear awaiting_design_image),
+        # and a later bare "yes" got "please attach it" again.
+        # If a design file is already attached, never re-ask for it.
+        if meta.get("design_files"):
+            _ireply = "Got it — your design is already attached."
+        else:
+            _ireply = ("Great — please attach it with the paperclip button "
+                       "below.")
         if _imiss:
             _ireply += " " + _next_question_text(prior, _imiss, language)
         meta["last_bot_question"] = _ireply
@@ -2245,7 +2255,13 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             # shipped?" are questions, not orders. Those visitors
             # get email at the end contact flow if they turn into
             # an order.
-            and _is_order and "?" not in message
+            # Oct 31 live transcript: "im looking for sticker labels"
+            # is an order too, but "looking for" must NOT join the
+            # global _is_order list — "Looking for a work from home
+            # job" is a job enquiry that must stay deflected, not an
+            # order. So it counts ONLY here, where a product is
+            # already known (this trigger requires slots product).
+            and (_is_order or "looking for" in low) and "?" not in message
             and not visitor_is_asking(message)):
         _eq = _contact_question("email", language)
         meta["awaiting_early_email"] = True
@@ -3454,7 +3470,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     except (TypeError, ValueError):
         _qty = 0
     if _qty and _qty < 1000 and guards.minimum_applies(slots.get("product")) \
-            and not minimum_already_stated(meta.get("bot_replies") or []):
+            and not minimum_already_stated(meta.get("bot_replies") or []) \
+            and not meta.get("below_min_noted"):
         _moq_note = _tr("moq_note", language, BELOW_MIN_NOTE, qty=_qty)
 
     # Per-field answer handling for the last script question:
@@ -3898,8 +3915,15 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 reply = _chk["sentence"] + ((" " + " ".join(_qblock)) if _qblock else "")
     # Below-minimum note, once, on a question reply that does not
     # already state the minimum (the quantity question does).
+    # Oct 31 live transcript: the note repeated on a later
+    # question turn, because minimum_already_stated only matches
+    # "moq"/"minimum"/"1,000 per" — and the new MOQ-never note
+    # ("We can look at {qty} for you. We do smaller runs too.")
+    # contains none of those. So track it directly: once shown,
+    # below_min_noted suppresses it on every later turn.
     if _moq_note and not _srag_clarified and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():
         reply = _moq_note + " " + reply
+        meta["below_min_noted"] = True
     # No turn cap: the old 12-message rule handed off mid-conversation
     # and, before the one-time fix, bricked the chat outright. User
     # directive (Oct 30): if the chat is flowing, let it flow — no
