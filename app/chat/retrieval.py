@@ -171,6 +171,27 @@ def curated_first(hits: list[dict]) -> list[dict]:
         [h for h in hits if is_supplementary_source(h["source"])]
 
 
+def _dedup_hits(hits: list[dict]) -> list[dict]:
+    """Drop later hits whose text is identical (normalised) to an
+    earlier hit. Same file never repeats (hybrid dedups by source),
+    but DIFFERENT files can carry the same text — the 89-char
+    "Not stated on page" footer chunk repeats in 50+ articles, and
+    thin template files repeated their whole body. Without this,
+    top-3 can be three copies of one boilerplate chunk (Oct 30
+    dedupe pass). Keeps the first (highest-ranked / curated-first)
+    copy only."""
+    seen: set = set()
+    out = []
+    for h in hits:
+        key = " ".join((h.get("text") or "").lower().split())
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(h)
+    return out
+
+
 def _keyword_search(text: str, rows: list[dict]) -> list[dict]:
     words = [w for w in re.findall(r"[a-z]+", text.lower()) if len(w) > 3]
     scored = []
@@ -184,7 +205,9 @@ def _keyword_search(text: str, rows: list[dict]) -> list[dict]:
     # top 3; when none score, supplementary files answer the
     # question (envelopes, SBS, spot UV — the gaps kb_v2 fills).
     scored.sort(key=lambda x: (1 if is_supplementary_source(x[1]["source"]) else 0, -x[0]))
-    return [{"source": r["source"], "text": r["text"][:1500]} for _, r in scored[:3]]
+    # Dedup BEFORE slicing: otherwise two copies of one boilerplate
+    # chunk in the top 3 would leave only 1-2 distinct answers.
+    return _dedup_hits([{"source": r["source"], "text": r["text"][:1500]} for _, r in scored])[:3]
 
 
 def _topic_file(rows: list[dict], topic: str) -> list[dict]:
@@ -251,6 +274,7 @@ def _order_hybrid(question: str, vec_out: list[dict], kw_hits: list[dict],
         if k["source"] not in seen:
             out.append(k)
             seen.add(k["source"])
+    out = _dedup_hits(out)
     if out and kw_hits and kw_hits[0]["source"] != out[0]["source"]:
         fn = rerank_fn or (lambda q, a, b: _nano_rerank(
             q, a.get("text", ""), b.get("text", "")))
@@ -342,7 +366,7 @@ def retrieve(text: str, top_k: int = 3, rerank_fn=None, curated_only: bool = Fal
                 out = _order_hybrid(text, out, _keyword_search(text, rows),
                                     rerank_fn)
                 if out:
-                    return curated_first(out)[:top_k]
+                    return _dedup_hits(curated_first(out))[:top_k]
         except Exception:
             pass  # Fall through to keyword search — never fail the chat.
 

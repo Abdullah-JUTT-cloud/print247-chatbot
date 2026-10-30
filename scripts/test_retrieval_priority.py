@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ".")
 
 from app.chat.retrieval import (
-    _keyword_search, curated_first, is_supplementary_source,
+    _dedup_hits, _keyword_search, curated_first, is_supplementary_source,
     retrieve_curated)
 
 FAILURES = []
@@ -72,6 +72,40 @@ check("curated_first partitions, order kept inside groups",
           "kb/products/pouches.md", "kb/facts/moq.md",
           "kb/products/catalog-a.md", "kb/facts/site-faq.md"],
       str([h["source"] for h in ordered]))
+
+# --- dedup guard (Oct 30 dedupe pass) ---
+dup_hits = [
+    {"source": "kb/facts/a.md", "text": "## Not stated on page\n- Price.\n- MOQ."},
+    {"source": "kb/facts/b.md", "text": "## Not stated on page\n- Price.\n- MOQ."},
+    {"source": "kb/facts/c.md", "text": "Real fact about pouches."},
+]
+check("identical text kept once, first copy wins",
+      [h["source"] for h in _dedup_hits(dup_hits)] == ["kb/facts/a.md", "kb/facts/c.md"],
+      str([h["source"] for h in _dedup_hits(dup_hits)]))
+check("keyword search backfills past a duplicate",
+      [h["source"] for h in _keyword_search("price pouch", [
+          {"source": "kb/facts/a.md", "text": "price price pouch"},
+          {"source": "kb/facts/b.md", "text": "price price pouch"},
+          {"source": "kb/facts/c.md", "text": "price pouch sizes"},
+          {"source": "kb/facts/d.md", "text": "price pouch boxes"},
+      ])] == ["kb/facts/a.md", "kb/facts/c.md", "kb/facts/d.md"])
+
+# --- ingest skips footer-only chunks ---
+try:
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "ingest_mod", os.path.join(os.path.dirname(__file__), "ingest.py"))
+    _ing = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_ing)
+    _body = ("# Title\n\n" + ("Real section text. " * 300) + "\n\n"
+             "## Not stated on page\n- Price.\n- Minimum order quantity.\n"
+             "- Turnaround or production days.\n")
+    _chunks = _ing.chunks_for(_body)
+    check("ingest drops footer-only chunk, keeps real sections",
+          all(not c.startswith("## Not stated on page") for c in _chunks)
+          and len(_chunks) >= 1, str([len(c) for c in _chunks]))
+except Exception as e:  # noqa: BLE001 - test must report, never crash
+    check("ingest footer-skip runs", False, repr(e))
 
 # --- retrieve_curated needs the real kb tree; it must not crash
 # when run in a repo without the supplementary files, and must

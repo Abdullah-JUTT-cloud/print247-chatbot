@@ -55,7 +55,16 @@ def chunks_for(body: str):
         return [body]
     # Large file only: split on level-2 headings, keep each section whole.
     parts = re.split(r"(?m)^## ", body)
-    return [("## " + p).strip() for p in parts if p.strip()]
+    chunks = [("## " + p).strip() for p in parts if p.strip()]
+    # Dedupe pass (Oct 30): a "Not stated on page" footer chunk
+    # (89 chars: price / MOQ / turnaround not stated) repeats
+    # verbatim in 50+ articles. It states no fact, only absences,
+    # and as a Qdrant point it is a duplicate embedding that can
+    # fill a top-k slot. Skip footer-only chunks at ingest; the
+    # file's real sections still index, and absence is already
+    # the bot's default (team-confirm) when no fact is found.
+    return [c for c in chunks
+            if not (c.startswith("## Not stated on page") and len(c) < 200)]
 
 
 def point_id(source: str, index: int) -> str:
