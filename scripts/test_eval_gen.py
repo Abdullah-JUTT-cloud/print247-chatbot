@@ -1414,6 +1414,50 @@ check("spanish message is never treated as gibberish",
       "didn't quite catch that" not in r["reply"].lower(),
       f"reply={r['reply'][:160]!r}")
 
+# ---------- section 37: Oct 30 design-image flow ----------
+# After the designs step the bot asks once whether the visitor has
+# an image of the design. Yes opens the upload (quote NOT blocked);
+# no offers free design support; any other answer flows normally
+# and the question is never re-asked.
+_s = _steps("ev-s37-imgq", ["I need mylar bags", "4x6 inches", "stand-up",
+                             "matte", "1000 units", "1 design"])
+check("design-image question asked after the designs step",
+      "Do you have an image of the design" in _s[-1]["reply"]
+      and _s[-1]["suggestions"] == ["Yes, I have one",
+                                    "No, I need design help"],
+      f"reply={_s[-1]['reply'][:160]!r} chips={_s[-1]['suggestions']}")
+r = run("ev-s37-imgyes", ["I need mylar bags", "4x6 inches", "stand-up",
+                           "matte", "1000 units", "1 design",
+                           "Yes, I have one"])
+check("yes opens the upload and continues to the next question",
+      "paperclip" in r["reply"].lower()
+      and "zipper" in r["reply"].lower(),
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s37-imgno", ["I need mylar bags", "4x6 inches", "stand-up",
+                          "matte", "1000 units", "1 design", "No"])
+check("no offers free design support and continues",
+      "free design support" in r["reply"].lower()
+      and "zipper" in r["reply"].lower(),
+      f"reply={r['reply'][:200]!r}")
+_s = _steps("ev-s37-imgpass", ["I need mylar bags", "4x6 inches", "stand-up",
+                                "matte", "1000 units", "1 design",
+                                "kraft", "No preference"])
+check("material answer after the image question is never swallowed",
+      "kraft material noted" in _s[-2]["reply"].lower()
+      and "Do you have an image" not in _s[-1]["reply"]
+      and "Just to confirm" in _s[-1]["reply"],
+      f"pass={_s[-2]['reply'][:160]!r} confirm={_s[-1]['reply'][:160]!r}")
+r = run("ev-s37-imgvol", ["I need boxes 4x6, 2 designs"])
+check("volunteered designs never pull the image question ahead of size",
+      "Do you have an image" not in r["reply"]
+      and "Is that in inches" in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+from app.chat.brain import _design_files_note
+check("confirmation names an attached design file, never invents one",
+      _design_files_note({"design_files": [{"name": "logo.png"}]})
+      == " Design file attached: logo.png."
+      and _design_files_note({}) == "")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

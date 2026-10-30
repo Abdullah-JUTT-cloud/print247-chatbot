@@ -708,6 +708,50 @@ def _named_types(text: str, product: str) -> list[str]:
     return _out
 
 
+def _is_img_yes(low: str) -> bool:
+    """Yes to the design-image question — deliberately NARROW.
+    The confirm handler's broad yes-regex would eat slot answers,
+    and here that matters: "Yes, kraft" must stay a material
+    answer, not an image yes. Only a bare yes, or a yes that says
+    they have one, counts."""
+    s = low.strip().strip(".,!? ")
+    if s in ("yes", "yeah", "yep", "ok", "okay", "sure", "haan", "han",
+             "ji", "sí", "si"):
+        return True
+    return s.startswith("yes, i have") or s in ("yes i do",
+                                                "yes i have one")
+
+
+def _is_img_no(low: str) -> bool:
+    """No to the design-image question — deliberately NARROW.
+    "No preference" is an extras/material answer, NOT an image no
+    (the broad no-regex ate it and broke four full-flow tests).
+    Only a bare no, the chip text, or a no-that-says-they-have-no-
+    image counts."""
+    s = low.strip().strip(".,!? ")
+    if s in ("no", "nope", "nah", "nahi", "not really", "no thanks"):
+        return True
+    if s.startswith("no, i need design help"):
+        return True
+    if re.search(r"\b(don't|do not|dont) have\b", low):
+        return True
+    if re.search(r"\bno (image|design|photo|picture)\b", low):
+        return True
+    return False
+
+
+def _design_files_note(meta: dict) -> str:
+    """Confirmation add-on: names of design files attached to this
+    quote (meta["design_files"] from the upload endpoint). Empty
+    when nothing was uploaded, so confirmations never claim a file
+    that is not there."""
+    files = (meta or {}).get("design_files") or []
+    if not files:
+        return ""
+    names = ", ".join(f.get("name", "design file") for f in files)
+    return f" Design file attached: {names}."
+
+
 def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None = None) -> str:
     """The collected spec as one readable line for confirmations:
     product, size, style, finish, quantity (per design + total when
@@ -1135,6 +1179,34 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "handoff": None, "llm_used": False,
                 "suggestions": _suggestions(prior, script_missing(prior, meta),
                                             language=language)}
+
+    # Design-image answer (Oct 30): the bot asked "Do you have an
+    # image of the design?" after the designs step. A short yes
+    # means: tell them to attach it (the paperclip button), and
+    # carry on with the next script question — the quote is NOT
+    # blocked waiting for the upload, which can arrive any time
+    # through /api/chat/upload. A no means free design support +
+    # next question. Anything else pops the state (the pop above
+    # already cleared it) and flows normally on its own words, so
+    # a material answer ("kraft") right after the image question
+    # is never swallowed as a yes/no.
+    _img_state = meta.pop("awaiting_design_image", None)
+    if _img_state and _is_img_yes(low):
+        _imiss = script_missing(prior, meta)
+        _ireply = ("Great — please attach it with the paperclip button "
+                   "below.")
+        if _imiss:
+            _ireply += " " + _next_question_text(prior, _imiss, language)
+        meta["last_bot_question"] = _ireply
+        return _intent_result(_ireply)
+    elif _img_state and _is_img_no(low):
+        _imiss = script_missing(prior, meta)
+        _ireply = ("No problem — we offer free design support, so the "
+                   "team can help create your design.")
+        if _imiss:
+            _ireply += " " + _next_question_text(prior, _imiss, language)
+        meta["last_bot_question"] = _ireply
+        return _intent_result(_ireply)
 
     if is_looking_for_work(message) or chat_is_a_pitch([message]):
         return _intent_result(JOB_MESSAGE if is_looking_for_work(message) else PITCH_MESSAGE,
@@ -1973,7 +2045,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                                new=_corr)
                            + " Just to confirm — do you want "
                            + _spec_parts(slots, meta.get("gave_up") or [],
-                                         meta.get("qty_split")) + "?")
+                                         meta.get("qty_split")) + "?"
+                           + _design_files_note(meta))
             else:
                 _cq2 = _next_question_text(slots, _cmiss, language)
                 _creply = _tr("switch_done", language, "Got it — switching to {new}.",
@@ -2119,7 +2192,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _save_session(store, session_id, slots)
             _save_meta(store, session_id, meta)
             return {
-                "reply": _perfect_reply(slots, language, _gave_up, meta.get("qty_split")) + " " + get_chat_complete_message(),
+                "reply": _perfect_reply(slots, language, _gave_up, meta.get("qty_split")) + _design_files_note(meta) + " " + get_chat_complete_message(),
                 "language": language, "slots": slots,
                 "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
                 "handoff": "complete", "llm_used": False, "suggestions": [],
@@ -2134,7 +2207,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _save_session(store, session_id, slots)
         _save_meta(store, session_id, meta)
         return {
-            "reply": _perfect_reply(slots, language, _gave_up, meta.get("qty_split")) + " " + _q,
+            "reply": _perfect_reply(slots, language, _gave_up, meta.get("qty_split")) + _design_files_note(meta) + " " + _q,
             "language": language, "slots": slots,
             "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
             "handoff": None, "llm_used": False, "suggestions": [],
@@ -2412,7 +2485,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     def _confirmation_text() -> str:
         intro = _tr("confirm_intro", language, "Just to confirm — do you want")
         return (f"{intro} {_spec_parts(slots, _gave_up, meta.get('qty_split'))}?"
-                f"{_below_min_note(slots, language)}")
+                f"{_below_min_note(slots, language)}"
+                f"{_design_files_note(meta)}")
 
     # Types question ("what box types do you offer?", "what type of
     # boxes do you have?"): answer with the product's type LIST
@@ -3016,6 +3090,29 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         llm_used = False
         sources = _slot_sources(slots)
     elif not is_fact_question or (is_fact_question and len(facts) == 1):
+        # Design-image question (Oct 30): once the designs step is
+        # resolved (count given, or given up after 2 tries) AND
+        # every earlier step is resolved or given up (a volunteered
+        # "2 designs" in turn 1 must NOT pull the image question
+        # ahead of the size question), ask whether the visitor has
+        # an image of the design — asked
+        # exactly once per session, never when a file is already
+        # attached, never on a fact-question turn (the fact answer
+        # must not be hijacked), and never blocking the quote: a
+        # yes just opens the upload, the next question follows in
+        # the answer handler, and the upload itself can arrive at
+        # any later time through /api/chat/upload.
+        if slots.get("skus") and not meta.get("design_image_asked") \
+                and not meta.get("design_files") and not is_fact_question \
+                and not any(f in missing for f in
+                            ("product", "sizes", "type", "style",
+                             "finishes", "quantity", "skus")):
+            meta["design_image_asked"] = True
+            meta["awaiting_design_image"] = True
+            return _final_return(
+                _tr("q_design_image", language,
+                    "Do you have an image of the design you'd like printed?"),
+                suggestions=["Yes, I have one", "No, I need design help"])
         # Ask-attempt accounting (old askAttempts.ts): an attempt is
         # spent only when the visitor had a go and the field is still
         # missing. Exhausted fields are skipped for the next question

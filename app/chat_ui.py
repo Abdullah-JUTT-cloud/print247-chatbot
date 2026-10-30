@@ -1228,9 +1228,10 @@ body.widget-mode.is-minimized .launcher { display: flex; animation: rise .2s eas
         </div>
 
         <form class="composer-form" onsubmit="return send(event)" autocomplete="off">
-          <button type="button" class="composer-btn attach-btn" onclick="artworkNotice()" aria-label="Artwork upload information" title="Artwork upload">
+          <button type="button" class="composer-btn attach-btn" onclick="pickDesignFile()" aria-label="Attach design file" title="Attach design file">
             <svg class="icon" aria-hidden="true"><use href="#i-clip"></use></svg>
           </button>
+          <input type="file" id="designFileInput" hidden accept=".png,.jpg,.jpeg,.webp,.pdf,.ai,.eps,.zip" onchange="uploadDesign(this.files[0]); this.value = '';">
           <label class="sr-only" for="q">Message Print247</label>
           <textarea id="q" name="message" rows="1" placeholder="Tell us what you're packing…" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" spellcheck="true"></textarea>
           <button class="send" id="sendBtn" type="submit" aria-label="Send message" disabled>
@@ -1362,7 +1363,7 @@ body.widget-mode.is-minimized .launcher { display: flex; animation: rise .2s eas
   <div class="dropzone" role="group" aria-disabled="true" aria-label="Artwork upload">
     <svg class="icon" aria-hidden="true"><use href="#i-image"></use></svg>
     <strong>Artwork upload</strong>
-    <small>PDF, AI or PNG · file upload isn’t connected yet</small>
+    <small>PDF, AI, PNG or JPG · up to 10MB</small>
   </div>
 </template>
 
@@ -1845,8 +1846,24 @@ function showToast(message) {
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, 220);
   }, 4200);
 }
-function artworkNotice() {
-  showToast('Artwork upload isn’t connected yet. Send the product, size and quantity — we’ll request the files with your quote.');
+function pickDesignFile() {
+  const inp = document.getElementById('designFileInput');
+  if (inp) inp.click();
+}
+async function uploadDesign(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('session_id', sessionId);
+  fd.append('file', file);
+  addMe('Design file: ' + file.name);
+  try {
+    const r = await fetch('/api/chat/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.detail || 'upload failed');
+    addBot(d.reply, [], [], undefined, d);
+  } catch (err) {
+    showToast('Could not upload that file — please try a PNG, JPG, PDF, AI, EPS or ZIP file under 10MB.');
+  }
 }
 
 /* ---------- theme ---------- */

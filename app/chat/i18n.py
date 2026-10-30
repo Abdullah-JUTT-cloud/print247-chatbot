@@ -52,6 +52,10 @@ _STRINGS = {
         "es": "¿Cuántos diseños o SKUs tiene en total?",
         "ur-roman": "Total kitne designs ya SKUs hain?",
     },
+    "q_design_image": {
+        "es": "¿Tienes una imagen del diseño que quieres imprimir?",
+        "ur-roman": "Kya aap ke paas design ki image hai jo print karwani hai?",
+    },
     "q_extras": {
         "es": "¿Quiere que agregue un cierre y una muesca de rasgado?",
         "ur-roman": "Zipper aur tear notch add kar dun?",

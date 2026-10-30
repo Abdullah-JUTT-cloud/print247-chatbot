@@ -17,6 +17,9 @@ Endpoints:
                        code guards, RAG retrieval, then a gpt-5-mini
                        answer when OPENAI_API_KEY is set, otherwise a
                        deterministic reply that never invents a fact.
+  POST /api/chat/upload -> design-file upload (PNG/JPG/PDF/AI/EPS/
+                       ZIP, 10MB): stored per session, image files
+                       described by vision when a model key is set.
   GET  /api/chat/history -> one session's saved chat, oldest first.
                        Stays open on purpose: the visitor chat UI
                        calls it to restore a conversation on
@@ -47,6 +50,8 @@ from .admin_auth import (COOKIE, admin_config, check_credentials,
 from .chat.brain import handle_message
 from .chat.monitoring import (learned_facts_html, monitoring_html,
                               summarize_turns, turn_flags)
+from .chat.uploads import save_upload, validate_upload
+from .chat.vision import IMAGE_MIMES, describe_image, openai_vision_fn
 from .chat.store import get_store
 from .web import ADMIN_HTML, CHAT_HTML
 
@@ -304,6 +309,53 @@ def chat(payload: ChatIn):
     _log_chat(payload.message, payload.session_id, result, payload.reply_to,
               latency_ms=latency_ms)
     return result
+
+
+@app.post("/api/chat/upload")
+async def chat_upload(request: Request):
+    """Design-file upload (Oct 30): the visitor attaches a design
+    image or artwork file mid-quote. The file is stored under
+    uploads/<session_id>/, recorded in the session meta (so the
+    confirmation names it), and — for images, when a model key is
+    present — described by vision, visibly only, never as a KB fact.
+    Fail-soft throughout: a refused file or a failed description
+    never breaks the chat; the quote continues without it. The
+    upload is also logged to chat_logs so a refresh restores the
+    vision message like any other bot reply."""
+    form = await request.form()
+    session_id = (form.get("session_id") or "web-ui") or "web-ui"
+    up = form.get("file")
+    if up is None or not hasattr(up, "read"):
+        return {"ok": False, "detail": "No file was attached."}
+    data = await up.read()
+    err = validate_upload(getattr(up, "filename", "") or "", len(data))
+    if err:
+        return {"ok": False, "detail": err}
+    filename = getattr(up, "filename", "") or "design"
+    mime = (getattr(up, "content_type", "") or "").lower()
+    stored = save_upload("uploads", str(session_id), filename, data)
+    desc = None
+    if mime in IMAGE_MIMES:
+        desc = describe_image(data, mime, llm_fn=openai_vision_fn)
+    try:
+        if _store is not None:
+            meta = _store.load_meta(str(session_id)) or {}
+            files = meta.get("design_files") or []
+            files.append({"name": filename, "mime": mime,
+                          "description": desc})
+            meta["design_files"] = files
+            _store.save_meta(str(session_id), meta)
+    except Exception:
+        pass
+    if desc:
+        msg = f"Here's what I can see in your design: {desc}"
+    else:
+        msg = "Thanks — I've saved your design file with this quote."
+    _log_chat(f"[design file uploaded: {filename}]", str(session_id),
+              {"reply": msg, "sources": [], "suggestions": [],
+               "handoff": None, "llm_used": bool(desc), "language": "en"})
+    return {"ok": True, "file": filename, "stored": stored,
+            "description": desc, "reply": msg}
 
 
 @app.get("/api/chat/history")
