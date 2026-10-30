@@ -74,7 +74,7 @@ from .price_questions import PRICING_COMES_WITH_THE_QUOTE, asks_about_price
 from .quantity_parse import minimum_already_stated, wants_smaller_run
 from .quote_value import is_our_own_menu, without_template_blanks
 from .repeated import SENTENCE_BREAK, repeats_the_question
-from .retrieval import _read_kb_files, retrieve
+from .retrieval import _read_kb_files, retrieve, retrieve_curated
 from .normalize import (correct_query, fragment_product,
                         interpret_fragment, is_gibberish, is_use_fragment)
 from .srag import srag_check, strip_internal_notes
@@ -1925,11 +1925,13 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # extraction/script: a fragment that matched an intent never
     # reaches here, and a fragment that would otherwise get a
     # repeated script question gets an interpretation question
-    # instead — but only when retrieval finds nothing and an
-    # interpretation exists (product in context or in the
+    # instead — but only when CURATED retrieval finds nothing and
+    # an interpretation exists (product in context or in the
     # fragment). Fragments with a KB foothold ("for coffee",
-    # "matte") have retrieval hits and flow on normally.
-    if is_use_fragment(message) and not retrieve(message):
+    # "matte") have retrieval hits and flow on normally. Curated
+    # only: a supplementary article merely mentioning a word is
+    # not a foothold (Oct 30 kb_v2 fix).
+    if is_use_fragment(message) and not retrieve_curated(message):
         _interp = interpret_fragment(message, prior.get("product"))
         if _interp:
             _display, _question = _interp
@@ -1942,9 +1944,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # Random keyboard mash gets a clarification, never a product
     # pitch: the live stack once answered mash with a food-box
     # suggestion. Skipped in the contact phase (a name is not
-    # mash) and when retrieval finds something (a real query in
-    # other words still flows normally).
-    if is_gibberish(message) and not retrieve(message) \
+    # mash) and when curated retrieval finds something (a real
+    # query in other words still flows normally; supplementary
+    # mentions do not count, Oct 30 kb_v2 fix).
+    if is_gibberish(message) and not retrieve_curated(message) \
             and not meta.get("awaiting_contact") \
             and not meta.get("complete"):
         return _intent_result(

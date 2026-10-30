@@ -147,6 +147,30 @@ def _read_kb_files() -> list[dict]:
     return rows
 
 
+_SUPPLEMENTARY_PREFIXES = ("catalog-", "know-", "site-")
+
+
+def is_supplementary_source(source: str) -> bool:
+    """True for kb_v2 supplementary files (Oct 30, 2026): every one
+    of them is named catalog-*, know-* or site-*. The original 39
+    curated OKF files, and learned files, use other names, so they
+    are never supplementary by this rule."""
+    name = (source or "").split("/")[-1]
+    return name.startswith(_SUPPLEMENTARY_PREFIXES)
+
+
+def curated_first(hits: list[dict]) -> list[dict]:
+    """Stable partition: curated hits first (original order kept
+    inside each group), supplementary hits after. With 469 extra
+    files in the tree, raw score alone lets a long encyclopaedia
+    article outrank the short curated file that actually answers
+    the question — that broke golden 162->142 on the first all-469
+    load. Curated files are the authority; supplementary files
+    fill the gaps curated files do not cover."""
+    return [h for h in hits if not is_supplementary_source(h["source"])] + \
+        [h for h in hits if is_supplementary_source(h["source"])]
+
+
 def _keyword_search(text: str, rows: list[dict]) -> list[dict]:
     words = [w for w in re.findall(r"[a-z]+", text.lower()) if len(w) > 3]
     scored = []
@@ -155,7 +179,11 @@ def _keyword_search(text: str, rows: list[dict]) -> list[dict]:
         score = sum(body.count(w) for w in set(words))
         if score:
             scored.append((score, row))
-    scored.sort(key=lambda x: -x[0])
+    # Curated first, then by score inside each group. When at least
+    # three curated files score, the top 3 are exactly the old
+    # top 3; when none score, supplementary files answer the
+    # question (envelopes, SBS, spot UV — the gaps kb_v2 fills).
+    scored.sort(key=lambda x: (1 if is_supplementary_source(x[1]["source"]) else 0, -x[0]))
     return [{"source": r["source"], "text": r["text"][:1500]} for _, r in scored[:3]]
 
 
@@ -236,9 +264,21 @@ def _order_hybrid(question: str, vec_out: list[dict], kw_hits: list[dict],
     return out
 
 
-def retrieve(text: str, top_k: int = 3, rerank_fn=None) -> list[dict]:
+def retrieve_curated(text: str, top_k: int = 3) -> list[dict]:
+    """Retrieval over curated files only. Used by the did-you-mean
+    and gibberish gates: those gates ask "does the curated KB have
+    any foothold for this fragment?" — a supplementary article
+    merely mentioning a word is not a foothold, and with 469 extra
+    files retrieval is almost never empty, so the gates silently
+    stopped firing (eval fragment cases, Oct 30)."""
+    return retrieve(text, top_k=top_k, curated_only=True)
+
+
+def retrieve(text: str, top_k: int = 3, rerank_fn=None, curated_only: bool = False) -> list[dict]:
     low = (text or "").lower()
     rows = _read_kb_files()
+    if curated_only:
+        rows = [r for r in rows if not is_supplementary_source(r["source"])]
 
     # Step 0: time-intent pre-check. A speed/delivery question about
     # a product ("delivery time for boxes", "how quick can labels
@@ -273,7 +313,10 @@ def retrieve(text: str, top_k: int = 3, rerank_fn=None) -> list[dict]:
                     return [{"source": row["source"], "text": row["text"][:1500]}]
 
     # Step 2: vector search, only if configured (skipped silently in dev).
-    if os.environ.get("OPENAI_API_KEY"):
+    # Curated-only mode skips it outright: Qdrant holds supplementary
+    # points after a full re-ingest, and the gates must answer from
+    # curated files alone.
+    if os.environ.get("OPENAI_API_KEY") and not curated_only:
         try:
             from openai import OpenAI
             from qdrant_client import QdrantClient
@@ -299,7 +342,7 @@ def retrieve(text: str, top_k: int = 3, rerank_fn=None) -> list[dict]:
                 out = _order_hybrid(text, out, _keyword_search(text, rows),
                                     rerank_fn)
                 if out:
-                    return out[:top_k]
+                    return curated_first(out)[:top_k]
         except Exception:
             pass  # Fall through to keyword search — never fail the chat.
 
