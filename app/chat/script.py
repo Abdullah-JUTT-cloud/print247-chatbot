@@ -53,6 +53,12 @@ _ABOUT_THE_QUOTE = re.compile(
 QUESTIONS = {
     "product": "What product are you looking for — for example mylar bags, pouches, boxes, or labels?",
     "sizes": "What size do you need? Width x height x depth, in inches or mm.",
+    # Flat products never have a depth: labels, stickers, cards,
+    # banners, bags (gusset, not depth). Nov 1: the depth wording
+    # in the size question confused label visitors before any
+    # depth follow-up was even possible (the follow-up itself is
+    # already box-only).
+    "sizes_flat": "What size do you need? Width x height, in inches or mm.",
     "type": "Which type would you like?",
     "style_bags": "What style of Mylar bag do you need: Flat, Standup or which one?",
     "style_boxes": "What style of box do you need?",
@@ -161,6 +167,13 @@ def question_for(field: str, slots: dict) -> str:
     if field == "style":
         return QUESTIONS["style_boxes"] if "box" in (slots.get("product") or "").lower() \
             else QUESTIONS["style_bags"]
+    if field == "sizes":
+        # Depth is a box dimension only. Every other family gets
+        # width x height — labels, stickers, cards, banners, and
+        # bags/pouches (whose third dimension is the gusset, asked
+        # about separately, never as "depth").
+        return QUESTIONS["sizes"] if "box" in (slots.get("product") or "").lower() \
+            else QUESTIONS["sizes_flat"]
     if field == "quantity":
         # User rule (Oct 30): the MOQ is NEVER volunteered — not
         # with the quantity question, not with a below-minimum

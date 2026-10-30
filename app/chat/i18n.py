@@ -24,6 +24,10 @@ _STRINGS = {
         "es": "¿Qué tamaño necesita? Ancho x alto x profundidad, en pulgadas o mm.",
         "ur-roman": "Size kya chahiye? Width x height x depth, inches ya mm mein.",
     },
+    "q_sizes_flat": {
+        "es": "¿Qué tamaño necesita? Ancho x alto, en pulgadas o mm.",
+        "ur-roman": "Size kya chahiye? Width x height, inches ya mm mein.",
+    },
     "q_style_bags": {
         "es": "¿Qué estilo de bolsa Mylar necesita: plana, vertical o cuál?",
         "ur-roman": "Mylar bag ka kaunsa style chahiye: flat, stand-up ya koi aur?",

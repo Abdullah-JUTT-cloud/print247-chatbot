@@ -104,6 +104,12 @@ def _question(field: str, slots: dict, language: str) -> str:
         key = "q_style_boxes" if "box" in (slots.get("product") or "").lower() else "q_style_bags"
         english = question_for(field, slots)
         return _tr(key, language, english)
+    if field == "sizes":
+        # Depth wording is box-only (Nov 1): flat families get the
+        # width x height question, mirroring question_for above.
+        key = "q_sizes" if "box" in (slots.get("product") or "").lower() \
+            else "q_sizes_flat"
+        return _tr(key, language, question_for(field, slots))
     if field == "type":
         # The type question is the product file's own list sentence
         # (same text the types branch answers with), not the bare
@@ -3716,6 +3722,13 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if slots.get("sizes") and _has_zero_dimension(slots["sizes"]):
         _bad = slots["sizes"]
         slots["sizes"] = ""
+        # Nov 1 live test: clearing the value alone was not enough
+        # — the extraction step had already recorded "sizes" in
+        # answered_fields, so script_missing skipped it and the bot
+        # jumped to finishes instead of re-asking the size. A
+        # refused size is not an answered size.
+        meta["answered_fields"] = [a for a in (meta.get("answered_fields") or [])
+                                   if a != "sizes"]
         meta.pop("unit_asked_for", None)
         meta["last_asked"] = "sizes"
         _zmiss = script_missing(slots, meta)
