@@ -36,8 +36,11 @@ import re
 
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
 _INTERNAL_NOTE = re.compile(
-    r"^\s*(script note|context note)\b|internal sales script",
+    r"^\s*(script note|context note)\b|internal sales[- ]script|state as script rules",
     re.IGNORECASE)
+# NOTE: "old sales script" citations are NOT stripped — they carry
+# facts ("Banners have no minimum in the old sales script"). Only
+# meta sentences about the script itself are internal language.
 
 
 def strip_internal_notes(reply: str) -> str:

@@ -848,8 +848,43 @@ def _trusted_reply_to(reply_to: str | None, bot_replies: list | None) -> str | N
     return None
 
 
+def _conversation_summary(meta: dict, slots: dict, limit: int = 4) -> str:
+    """Compact context for the LLM (Phase 1): collected slots + the
+    last visitor messages + the last bot question. It answers
+    "same thing, different material" — the model sees what "same"
+    refers to. Visitor words are UNTRUSTED data: the caller must
+    put this in a USER-role message, never in system."""
+    parts = []
+    _s = {k: slots.get(k) for k in ("product", "sizes", "type", "style",
+                                    "finishes", "quantity", "skus", "material")
+          if slots.get(k)}
+    if _s:
+        parts.append("Quote so far: " + ", ".join(f"{k}={v}" for k, v in _s.items()) + ".")
+    _vm = [m for m in (meta.get("visitor_messages") or [])[:-1] if m]
+    _vm = _vm[-limit:]
+    if _vm:
+        parts.append("Earlier visitor messages: " + " | ".join(m[:120] for m in _vm) + ".")
+    _lbq = meta.get("last_bot_question")
+    if _lbq:
+        parts.append(f"Last bot question: {_lbq[:200]}")
+    return " ".join(parts)
+
+
+def _llm_messages(system: str, message: str, summary: str | None = None) -> list[dict]:
+    """Assemble the chat payload: trusted system prompt first, then
+    the untrusted conversation summary as a USER message (never in
+    system — visitor words must not become instructions), then the
+    visitor's message."""
+    msgs = [{"role": "system", "content": system}]
+    if summary:
+        msgs.append({"role": "user",
+                     "content": f"Conversation so far (context only): {summary}"})
+    msgs.append({"role": "user", "content": message})
+    return msgs
+
+
 def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
-               reply_to: str | None = None) -> str | None:
+               reply_to: str | None = None, summary: str | None = None) -> str | None:
     """gpt-5-mini answer, or None if no key / call fails.
 
     REFERENCE, NOT WHITELIST (Oct 29): the KB chunks below are the
@@ -913,10 +948,7 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
         )
         resp = client.chat.completions.create(
             model=os.environ.get("CHAT_MODEL", "gpt-5-mini"),
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": message},
-            ],
+            messages=_llm_messages(system, message, summary=summary),
             timeout=30,
         )
         return resp.choices[0].message.content.strip()
@@ -1206,7 +1238,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         # try the LLM with the KB leash + composer validation.
         _s_facts = retrieve(message)
         _s_llm = _llm_reply(message, language, prior, _s_facts,
-                            reply_to=meta.get("last_bot_question"))
+                            reply_to=meta.get("last_bot_question"),
+                            summary=_conversation_summary(meta, prior))
         if _s_llm and "__" not in _s_llm:
             _s_missing = script_missing(prior, meta)
             _s_next = _next_question_text(prior, _s_missing, language)
@@ -2521,10 +2554,30 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _cmissing = script_missing(slots, meta)
             _cq = _next_question_text(slots, _cmissing, language)
             meta["last_asked"] = _cmissing[0] if _cmissing else None
-            _creply = _ctext + (f" {_qcaveat}" if _qcaveat else "") \
-                + (f" {_cq}" if _cq else "")
-            meta["last_bot_question"] = _creply
-            return _final_return(_creply, srcs=[capability_source(_cap)])
+            # SRAG on capability answers (Phase 1): a Yes composed
+            # from the wrong fact (the pharmaceutical sentence on a
+            # rigid-box question) must not reach the visitor. Pass:
+            # prune to the verified sentence. Fail: fall through to
+            # the normal fact chain — the slots stored above stay,
+            # and the chain re-answers from retrieval or clarifies.
+            _cap_ok = True
+            _ccand = [s.strip() for s in re.split(SENTENCE_BREAK, _ctext)
+                      if s.strip() and not s.strip().endswith("?")]
+            if _ccand:
+                _cchk = srag_check(message, _ccand,
+                                   {"product": _cap,
+                                    "pending": _cmissing[0] if _cmissing else None})
+                if not _cchk.get("answers", True):
+                    _cap_ok = False
+                elif _cchk.get("sentence"):
+                    _ctext = _cchk["sentence"]
+            if _cap_ok:
+                _creply = _ctext + (f" {_qcaveat}" if _qcaveat else "") \
+                    + (f" {_cq}" if _cq else "")
+                meta["last_bot_question"] = _creply
+                return _final_return(_creply, srcs=[capability_source(_cap)])
+            # SRAG failed: no return — execution continues to the
+            # location/price/fact branches below.
 
     # Location + a foreign country ("where it located in pakistan"):
     # dumping the footer address never answers it — the visitor is
@@ -2884,7 +2937,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             if _searched:
                 facts = [{"source": "web-search", "text": _searched["answer"]}]
         reply = _llm_reply(message, language, slots, facts,
-                           reply_to=_trusted_reply_to(reply_to, meta.get("bot_replies")))
+                           reply_to=_trusted_reply_to(reply_to, meta.get("bot_replies")),
+                           summary=_conversation_summary(meta, slots))
         llm_used = reply is not None
         if not llm_used:
             reply = _deterministic_reply(message, slots, facts, missing, language, _gave_up,
@@ -2940,8 +2994,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _stripped = strip_internal_notes(reply)
         if _stripped.strip():
             reply = _stripped
-        _cand = [s.strip() for s in re.split(SENTENCE_BREAK, reply)
-                 if s.strip() and not s.strip().endswith("?")]
+        # The pending question block is the trailing sentences from
+        # the first "?" sentence onward (a size question has a
+        # non-"?" unit fragment after its "?" part — it belongs to
+        # the question, not to the facts). Candidates are the fact
+        # sentences before it.
+        _sent = [s.strip() for s in re.split(SENTENCE_BREAK, reply) if s.strip()]
+        _qi = next((i for i, s in enumerate(_sent) if s.endswith("?")), None)
+        _qblock = _sent[_qi:] if _qi is not None else []
+        _cand = [s for s in (_sent[:_qi] if _qi is not None else _sent)
+                 if not s.endswith("?")]
         if _cand:
             _chk = srag_check(message, _cand,
                               {"product": slots.get("product"),
@@ -2955,6 +3017,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "Just to be sure I get this right, could you say "
                     "a bit more about what you need?")
                 _srag_clarified = True
+            elif _chk.get("sentence"):
+                # Prune to the verified sentence (Phase 1): the old
+                # first-best + next-scoring dump often appended a
+                # semi-relevant second sentence. The pending
+                # question block is kept whole.
+                reply = _chk["sentence"] + ((" " + " ".join(_qblock)) if _qblock else "")
     # Below-minimum note, once, on a question reply that does not
     # already state the minimum (the quantity question does).
     if _moq_note and not _srag_clarified and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():

@@ -141,7 +141,7 @@ def _fake_search(q):
                       "url": "https://example.com/corrugated"}]}
 
 
-def _fake_llm(message, language, slots, facts, reply_to=None):
+def _fake_llm(message, language, slots, facts, reply_to=None, summary=None):
     return facts[0]["text"] if facts else None
 
 

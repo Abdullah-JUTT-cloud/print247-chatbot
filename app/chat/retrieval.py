@@ -12,6 +12,7 @@ Order matters, and it is deliberate:
   with the team" instead of inventing an answer.
 """
 import glob
+import json
 import os
 import re
 
@@ -160,7 +161,61 @@ def _topic_file(rows: list[dict], topic: str) -> list[dict]:
     return []
 
 
-def retrieve(text: str, top_k: int = 3) -> list[dict]:
+def _nano_rerank(question: str, a_text: str, b_text: str) -> int:
+    """0 = first candidate wins, 1 = second wins. Fail-soft: no key
+    or any failure keeps the first (vector) order."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        return 0
+    try:
+        from openai import OpenAI
+
+        client = OpenAI()
+        resp = client.chat.completions.create(
+            model=os.environ.get("HELPER_MODEL", "gpt-5-nano"),
+            messages=[
+                {"role": "system",
+                 "content": (
+                     "Two knowledge passages may answer a visitor question. Return a JSON "
+                     "object {winner: 1 or 2} for the passage that better answers the "
+                     "question. Return JSON only.")},
+                {"role": "user",
+                 "content": f"Question: {question}\n\n[1] {a_text[:800]}\n\n[2] {b_text[:800]}"},
+            ],
+            timeout=10,
+        )
+        raw = json.loads(resp.choices[0].message.content.strip())
+        return 1 if isinstance(raw, dict) and raw.get("winner") == 2 else 0
+    except Exception:
+        return 0
+
+
+def _order_hybrid(question: str, vec_out: list[dict], kw_hits: list[dict],
+                  rerank_fn=None) -> list[dict]:
+    """Merge vector hits + keyword fills, reranking when the two
+    tops disagree (Phase 1, accuracy over speed). rerank_fn(a, b)
+    -> 0/1 is injectable for tests; the default is the real nano
+    call, which fails soft to vector order. Same file on top:
+    no rerank call at all."""
+    out = list(vec_out or [])
+    seen = {o["source"] for o in out}
+    for k in (kw_hits or []):
+        if k["source"] not in seen:
+            out.append(k)
+            seen.add(k["source"])
+    if out and kw_hits and kw_hits[0]["source"] != out[0]["source"]:
+        fn = rerank_fn or (lambda q, a, b: _nano_rerank(
+            q, a.get("text", ""), b.get("text", "")))
+        try:
+            win = fn(question, out[0], kw_hits[0])
+        except Exception:
+            win = 0
+        if win == 1:
+            kw_top = kw_hits[0]
+            out = [kw_top] + [o for o in out if o["source"] != kw_top["source"]]
+    return out
+
+
+def retrieve(text: str, top_k: int = 3, rerank_fn=None) -> list[dict]:
     low = (text or "").lower()
     rows = _read_kb_files()
 
@@ -220,15 +275,9 @@ def retrieve(text: str, top_k: int = 3) -> list[dict]:
                     if not allowed_kb_status(_frontmatter_status(p.get("meta", ""))):
                         continue
                     out.append({"source": p.get("source", "qdrant"), "text": p.get("text", "")[:1500]})
+                out = _order_hybrid(text, out, _keyword_search(text, rows),
+                                    rerank_fn)
                 if out:
-                    # Hybrid: vector hits first, keyword hits fill gaps
-                    # (deduped by source). Vector alone misses exact
-                    # product names; keyword alone misses synonyms.
-                    seen = {o["source"] for o in out}
-                    for k in _keyword_search(text, rows):
-                        if k["source"] not in seen:
-                            out.append(k)
-                            seen.add(k["source"])
                     return out[:top_k]
         except Exception:
             pass  # Fall through to keyword search — never fail the chat.

@@ -1,1 +1,814 @@
-{"cases": [{"expected_phrase": "1000", "expected_source": "kb/facts/moq.md", "question": "What is the minimum order quantity?"}, {"expected_phrase": "12 to 15", "expected_source": "kb/facts/turnaround.md", "question": "How long does delivery take?"}, {"expected_phrase": "free nationwide", "expected_source": "kb/policies/shipping.md", "question": "Is shipping free?"}, {"expected_phrase": "3 to 4", "expected_source": "kb/facts/samples.md", "question": "How long do samples take?"}, {"expected_phrase": "5 business days", "expected_source": "kb/policies/refund-returns.md", "question": "What is your refund policy?"}, {"expected_phrase": "3 working days", "expected_source": "kb/policies/terms.md", "question": "What are your terms for printing faults?"}, {"expected_phrase": "name, email", "expected_source": "kb/policies/privacy.md", "question": "What personal data do you collect?"}, {"expected_phrase": "Monday to Friday", "expected_source": "kb/facts/support-hours.md", "question": "What are your office hours?"}, {"expected_phrase": "AI, PDF, EPS", "expected_source": "kb/facts/artwork.md", "question": "What file formats do you accept for artwork?"}, {"expected_phrase": "Visa", "expected_source": "kb/facts/payments.md", "question": "What payment methods do you accept?"}, {"expected_phrase": "2 to 3 business days", "expected_source": "kb/facts/quote-flow.md", "question": "When will I get my quote for custom-sized bags?"}, {"expected_phrase": "approval", "expected_source": "kb/facts/proof-approval.md", "question": "Do I need to approve a proof before production?"}, {"expected_phrase": "Rosenberg", "expected_source": "kb/facts/contact.md", "question": "What is your address?"}, {"expected_phrase": "matte", "expected_source": "kb/materials/finishes.md", "question": "What finishes do you offer?"}, {"expected_phrase": "stand-up", "expected_source": "kb/products/pouches.md", "question": "What pouches do you offer?"}, {"expected_phrase": "one design", "expected_source": "kb/facts/sku.md", "question": "What is a SKU?"}, {"expected_phrase": "3x4", "expected_source": "kb/products/pouches-mylar-sizes.md", "question": "What mylar sizes do you have?"}, {"expected_phrase": "child-resistant", "expected_source": "kb/materials/pouches-mylar-materials-finishes.md", "question": "What mylar finishes are available?"}, {"expected_phrase": "Rigid Chipboard", "expected_source": "kb/materials/boxes-campaign-materials.md", "question": "What box materials do you offer?"}, {"expected_phrase": "food-grade", "expected_source": "kb/products/beef-jerky-bags.md", "question": "What is a beef jerky bag?"}, {"expected_phrase": "two seconds", "expected_source": "kb/products/pouches-mylar-filling-use.md", "question": "How do I seal a mylar pouch?"}, {"expected_phrase": "whiskey bottle labels", "expected_source": "kb/products/labels-bottle-wine-spirits.md", "question": "Can you print whiskey bottle labels for me?"}, {"expected_phrase": "wine labels", "expected_source": "kb/products/labels-bottle-wine-spirits.md", "question": "Do you print wine labels?"}]}
+{
+ "cases": [
+  {
+   "expected_phrase": "1000",
+   "expected_source": "kb/facts/moq.md",
+   "question": "What is the minimum order quantity?"
+  },
+  {
+   "expected_phrase": "12 to 15",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "How long does delivery take?"
+  },
+  {
+   "expected_phrase": "free nationwide",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Is shipping free?"
+  },
+  {
+   "expected_phrase": "3 to 4",
+   "expected_source": "kb/facts/samples.md",
+   "question": "How long do samples take?"
+  },
+  {
+   "expected_phrase": "5 business days",
+   "expected_source": "kb/policies/refund-returns.md",
+   "question": "What is your refund policy?"
+  },
+  {
+   "expected_phrase": "3 working days",
+   "expected_source": "kb/policies/terms.md",
+   "question": "What are your terms for printing faults?"
+  },
+  {
+   "expected_phrase": "name, email",
+   "expected_source": "kb/policies/privacy.md",
+   "question": "What personal data do you collect?"
+  },
+  {
+   "expected_phrase": "Monday to Friday",
+   "expected_source": "kb/facts/support-hours.md",
+   "question": "What are your office hours?"
+  },
+  {
+   "expected_phrase": "AI, PDF, EPS",
+   "expected_source": "kb/facts/artwork.md",
+   "question": "What file formats do you accept for artwork?"
+  },
+  {
+   "expected_phrase": "Visa",
+   "expected_source": "kb/facts/payments.md",
+   "question": "What payment methods do you accept?"
+  },
+  {
+   "expected_phrase": "2 to 3 business days",
+   "expected_source": "kb/facts/quote-flow.md",
+   "question": "When will I get my quote for custom-sized bags?"
+  },
+  {
+   "expected_phrase": "approval",
+   "expected_source": "kb/facts/proof-approval.md",
+   "question": "Do I need to approve a proof before production?"
+  },
+  {
+   "expected_phrase": "Rosenberg",
+   "expected_source": "kb/facts/contact.md",
+   "question": "What is your address?"
+  },
+  {
+   "expected_phrase": "matte",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "What finishes do you offer?"
+  },
+  {
+   "expected_phrase": "stand-up",
+   "expected_source": "kb/products/pouches.md",
+   "question": "What pouches do you offer?"
+  },
+  {
+   "expected_phrase": "one design",
+   "expected_source": "kb/facts/sku.md",
+   "question": "What is a SKU?"
+  },
+  {
+   "expected_phrase": "3x4",
+   "expected_source": "kb/products/pouches-mylar-sizes.md",
+   "question": "What mylar sizes do you have?"
+  },
+  {
+   "expected_phrase": "child-resistant",
+   "expected_source": "kb/materials/pouches-mylar-materials-finishes.md",
+   "question": "What mylar finishes are available?"
+  },
+  {
+   "expected_phrase": "Rigid Chipboard",
+   "expected_source": "kb/materials/boxes-campaign-materials.md",
+   "question": "What box materials do you offer?"
+  },
+  {
+   "expected_phrase": "food-grade",
+   "expected_source": "kb/products/beef-jerky-bags.md",
+   "question": "What is a beef jerky bag?"
+  },
+  {
+   "expected_phrase": "two seconds",
+   "expected_source": "kb/products/pouches-mylar-filling-use.md",
+   "question": "How do I seal a mylar pouch?"
+  },
+  {
+   "expected_phrase": "whiskey bottle labels",
+   "expected_source": "kb/products/labels-bottle-wine-spirits.md",
+   "question": "Can you print whiskey bottle labels for me?"
+  },
+  {
+   "expected_phrase": "wine labels",
+   "expected_source": "kb/products/labels-bottle-wine-spirits.md",
+   "question": "Do you print wine labels?"
+  },
+  {
+   "expected_phrase": "12 to 15",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "How fast is production?"
+  },
+  {
+   "expected_phrase": "12 to 15",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "How long does production take?"
+  },
+  {
+   "expected_phrase": "production starts after approval",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "When does production start?"
+  },
+  {
+   "expected_phrase": "rush",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "Do you offer rush orders?"
+  },
+  {
+   "expected_phrase": "Minimum order quantity",
+   "expected_source": "kb/facts/moq.md",
+   "question": "What does MOQ mean?"
+  },
+  {
+   "expected_phrase": "PayPal",
+   "expected_source": "kb/facts/payments.md",
+   "question": "Do you accept PayPal?"
+  },
+  {
+   "expected_phrase": "Zelle",
+   "expected_source": "kb/facts/payments.md",
+   "question": "Do you accept Zelle?"
+  },
+  {
+   "expected_phrase": "832",
+   "expected_source": "kb/facts/contact.md",
+   "question": "What is your phone number?"
+  },
+  {
+   "expected_phrase": "Support@print247.us",
+   "expected_source": "kb/facts/contact.md",
+   "question": "What is your email?"
+  },
+  {
+   "expected_phrase": "Rosenberg",
+   "expected_source": "kb/facts/contact.md",
+   "question": "Where is Print247 located?"
+  },
+  {
+   "expected_phrase": "Rosenberg",
+   "expected_source": "kb/facts/contact.md",
+   "question": "Are you based in Houston?"
+  },
+  {
+   "expected_phrase": "Rosenberg",
+   "expected_source": "kb/facts/contact.md",
+   "question": "Do you have a branch in Texas?"
+  },
+  {
+   "expected_phrase": "Monday to Friday",
+   "expected_source": "kb/facts/support-hours.md",
+   "question": "Are you open now?"
+  },
+  {
+   "expected_phrase": "09:00",
+   "expected_source": "kb/facts/support-hours.md",
+   "question": "When do you open?"
+  },
+  {
+   "expected_phrase": "5:00 pm",
+   "expected_source": "kb/facts/support-hours.md",
+   "question": "When do you close?"
+  },
+  {
+   "expected_phrase": "3 to 4",
+   "expected_source": "kb/facts/samples.md",
+   "question": "Do you offer samples?"
+  },
+  {
+   "expected_phrase": "3 to 4",
+   "expected_source": "kb/facts/samples.md",
+   "question": "How long do pouch samples take?"
+  },
+  {
+   "expected_phrase": "sample kits",
+   "expected_source": "kb/facts/samples.md",
+   "question": "Can I get a sample kit?"
+  },
+  {
+   "expected_phrase": "pre-printed",
+   "expected_source": "kb/facts/samples.md",
+   "question": "Are samples custom printed?"
+  },
+  {
+   "expected_phrase": "design variant",
+   "expected_source": "kb/facts/sku.md",
+   "question": "What does SKU mean?"
+  },
+  {
+   "expected_phrase": "one design",
+   "expected_source": "kb/facts/sku.md",
+   "question": "How many designs is one SKU?"
+  },
+  {
+   "expected_phrase": "unlimited digital mockups",
+   "expected_source": "kb/facts/quote-flow.md",
+   "question": "Do you offer unlimited mockups?"
+  },
+  {
+   "expected_phrase": "5 business days",
+   "expected_source": "kb/policies/refund-returns.md",
+   "question": "What is your return policy?"
+  },
+  {
+   "expected_phrase": "corrugated boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "What boxes do you make?"
+  },
+  {
+   "expected_phrase": "mailer boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make mailer boxes?"
+  },
+  {
+   "expected_phrase": "rigid boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make rigid boxes?"
+  },
+  {
+   "expected_phrase": "kraft boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you offer kraft boxes?"
+  },
+  {
+   "expected_phrase": "corrugated boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you offer corrugated boxes?"
+  },
+  {
+   "expected_phrase": "cosmetic boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you offer cosmetic boxes?"
+  },
+  {
+   "expected_phrase": "CBD boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make CBD boxes?"
+  },
+  {
+   "expected_phrase": "pharmaceutical boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make pharmaceutical boxes?"
+  },
+  {
+   "expected_phrase": "apparel boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make apparel boxes?"
+  },
+  {
+   "expected_phrase": "folding cartons",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make folding cartons?"
+  },
+  {
+   "expected_phrase": "display boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make display boxes?"
+  },
+  {
+   "expected_phrase": "metalized boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make metalized boxes?"
+  },
+  {
+   "expected_phrase": "food and beverage boxes",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make food boxes?"
+  },
+  {
+   "expected_phrase": "Gable",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you make gable boxes?"
+  },
+  {
+   "expected_phrase": "shipped flat",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do boxes ship flat?"
+  },
+  {
+   "expected_phrase": "spout pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make spout pouches?"
+  },
+  {
+   "expected_phrase": "child-resistant pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make child-resistant pouches?"
+  },
+  {
+   "expected_phrase": "flat pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make flat pouches?"
+  },
+  {
+   "expected_phrase": "stand-up pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make stand-up pouches?"
+  },
+  {
+   "expected_phrase": "3-side-seal pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make 3-side-seal pouches?"
+  },
+  {
+   "expected_phrase": "coffee pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make coffee pouches?"
+  },
+  {
+   "expected_phrase": "vape pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make vape pouches?"
+  },
+  {
+   "expected_phrase": "flat pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "What is a flat pouch?"
+  },
+  {
+   "expected_phrase": "spout pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "What is a spout pouch?"
+  },
+  {
+   "expected_phrase": "vape pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "What are vape pouches?"
+  },
+  {
+   "expected_phrase": "coffee pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "What are coffee pouches?"
+  },
+  {
+   "expected_phrase": "die-cut labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "What labels do you offer?"
+  },
+  {
+   "expected_phrase": "barcode labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make barcode labels?"
+  },
+  {
+   "expected_phrase": "roll labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make roll labels?"
+  },
+  {
+   "expected_phrase": "kiss-cut",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make kiss-cut labels?"
+  },
+  {
+   "expected_phrase": "oval labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make oval labels?"
+  },
+  {
+   "expected_phrase": "round labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make round labels?"
+  },
+  {
+   "expected_phrase": "paper labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make paper labels?"
+  },
+  {
+   "expected_phrase": "custom stickers",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make custom stickers?"
+  },
+  {
+   "expected_phrase": "labels, business labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make product labels?"
+  },
+  {
+   "expected_phrase": "business labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make business labels?"
+  },
+  {
+   "expected_phrase": "specialty labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you make specialty labels?"
+  },
+  {
+   "expected_phrase": "bottle labels",
+   "expected_source": "kb/products/labels-bottle-wine-spirits.md",
+   "question": "What labels stick to bottles?"
+  },
+  {
+   "expected_phrase": "holographic film",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer holographic film labels?"
+  },
+  {
+   "expected_phrase": "vinyl",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer vinyl labels?"
+  },
+  {
+   "expected_phrase": "clear film",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer clear film labels?"
+  },
+  {
+   "expected_phrase": "silver film",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer silver film labels?"
+  },
+  {
+   "expected_phrase": "white paper",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer white paper labels?"
+  },
+  {
+   "expected_phrase": "vinyl banners",
+   "expected_source": "kb/products/banners.md",
+   "question": "What banners do you offer?"
+  },
+  {
+   "expected_phrase": "pull-up banners",
+   "expected_source": "kb/products/banners.md",
+   "question": "Do you make pull-up banners?"
+  },
+  {
+   "expected_phrase": "pull-up banners",
+   "expected_source": "kb/products/banners.md",
+   "question": "Do you make banner stands?"
+  },
+  {
+   "expected_phrase": "table coverings",
+   "expected_source": "kb/products/banners.md",
+   "question": "Do you make table coverings?"
+  },
+  {
+   "expected_phrase": "rigid signs",
+   "expected_source": "kb/products/banners.md",
+   "question": "Do you make rigid signs?"
+  },
+  {
+   "expected_phrase": "decals",
+   "expected_source": "kb/products/banners.md",
+   "question": "Do you make decals?"
+  },
+  {
+   "expected_phrase": "NFC cards",
+   "expected_source": "kb/products/business-cards.md",
+   "question": "What business cards do you offer?"
+  },
+  {
+   "expected_phrase": "NFC",
+   "expected_source": "kb/products/business-cards.md",
+   "question": "Do you offer NFC business cards?"
+  },
+  {
+   "expected_phrase": "foil stamping",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer foil stamping?"
+  },
+  {
+   "expected_phrase": "soft-touch",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer soft-touch lamination?"
+  },
+  {
+   "expected_phrase": "matte lamination",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer matte lamination?"
+  },
+  {
+   "expected_phrase": "gloss lamination",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer gloss lamination?"
+  },
+  {
+   "expected_phrase": "gold foil",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer gold foil?"
+  },
+  {
+   "expected_phrase": "copper foil",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer copper foil?"
+  },
+  {
+   "expected_phrase": "rose-gold foil",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer rose-gold foil?"
+  },
+  {
+   "expected_phrase": "holographic foil",
+   "expected_source": "kb/materials/finishes.md",
+   "question": "Do you offer holographic foil?"
+  },
+  {
+   "expected_phrase": "high-barrier film",
+   "expected_source": "kb/materials/pouches-mylar-materials-finishes.md",
+   "question": "What mylar materials do you offer?"
+  },
+  {
+   "expected_phrase": "zipper",
+   "expected_source": "kb/materials/extras.md",
+   "question": "What extras do you offer?"
+  },
+  {
+   "expected_phrase": "zipper",
+   "expected_source": "kb/materials/extras.md",
+   "question": "What extras can I add to my bags?"
+  },
+  {
+   "expected_phrase": "tear notch",
+   "expected_source": "kb/materials/extras.md",
+   "question": "Can I add a tear notch?"
+  },
+  {
+   "expected_phrase": "free design",
+   "expected_source": "kb/facts/design-support.md",
+   "question": "Do you offer free design help?"
+  },
+  {
+   "expected_phrase": "outside the USA",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Do you ship to Canada?"
+  },
+  {
+   "expected_phrase": "outside the USA",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Do you deliver to Pakistan?"
+  },
+  {
+   "expected_phrase": "outside the USA",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Do you ship to the UK?"
+  },
+  {
+   "expected_phrase": "Width x Height",
+   "expected_source": "kb/products/pouches-mylar-sizes.md",
+   "question": "What sizes do you offer?"
+  },
+  {
+   "expected_phrase": "Spot Gloss",
+   "expected_source": "kb/products/business-cards.md",
+   "question": "Do you offer Spot Gloss?"
+  },
+  {
+   "expected_phrase": "12 to 15",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "What is your turnaround for boxes?"
+  },
+  {
+   "expected_phrase": "12 to 15",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "What is the delivery time for boxes?"
+  },
+  {
+   "expected_phrase": "12 to 15",
+   "expected_source": "kb/facts/turnaround.md",
+   "question": "How quick can I have labels shipped?"
+  },
+  {
+   "expected_phrase": "free nationwide",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Do you offer free shipping?"
+  },
+  {
+   "expected_phrase": "free nationwide",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Is shipping really free?"
+  },
+  {
+   "expected_phrase": "outside the USA",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Do you ship to Australia?"
+  },
+  {
+   "expected_phrase": "outside the USA",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Do you ship to India?"
+  },
+  {
+   "expected_phrase": "outside the USA",
+   "expected_source": "kb/policies/shipping.md",
+   "question": "Do you ship to China?"
+  },
+  {
+   "expected_phrase": "1000",
+   "expected_source": "kb/facts/moq.md",
+   "question": "What is your MOQ?"
+  },
+  {
+   "expected_phrase": "1000",
+   "expected_source": "kb/facts/moq.md",
+   "question": "Is there a minimum order?"
+  },
+  {
+   "expected_phrase": "Visa",
+   "expected_source": "kb/facts/payments.md",
+   "question": "What are your payment options?"
+  },
+  {
+   "expected_phrase": "PayPal",
+   "expected_source": "kb/facts/payments.md",
+   "question": "Can I pay with PayPal?"
+  },
+  {
+   "expected_phrase": "debit cards",
+   "expected_source": "kb/facts/payments.md",
+   "question": "Can I pay by card?"
+  },
+  {
+   "expected_phrase": "ACH",
+   "expected_source": "kb/facts/payments.md",
+   "question": "Do you accept ACH?"
+  },
+  {
+   "expected_phrase": "AI, PDF, EPS",
+   "expected_source": "kb/facts/artwork.md",
+   "question": "What artwork files do you accept?"
+  },
+  {
+   "expected_phrase": "ZIP",
+   "expected_source": "kb/facts/artwork.md",
+   "question": "Can I send a ZIP file?"
+  },
+  {
+   "expected_phrase": "approval",
+   "expected_source": "kb/facts/proof-approval.md",
+   "question": "What is proof approval?"
+  },
+  {
+   "expected_phrase": "mockups",
+   "expected_source": "kb/facts/design-support.md",
+   "question": "Do you offer digital mockups?"
+  },
+  {
+   "expected_phrase": "Get a Quote",
+   "expected_source": "kb/facts/quote-flow.md",
+   "question": "How do I get a quote?"
+  },
+  {
+   "expected_phrase": "consult",
+   "expected_source": "kb/facts/quote-flow.md",
+   "question": "What is your quote process?"
+  },
+  {
+   "expected_phrase": "Monday to Friday",
+   "expected_source": "kb/facts/support-hours.md",
+   "question": "What are your business hours?"
+  },
+  {
+   "expected_phrase": "5:00 pm",
+   "expected_source": "kb/facts/support-hours.md",
+   "question": "What time do you close?"
+  },
+  {
+   "expected_phrase": "Monday to Friday",
+   "expected_source": "kb/facts/support-hours.md",
+   "question": "Are you open on Friday?"
+  },
+  {
+   "expected_phrase": "Rosenberg",
+   "expected_source": "kb/facts/contact.md",
+   "question": "Where is your office?"
+  },
+  {
+   "expected_phrase": "Rosenberg",
+   "expected_source": "kb/facts/contact.md",
+   "question": "What is your address in Texas?"
+  },
+  {
+   "expected_phrase": "Rosenberg",
+   "expected_source": "kb/facts/contact.md",
+   "question": "Do you have an office in Rosenberg?"
+  },
+  {
+   "expected_phrase": "gusset",
+   "expected_source": "kb/products/pouches-mylar-sizes.md",
+   "question": "What is a gusset?"
+  },
+  {
+   "expected_phrase": "A4",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer A4 sheet labels?"
+  },
+  {
+   "expected_phrase": "sheet labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer sheet labels?"
+  },
+  {
+   "expected_phrase": "roll labels",
+   "expected_source": "kb/products/labels.md",
+   "question": "What are roll labels?"
+  },
+  {
+   "expected_phrase": "beverage and bottle labels",
+   "expected_source": "kb/products/labels-bottle-wine-spirits.md",
+   "question": "Do you print beverage labels?"
+  },
+  {
+   "expected_phrase": "beverage and bottle labels",
+   "expected_source": "kb/products/labels-bottle-wine-spirits.md",
+   "question": "Do you print spirit labels?"
+  },
+  {
+   "expected_phrase": "clear film",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer clear labels?"
+  },
+  {
+   "expected_phrase": "resistant to water",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer waterproof labels?"
+  },
+  {
+   "expected_phrase": "outdoor use",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer outdoor labels?"
+  },
+  {
+   "expected_phrase": "asset",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer asset labels?"
+  },
+  {
+   "expected_phrase": "equipment IDs",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer equipment labels?"
+  },
+  {
+   "expected_phrase": "brand security",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer security labels?"
+  },
+  {
+   "expected_phrase": "Custom boxes include",
+   "expected_source": "kb/products/boxes.md",
+   "question": "Do you offer custom boxes?"
+  },
+  {
+   "expected_phrase": "Mylar bags and pouches include",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you offer custom pouches?"
+  },
+  {
+   "expected_phrase": "Banners and signs include",
+   "expected_source": "kb/products/banners.md",
+   "question": "Do you offer custom banners?"
+  },
+  {
+   "expected_phrase": "Labels and stickers include",
+   "expected_source": "kb/products/labels.md",
+   "question": "Do you offer custom labels?"
+  },
+  {
+   "expected_phrase": "custom packaging and print products",
+   "expected_source": "kb/products/overview.md",
+   "question": "What products do you offer?"
+  },
+  {
+   "expected_phrase": "stand-up pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make stand-up mylar bags?"
+  },
+  {
+   "expected_phrase": "flat-bottom pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "Do you make flat-bottom pouches?"
+  },
+  {
+   "expected_phrase": "stand-up",
+   "expected_source": "kb/products/pouches.md",
+   "question": "What is a stand-up pouch?"
+  },
+  {
+   "expected_phrase": "flat-bottom pouches",
+   "expected_source": "kb/products/pouches.md",
+   "question": "What is a flat-bottom pouch?"
+  }
+ ]
+}

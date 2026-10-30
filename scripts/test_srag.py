@@ -38,6 +38,16 @@ check("script-note sentence stripped",
 check("context-note sentence stripped",
       "Context note" not in strip_internal_notes(
           "Office hours are 9 to 5. Context note: do not merge claims."))
+check("internal sales-script meta sentence stripped, fact kept",
+      "Internal sales-script" not in strip_internal_notes(
+          "Site methods: Visa. Internal sales-script facts (state as script "
+          "rules, not site claims): payments ACH, Wire and Zelle. Cards work.")
+      and "Visa" in strip_internal_notes(
+          "Site methods: Visa. Internal sales-script facts (state as script "
+          "rules, not site claims): payments ACH, Wire and Zelle. Cards work."))
+check("old-sales-script fact citation kept, not stripped",
+      "old sales script" in strip_internal_notes(
+          "Banners have no minimum in the old sales script."))
 
 # --- srag_check with stubs ---
 CANDS = ["Yes — we print beverage and bottle labels, including wine labels.",

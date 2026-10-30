@@ -126,7 +126,7 @@ _orig_llm = B._llm_reply
 
 
 def _stubbed(canned):
-    def _fake(message, language, slots, facts, reply_to=None):
+    def _fake(message, language, slots, facts, reply_to=None, summary=None):
         return canned
     return _fake
 
