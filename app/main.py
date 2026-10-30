@@ -298,13 +298,17 @@ class ChatIn(BaseModel):
     message: str = Field(max_length=4000)
     session_id: str | None = None
     reply_to: str | None = None
+    # Visitor IANA timezone from the browser (Oct 31 clock fix), so
+    # "what time is it?" answers on the visitor's clock, not the
+    # server's. Absent or invalid -> server local time, labeled.
+    tz: str | None = None
 
 
 @app.post("/chat")
 def chat(payload: ChatIn):
     started = time.monotonic()
     result = handle_message(payload.message, payload.session_id, _store,
-                            reply_to=payload.reply_to)
+                            reply_to=payload.reply_to, tz=payload.tz)
     latency_ms = round((time.monotonic() - started) * 1000)
     _log_chat(payload.message, payload.session_id, result, payload.reply_to,
               latency_ms=latency_ms)
@@ -337,6 +341,7 @@ async def chat_upload(request: Request):
     desc = None
     if mime in IMAGE_MIMES:
         desc = describe_image(data, mime, llm_fn=openai_vision_fn)
+    _files = []
     try:
         if _store is not None:
             meta = _store.load_meta(str(session_id)) or {}
@@ -345,12 +350,21 @@ async def chat_upload(request: Request):
                           "description": desc})
             meta["design_files"] = files
             _store.save_meta(str(session_id), meta)
+            _files = files
     except Exception:
         pass
     if desc:
         msg = f"Here's what I can see in your design: {desc}"
     else:
         msg = "Thanks — I've saved your design file with this quote."
+    # Oct 31 transcript: a second file uploaded after confirmation
+    # got only its vision description — nobody said it was added
+    # to the quote, so the visitor had to ask. From the second file
+    # on, name the whole attached set out loud.
+    if len(_files) >= 2:
+        _names = ", ".join(f.get("name", "design file") for f in _files)
+        msg += (f" Your quote now has {len(_files)} design files "
+                f"attached: {_names}.")
     # The log row carries the STORED name (uuid prefix), not the
     # original: history restore rebuilds the image URL from it, and
     # the original name stays in meta for the confirmation note.

@@ -1693,7 +1693,8 @@ async function deliver(text, quote, token) {
     const r = await fetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, session_id: sessionId, reply_to: quote })
+      body: JSON.stringify({ message: text, session_id: sessionId, reply_to: quote,
+        tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { return null; } })() })
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();

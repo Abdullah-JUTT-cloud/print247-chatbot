@@ -93,7 +93,14 @@ except Exception:
 # "cares" -> "cards" (0.8) would turn a dismissive "who cares"
 # into a business-cards pitch; "cart" -> "card" is the same trap
 # class (found in the golden probe).
-NEVER = _KEY_WORDS | {"cares", "cart"}
+NEVER = _KEY_WORDS | {"cares", "cart",
+                       # Oct 31 clock fix: "clock" was auto-corrected
+                       # to "lock" (crash-lock/zip-lock vocab, ratio
+                       # 0.89), which silently broke every clock-time
+                       # question ("time on clock" -> "time on lock").
+                       # Same class as the touch->pouch trap: a real
+                       # English word must never become a domain term.
+                       "clock"}
 
 # Words that are never fragments on their own: answers, greetings,
 # thanks — a bare "yes" must reach the script/contact logic, never

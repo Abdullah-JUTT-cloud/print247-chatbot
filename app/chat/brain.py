@@ -203,6 +203,50 @@ _OWN_DATA_FIELD = {"email": "email", "e-mail": "email", "mail": "email",
                    "order": "order", "quote": "order", "details": "order"}
 
 
+_CLOCK_PHRASES = ("what time is it", "what's the time", "what is the time",
+                  "current time", "time right now", "time on the clock",
+                  "time on clock", "what time it is", "tell me the time")
+_CLOCK_EXCLUDE = ("open", "close", "office", "hours", "deliver", "ship",
+                  "turnaround", "production", "working")
+
+
+def _is_clock_question(low: str) -> bool:
+    """A clock-time question, not a business-hours or delivery-time
+    question. Oct 31 transcript: "what time is it?" fell through
+    to KB retrieval and got a shipping sentence, and the correction
+    ("i asked you about time on clock") fell into the finished-chat
+    stored-data dump. The exclusions keep "what time do you close"
+    on the hours branch and "when will it arrive" on turnaround."""
+    s = (low or "").strip()
+    if any(w in s for w in _CLOCK_EXCLUDE):
+        return False
+    if not any(p in s for p in _CLOCK_PHRASES):
+        return False
+    return ("?" in s or "time on clock" in s
+            or s.startswith(("what", "tell", "current")))
+
+
+def _clock_reply(tz=None) -> str:
+    """Current time from the clock. The UI sends the visitor's
+    IANA timezone when it can, so the answer matches the clock
+    they are looking at; otherwise the server clock, labeled as
+    such, never a KB fact about shipping or hours."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        if isinstance(tz, str) and tz:
+            now = datetime.now(ZoneInfo(tz))
+            return f"It's {now.strftime('%I:%M %p %Z')} right now."
+    except Exception:
+        pass
+    try:
+        from datetime import datetime
+        now = datetime.now().astimezone()
+        return f"It's {now.strftime('%I:%M %p %Z')} right now (server time)."
+    except Exception:
+        return "I don't have access to a live clock right now."
+
+
 _CANCEL_PATTERNS = re.compile(
     r"\bmy\s+mind\b[^.?!]{0,25}\bch[a-z]+nged\b"
     r"|\bch[a-z]+nged\s+my\s+mind\b"
@@ -231,7 +275,8 @@ def is_cancellation(text: str) -> bool:
     return bool(_CANCEL_PATTERNS.search(text or ""))
 
 
-def _own_data_answer(message: str, slots: dict, contact: dict) -> str | None:
+def _own_data_answer(message: str, slots: dict, contact: dict,
+                     design_files=None) -> str | None:
     """An answer about the VISITOR's own submitted info, from the
     session — never from the KB. "What is my email?" must return
     the email the visitor gave, not the company's Support@ address;
@@ -242,7 +287,31 @@ def _own_data_answer(message: str, slots: dict, contact: dict) -> str | None:
     ("I don't have it saved"), never with a KB fact. Question-
     shaped patterns only: "my email is bob@x.com" is a statement
     giving the email, not a question about it, and falls through
-    to normal extraction."""
+    to normal extraction.
+    Design files (Oct 31 transcript): "which image is added in my
+    quote?" matched NO own-data pattern, so it fell to retrieval
+    and got the quote-flow process recited twice. File questions
+    are answered from meta["design_files"] here, never from the KB.
+    Past-tense triggers only ("added", "did you add") — "what files
+    can I add" is a capability question, not an own-data one, and
+    must still reach the normal flow."""
+    _mlow = (message or "").lower()
+    _file_words = ("image", "images", "design", "designs", "file", "files")
+    _file_triggers = ("added", "attached", "uploaded", "sent", "gave",
+                      "shared", "did you add", "did i add", "have you added",
+                      "in my quote", "in my order", "on my quote")
+    if (("which" in _mlow or "what" in _mlow)
+            and any(w in _mlow for w in _file_words)
+            and any(t in _mlow for t in _file_triggers)):
+        _files = design_files or []
+        if not _files:
+            return ("You don't have any design files attached to your "
+                    "quote yet in this chat.")
+        _names = ", ".join(f.get("name", "design file") if isinstance(f, dict) else str(f)
+                           for f in _files)
+        _n = len(_files)
+        return (f"Your quote has {_n} design file{'s' if _n != 1 else ''} "
+                f"attached: {_names}.")
     m = _OWN_DATA_Q.search(message or "")
     if not m:
         return None
@@ -270,6 +339,10 @@ def _own_data_answer(message: str, slots: dict, contact: dict) -> str | None:
     _spec = _spec_parts(slots, None, None) if slots.get("product") else ""
     if _spec:
         _have.append(f"order: {_spec}")
+    if design_files:
+        _names = ", ".join(f.get("name", "design file") if isinstance(f, dict) else str(f)
+                           for f in design_files)
+        _have.append(f"design files: {_names}")
     if not _have:
         return "I don't have anything saved for you yet in this chat."
     return "Here's what I have saved for you: " + "; ".join(_have) + "."
@@ -1224,7 +1297,7 @@ def _perfect_reply(slots: dict, language: str = "en", gave_up: list | None = Non
 
 
 def handle_message(message: str, session_id: str | None = None, store=None,
-                   reply_to: str | None = None) -> dict:
+                   reply_to: str | None = None, tz: str | None = None) -> dict:
     """reply_to is the bot message the visitor tapped Reply on. It
     is context for the LLM and is logged; it never changes slots
     by itself. Session slots are the real context memory: they are
@@ -1637,7 +1710,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # visitor's own info comes from the session, never from a KB
     # file. Mid-quote, the answer carries the next script question;
     # finished, it stands alone.
-    _own = _own_data_answer(message, prior, meta.get("contact") or {})
+    _own = _own_data_answer(message, prior, meta.get("contact") or {},
+                            meta.get("design_files"))
     if _own is not None:
         if meta.get("complete"):
             return _intent_result(_own, contact=meta.get("contact") or {})
@@ -1647,6 +1721,25 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         return _intent_result(_oreply,
                               suggestions=_suggestions(prior, _omissing, _oreply, language),
                               contact=meta.get("contact") or {})
+    # "Add this in my quote" (Oct 31 transcript): after an upload the
+    # visitor asked for the file to be added, and the bot just
+    # re-asked for their name — the upload had already saved it,
+    # but nobody said so. Confirm the attached files out loud.
+    if (re.search(r"\badd (this|it|that) (to|in|into) my (quote|order)\b", low)
+            and meta.get("design_files")):
+        _names = ", ".join(f.get("name", "design file") if isinstance(f, dict) else str(f)
+                           for f in meta["design_files"])
+        _verb = "is" if len(meta["design_files"]) == 1 else "are"
+        return _intent_result(f"Done — {_names} {_verb} attached to your quote.")
+    # Clock-time questions (Oct 31 transcript): "what time is it?"
+    # fell through to KB retrieval and got a shipping sentence, and
+    # the correction ("i asked you about time on clock") fell into
+    # the finished-chat stored-data dump. Answer from the clock,
+    # in the visitor's timezone when the UI sends one — placed
+    # here, before the finished branch, so it works mid-quote and
+    # after completion alike.
+    if _is_clock_question(low):
+        return _intent_result(_clock_reply(tz))
     # A policy QUESTION ('what is your refund policy?') matches the
     # already-customer pattern on the word 'refund' alone — it must
     # fall through to the policy KB answer, not a handoff. A real
@@ -1932,7 +2025,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         else:
             # Nothing new in this message: say what is actually
             # stored instead of falsely claiming an addition.
-            _nreply = _own_data_answer("what did you add?", _slots2, _fcontact)
+            _nreply = _own_data_answer("what did you add?", _slots2, _fcontact,
+                                       meta.get("design_files"))
         _save_session(store, session_id, _slots2)
         _save_meta(store, session_id, meta)
         return {"reply": _nreply,
@@ -2414,6 +2508,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                         _close = ("Thanks — I have your order. Since I don't have an email or "
                                   "phone number, our team will follow up with you here in this chat. "
                                   f"They will confirm the price and turnaround {when_the_team_replies()}.")
+                    # Oct 31 transcript: the closing message listed no
+                    # design files, so the visitor could not see what
+                    # the team gets — unlike the confirmation, which
+                    # names them. Append the same note (empty when
+                    # nothing was uploaded).
+                    _close += _design_files_note(meta)
                     _save_session(store, session_id, slots)
                     _save_meta(store, session_id, meta)
                     return {
