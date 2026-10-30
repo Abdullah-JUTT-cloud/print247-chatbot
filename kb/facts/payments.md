@@ -10,6 +10,9 @@ last_reviewed: 2026-10-28
 Site-published payment methods (footer on every page): Visa,
 Mastercard, American Express, Discover, PayPal.
 
+Cash on delivery (COD) is not one of the listed payment methods: Visa,
+Mastercard, American Express, Discover, PayPal, ACH, Wire and Zelle.
+
 Refund page payment methods: ACH, Zelle, Wire Transfer, Zoho
 Payments (credit and debit cards).
 

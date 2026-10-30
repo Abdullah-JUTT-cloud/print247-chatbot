@@ -135,6 +135,38 @@ try:
 finally:
     B.srag_check = _orig
 
+# --- chain: COD clarification + yes re-answers from payments.md ---
+# Live transcript: turn 1 clarified, turn 2 "yes" got a bare
+# team-confirm because the re-answer retrieved shipping.md.
+# Payments now wins the topic order, so the re-answer lands on
+# the COD sentence instead of a second failure.
+_calls = {"n": 0}
+
+
+def _cod_stub(q, c, x):
+    _calls["n"] += 1
+    if _calls["n"] == 1:
+        return {"answers": False, "sentence": None,
+                "clarification": "Are you asking if cash on delivery (COD) is available?",
+                "topic": "cash on delivery"}
+    return {"answers": True, "sentence": c[0] if c else None,
+            "clarification": None, "topic": None}
+
+
+B.srag_check = _cod_stub
+try:
+    r = B.handle_message("can i pay on delivery?", session_id="srag-cod",
+                         store=None)
+    check("COD turn 1 clarifies (transcript behaviour)",
+          "cash on delivery (COD) is available" in r["reply"], r["reply"][:200])
+    r2 = B.handle_message("yes", session_id="srag-cod", store=None)
+    check("COD yes re-answers from payments.md, no bare team-confirm",
+          "Cash on delivery" in r2["reply"]
+          and "I don't want to give you a wrong answer" not in r2["reply"],
+          r2["reply"][:250])
+finally:
+    B.srag_check = _orig
+
 print(f"SRAG: {len(FAILURES)} failed")
 if FAILURES:
     sys.exit(1)

@@ -68,11 +68,19 @@ _EXACT_TOPICS = {
     "moq": ["minimum", "moq", "minimum order", "minimum quantity"],
     "samples": ["sample"],
     "turnaround": ["turnaround", "how long", "delivery time", "lead time", "24 hours", "24 hour"],
+    # payments BEFORE shipping (Oct 30 COD fix): "can i pay on
+    # delivery" matches both ("pay" and "delivery"), and the
+    # payment question must win — shipping.md has no payment
+    # answer, so the old order sent COD questions to shipping,
+    # SRAG failed twice, and the visitor got a bare team-confirm.
+    # Shipping questions carry no pay-word, so this move cannot
+    # steal them.
+    "payments": ["payment", "pay", "visa", "paypal", "ach", "zelle",
+                 "cash on delivery", "pay on delivery", "w:cod"],
     "shipping": ["shipping", "ship", "deliver", "delivery"],
     "refund": ["refund", "return", "cancel"],
     "privacy": ["privacy", "personal data"],
     "terms": ["terms and conditions", "terms"],
-    "payments": ["payment", "pay", "visa", "paypal", "ach", "zelle"],
     "support-hours": ["support hours", "office hours", "open", "working hours", "24/7", "24-7"],
     "artwork": ["artwork", "file format", "bleed"],
     "proof-approval": ["proof", "approve", "approval"],
@@ -161,6 +169,19 @@ def _topic_file(rows: list[dict], topic: str) -> list[dict]:
     return []
 
 
+def _topic_matches(keys: list[str], low: str) -> bool:
+    """Exact-topic key match. A key prefixed with "w:" matches on
+    word boundaries only — "w:cod" matches "is cod available" but
+    NOT "discount code" or "postcode" (bare substring "cod" would)."""
+    for k in keys:
+        if k.startswith("w:"):
+            if re.search(r"\b" + re.escape(k[2:]) + r"\b", low):
+                return True
+        elif k in low:
+            return True
+    return False
+
+
 def _nano_rerank(question: str, a_text: str, b_text: str) -> int:
     """0 = first candidate wins, 1 = second wins. Fail-soft: no key
     or any failure keeps the first (vector) order."""
@@ -243,7 +264,7 @@ def retrieve(text: str, top_k: int = 3, rerank_fn=None) -> list[dict]:
     # question (facts/ sorts before products/, and
     # pouches-mylar-campaign-context.md would win over pouches.md).
     for topic, keys in _EXACT_TOPICS.items():
-        if any(k in low for k in keys):
+        if _topic_matches(keys, low):
             for row in rows:
                 if row["source"].split("/")[-1] == f"{topic}.md":
                     return [{"source": row["source"], "text": row["text"][:1500]}]

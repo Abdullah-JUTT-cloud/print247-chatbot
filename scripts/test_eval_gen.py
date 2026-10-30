@@ -1275,6 +1275,39 @@ check("'do you make bottle labels' answers yes for bottle labels",
       "bottle label" in r["reply"].lower(),
       f"reply={r['reply'][:250]!r}")
 
+# ---------- section 34: Oct 30 COD / pay-on-delivery round ----------
+# Live transcript: "can i pay on delivery??" got a COD
+# clarification, then "yes" got a bare team-confirm. Cause:
+# shipping ("delivery") shadowed payments ("pay") in the
+# exact-topic order, so both turns retrieved shipping.md, which
+# has no payment answer. Fixes: payments before shipping,
+# "cash on delivery" / "pay on delivery" / word-boundary "cod"
+# keys, and a COD sentence in payments.md (listed methods only
+# — no invented policy).
+r = run("ev-s34-pod", ["can i pay on delivery?"])
+check("pay-on-delivery answers from payments.md, COD sentence present",
+      "Cash on delivery" in r["reply"]
+      and "kb/facts/payments.md" in r["sources"],
+      f"reply={r['reply'][:250]!r} srcs={r['sources']}")
+r = run("ev-s34-cod", ["is COD available?"])
+check("bare COD word routes to payments.md, not discount-code trap",
+      "Cash on delivery" in r["reply"]
+      and "kb/facts/payments.md" in r["sources"],
+      f"reply={r['reply'][:250]!r} srcs={r['sources']}")
+r = run("ev-s34-cash", ["do you offer cash on delivery?"])
+check("cash-on-delivery phrasing answers from payments.md",
+      "Cash on delivery" in r["reply"]
+      and "kb/facts/payments.md" in r["sources"],
+      f"reply={r['reply'][:250]!r} srcs={r['sources']}")
+r = run("ev-s34-code", ["do you offer discount codes?"])
+check("discount codes never route to payments.md (word-boundary guard)",
+      "kb/facts/payments.md" not in r["sources"],
+      f"reply={r['reply'][:250]!r} srcs={r['sources']}")
+r = run("ev-s34-ship", ["do you ship to Canada?"])
+check("payments-before-shipping does not steal shipping questions",
+      "kb/policies/shipping.md" in r["sources"],
+      f"reply={r['reply'][:250]!r} srcs={r['sources']}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)
