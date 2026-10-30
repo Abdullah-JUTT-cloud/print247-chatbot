@@ -1251,6 +1251,30 @@ check("burger boxes are boxes, never deflected",
       r["slots"].get("product") == "box" and "What size" in r["reply"],
       f"reply={r['reply'][:200]!r} slots={r['slots']}")
 
+# ---------- section 33: Oct 30 SRAG + bottle-label routing round ----------
+# Live transcript (Nancy session): "do you offer labels which stick
+# to bottles like stickers?" got the generic labels list twice —
+# no labels-bottle key matched "stick to bottles", and the live
+# model quoted the sales script's PP-white-vinyl note into the
+# reply. Fixes: use-phrased labels-bottle keys (never bare
+# "bottle", so "boxes for bottles" still reaches boxes.md).
+r = _steps("ev-s33-bottle", ["I need labels", "100x150mm", "Matte", "400",
+                             "1 design",
+                             "do you offer labels which stick to bottles like stickers?"])
+check("bottle-label question mid-quote answers bottle labels, not generic list",
+      "bottle label" in r[5]["reply"].lower()
+      and "Do you have any specific material" in r[5]["reply"]
+      and "custom labels, special stickers" not in r[5]["reply"],
+      f"reply={r[5]['reply'][:250]!r}")
+r = run("ev-s33-boxbottle", ["do you make boxes for bottles?"])
+check("boxes-for-bottles question never reaches the bottle-labels file",
+      "wine" not in r["reply"].lower(),
+      f"reply={r['reply'][:250]!r}")
+r = run("ev-s33-bottle2", ["do you make bottle labels?"])
+check("'do you make bottle labels' answers yes for bottle labels",
+      "bottle label" in r["reply"].lower(),
+      f"reply={r['reply'][:250]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

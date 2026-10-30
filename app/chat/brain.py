@@ -74,6 +74,7 @@ from .quantity_parse import minimum_already_stated, wants_smaller_run
 from .quote_value import is_our_own_menu, without_template_blanks
 from .repeated import SENTENCE_BREAK, repeats_the_question
 from .retrieval import _read_kb_files, retrieve
+from .srag import srag_check, strip_internal_notes
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
 from .size_unit import apply_unit_answer, size_missing_unit, unit_answer
@@ -996,6 +997,43 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         if contact is not None:
             _res["contact"] = contact
         return _res
+
+    # SRAG clarification answer (Oct 30): the previous bot message
+    # was a clarification question because the last fact answer
+    # failed the relevance check. A short affirmative answer
+    # re-asks the stored question with the guessed topic; anything
+    # else clears the state and flows normally (the pop already
+    # cleared it). The word-count guard keeps a longer message
+    # ("yes, and I need boxes") from being swallowed as a yes.
+    _srag_state = meta.pop("srag_clarify", None)
+    if _srag_state and len(low.split()) <= 4 and re.search(
+            r"^(yes|yeah|yep|ok|okay|sure|exactly|right|correct|haan|han|ji|sí|si)\b",
+            low):
+        _eff_q = f"{_srag_state.get('question', '')} {_srag_state.get('topic', '')}".strip()
+        _efacts = retrieve(_eff_q)
+        _etext = _direct_answer(_eff_q, _efacts[0]["text"]) if _efacts else ""
+        _emiss = script_missing(prior, meta)
+        _eq = _next_question_text(prior, _emiss, language)
+        if _etext:
+            _ecand = [s.strip() for s in re.split(SENTENCE_BREAK, _etext)
+                      if s.strip()]
+            _echk = srag_check(_eff_q, _ecand,
+                               {"product": prior.get("product"),
+                                "pending": _emiss[0] if _emiss else None})
+            if not _echk.get("answers", True):
+                _etext = ("I don't want to give you a wrong answer on that — "
+                          "the team can confirm the exact option for you.")
+        else:
+            _etext = ("I don't want to give you a wrong answer on that — "
+                      "the team can confirm the exact option for you.")
+        _ereply = _etext + (f" {_eq}" if _eq else "")
+        meta["last_bot_question"] = _ereply
+        _save_session(store, session_id, prior)
+        _save_meta(store, session_id, meta)
+        return {"reply": _ereply, "language": language, "slots": prior,
+                "missing": _emiss, "sources": [f["source"] for f in _efacts],
+                "handoff": None, "llm_used": False,
+                "suggestions": _suggestions(prior, _emiss, language=language)}
 
     if is_looking_for_work(message) or chat_is_a_pitch([message]):
         return _intent_result(JOB_MESSAGE if is_looking_for_work(message) else PITCH_MESSAGE,
@@ -2439,6 +2477,18 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _ctext = f"Yes — we make {_box_variant} boxes. " + _ctext
             elif not _ctext.lower().startswith("yes"):
                 _ctext = "Yes — " + (_ctext[0].lower() + _ctext[1:] if _ctext else _ctext)
+            # Bottle-label specific Yes (Oct 30, same pattern as the
+            # box variant): "do you make bottle labels?" must not
+            # get the generic label list — the bottle file's own
+            # Yes IS the answer, so it replaces the generic fact
+            # instead of prepending to it.
+            if _cap == "label" and any(ph in low for ph in
+                                       ("bottle label", "labels for bottle",
+                                        "label for bottle", "stick to bottle",
+                                        "stick on bottle", "wine label",
+                                        "beverage label", "whiskey", "whisky")):
+                _ctext = ("Yes — we print beverage and bottle labels, "
+                          "including wine labels.")
             # Subcategory grounding (Oct 30): a qualifier the
             # product's own files never name ("wodden" for cards)
             # must be named as unlisted, not swallowed by the Yes.
@@ -2860,9 +2910,38 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 if _searched:
                     save_learned(message, _searched["answer"], _searched["urls"])
                     sources = [u["url"] for u in _searched["urls"] if u.get("url")]
+    # SRAG pre-display check (Oct 30, user's call): a fact answer
+    # is checked against the question + conversation context
+    # BEFORE it reaches the visitor. A failed check never serves
+    # the generic dump — it asks one clarifying question instead,
+    # and the visitor's confirmation (handled above) re-answers
+    # with the pinned topic. Internal-note sentences are stripped
+    # first, so sales-script language never reaches a visitor.
+    # No key or a checker failure skips the check (srag_check
+    # returns ok), so this never breaks a chat.
+    _srag_clarified = False
+    if facts and reply and is_fact_question:
+        _stripped = strip_internal_notes(reply)
+        if _stripped.strip():
+            reply = _stripped
+        _cand = [s.strip() for s in re.split(SENTENCE_BREAK, reply)
+                 if s.strip() and not s.strip().endswith("?")]
+        if _cand:
+            _chk = srag_check(message, _cand,
+                              {"product": slots.get("product"),
+                               "pending": missing[0] if missing else None})
+            if not _chk.get("answers", True):
+                meta["srag_clarify"] = {
+                    "question": message,
+                    "topic": _chk.get("topic") or "",
+                }
+                reply = _chk.get("clarification") or (
+                    "Just to be sure I get this right, could you say "
+                    "a bit more about what you need?")
+                _srag_clarified = True
     # Below-minimum note, once, on a question reply that does not
     # already state the minimum (the quantity question does).
-    if _moq_note and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():
+    if _moq_note and not _srag_clarified and "?" in (reply or "") and "MOQ" not in reply and "minimum" not in reply.lower():
         reply = _moq_note + " " + reply
     # No turn cap: the old 12-message rule handed off mid-conversation
     # and, before the one-time fix, bricked the chat outright. User

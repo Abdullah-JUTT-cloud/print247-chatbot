@@ -32,7 +32,15 @@ _EXACT_TOPICS = {
     # all, so the bot dumped a generic list instead of answering yes.
     "labels-bottle": ["wine label", "wine labels", "whiskey", "whisky",
                       "spirit label", "spirit bottle", "beverage label",
-                      "beverage labels", "bottle label", "bottle labels"],
+                      "beverage labels", "bottle label", "bottle labels",
+                      # Use phrasings, never bare "bottle": "boxes for
+                      # bottles" is a BOX question and must still
+                      # reach boxes.md, while "labels which stick to
+                      # bottles" is a bottle-label question (Oct 30
+                      # transcript: the generic labels list answered
+                      # it because no key matched "stick to bottles").
+                      "labels for bottle", "label for bottle",
+                      "stick to bottle", "stick on bottle"],
     "pouches-mylar-sizes": ["mylar size", "mylar sizes", "mylar pouch size",
                             "mylar pouch sizes"],
     "beef-jerky-bags": ["beef jerky", "jerky bag", "jerky bags"],
