@@ -1204,12 +1204,18 @@ r = run("ev-s32-time3", ["how long are your labels"])
 check("dimension 'how long' is not a time question",
       "12 to 15 business days" not in r["reply"],
       f"reply={r['reply'][:200]!r}")
-r = run("ev-s32-mylar", ["i only need 300 mylar packs with my own design in 2 colors"])
-check("bare 'mylar packs' stores mylar bag + below-min note",
-      r["slots"].get("product") == "mylar bag"
-      and r["slots"].get("quantity") == "300"
-      and "We can look at 300" in r["reply"],
-      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+# Nov 1 step-2 rule: a product stated in a plain need statement
+# gets the email question FIRST (old expectation was the size
+# question + below-min note at once). The note still lands on the
+# size question right after the email is given.
+_s = _steps("ev-s32-mylar", ["i only need 300 mylar packs with my own design in 2 colors",
+                             "ali@test.com"])
+check("bare 'mylar packs' asks email at step 2, then below-min note",
+      _s[0]["slots"].get("product") == "mylar bag"
+      and "best email" in _s[0]["reply"]
+      and _s[1]["slots"].get("quantity") == "300"
+      and "We can look at 300" in _s[1]["reply"],
+      f"first={_s[0]['reply'][:160]!r} second={_s[1]['reply'][:200]!r} slots={_s[1]['slots']}")
 r = run("ev-s32-lb", ["1lb flat bottom coffee bags with a 1 way degasing valve"])
 check("1lb + 1-way valve leak no quantity",
       r["slots"].get("product") == "bag"
@@ -1249,10 +1255,15 @@ r = run("ev-s32-choc", ["do you make chocolate boxes"])
 check("chocolate boxes: Yes + box stored",
       r["reply"].startswith("Yes") and r["slots"].get("product") == "box",
       f"reply={r['reply'][:200]!r} slots={r['slots']}")
-r = run("ev-s32-burger", ["burger boxes"])
+# Nov 1 step-2 rule: a bare product word gets the email question
+# first (old expectation was the size question at once); the size
+# question follows once the email is given. Still never deflected.
+_s = _steps("ev-s32-burger", ["burger boxes", "ali@test.com"])
 check("burger boxes are boxes, never deflected",
-      r["slots"].get("product") == "box" and "What size" in r["reply"],
-      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+      _s[0]["slots"].get("product") == "box"
+      and "best email" in _s[0]["reply"]
+      and "What size" in _s[1]["reply"],
+      f"first={_s[0]['reply'][:160]!r} second={_s[1]['reply'][:200]!r} slots={_s[1]['slots']}")
 
 # ---------- section 33: Oct 30 SRAG + bottle-label routing round ----------
 # Live transcript (Nancy session): "do you offer labels which stick

@@ -1296,6 +1296,20 @@ def _perfect_reply(slots: dict, language: str = "en", gave_up: list | None = Non
             f"{_below_min_note(slots, language)}")
 
 
+def _has_zero_dimension(sizes: str) -> bool:
+    """True when a stored size span has a zero side ("0 x 0",
+    "5x0"). Nov 1 senior demo: "0 x 0" was stored and confirmed
+    ("Got it — 0 x 0. Is that in inches...") — a size with a zero
+    side cannot be printed, so it must never be stored at all."""
+    if not sizes:
+        return False
+    try:
+        return any(float(n) == 0
+                   for n in re.findall(r"\d+(?:\.\d+)?", sizes))
+    except (TypeError, ValueError):
+        return False
+
+
 def handle_message(message: str, session_id: str | None = None, store=None,
                    reply_to: str | None = None, tz: str | None = None) -> dict:
     """reply_to is the bot message the visitor tapped Reply on. It
@@ -1468,6 +1482,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                        "below.")
         if _imiss:
             _ireply += " " + _next_question_text(prior, _imiss, language)
+            # Nov 1 senior demo: this appended question never
+            # recorded last_asked, so the next turn's decline
+            # handling ("no" to material) did not know material
+            # was pending — and asked it AGAIN. Every question
+            # the bot asks must record which field it asked.
+            meta["last_asked"] = _imiss[0]
         meta["last_bot_question"] = _ireply
         return _intent_result(_ireply)
     elif _img_state and _is_short_no(low):
@@ -1476,6 +1496,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                    "team can help create your design.")
         if _imiss:
             _ireply += " " + _next_question_text(prior, _imiss, language)
+            meta["last_asked"] = _imiss[0]
         meta["last_bot_question"] = _ireply
         return _intent_result(_ireply)
 
@@ -2355,7 +2376,20 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             # job" is a job enquiry that must stay deflected, not an
             # order. So it counts ONLY here, where a product is
             # already known (this trigger requires slots product).
-            and (_is_order or "looking for" in low) and "?" not in message
+            # Nov 1 transcript: "stickers for my jars" stated a
+            # product but matched no order phrase, so email step 2
+            # never fired and the quote ran without it. A product
+            # just stored from a plain need statement counts too —
+            # but never a fact/price question that merely names a
+            # product ("tell me about stickers", "price for bags").
+            and (_is_order or "looking for" in low
+                 or (slots.get("product")
+                     and slots.get("product") != (prior or {}).get("product")
+                     and not any(w in low for w in (
+                         "what", "how", "why", "where", "when", "which",
+                         "tell me", "about", "do you", "can you", "could you",
+                         "want to know", "price", "cost"))))
+            and "?" not in message
             and not visitor_is_asking(message)):
         _eq = _contact_question("email", language)
         meta["awaiting_early_email"] = True
@@ -3673,6 +3707,31 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                                 _tr("chip_food", language, "Food"),
                                 _tr("chip_gifts", language, "Gifts"),
                                 _tr("chip_retail", language, "Retail")]}
+    # A zero-dimension size ("0 x 0", "5x0") is not a size at all:
+    # Nov 1 senior demo stored it and asked its unit, in front of
+    # a senior. Clear it and re-ask the size plainly, BEFORE the
+    # unit question can confirm it — with or without a unit on it.
+    # The visitor can still answer "not sure" to move on, so this
+    # is a correction, never a trap.
+    if slots.get("sizes") and _has_zero_dimension(slots["sizes"]):
+        _bad = slots["sizes"]
+        slots["sizes"] = ""
+        meta.pop("unit_asked_for", None)
+        meta["last_asked"] = "sizes"
+        _zmiss = script_missing(slots, meta)
+        _zq = (f"That size can't be printed — {_bad} has a zero side, "
+               "so there's no real width or height.")
+        if _zmiss:
+            _zq += " " + _next_question_text(slots, _zmiss, language)
+        meta["last_bot_question"] = _zq
+        meta.setdefault("bot_replies", []).append(_zq)
+        meta["bot_replies"] = meta["bot_replies"][-20:]
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {"reply": _zq, "language": language, "slots": slots,
+                "missing": _zmiss,
+                "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                "suggestions": _suggestions(slots, _zmiss, _zq, language)}
     # A size span without a unit ("3x4") is not a usable size yet:
     # ask inches, cm or mm — once per size value, never a trap. A
     # bare unit answer is applied by the extraction above, so
