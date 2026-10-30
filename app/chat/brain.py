@@ -74,6 +74,8 @@ from .quantity_parse import minimum_already_stated, wants_smaller_run
 from .quote_value import is_our_own_menu, without_template_blanks
 from .repeated import SENTENCE_BREAK, repeats_the_question
 from .retrieval import _read_kb_files, retrieve
+from .normalize import (correct_query, fragment_product,
+                        interpret_fragment, is_use_fragment)
 from .srag import srag_check, strip_internal_notes
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
@@ -1006,6 +1008,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     visitor_messages = list(meta.get("visitor_messages") or [])
     visitor_messages.append(message)
     meta["visitor_messages"] = visitor_messages[-50:]
+    # Typo auto-fix (Oct 30): near-miss domain words are corrected
+    # for MATCHING below. History above keeps the visitor's original
+    # words; the correction is vocab-only and conservative, so it
+    # never rewrites numbers, dimensions, names, or real words.
+    message = correct_query(message)
+    low = message.lower().strip()
     # Paused ('later') or ended ('done') chats: a new message picks
     # the paused chat up where it left off, and restarts an ended one.
     if meta.get("paused"):
@@ -1081,6 +1089,44 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "missing": _emiss, "sources": [f["source"] for f in _efacts],
                 "handoff": None, "llm_used": False,
                 "suggestions": _suggestions(prior, _emiss, language=language)}
+
+    # --- "Did you mean" answer handler (Oct 30, mirrors SRAG) ---
+    # A short affirmative accepts the stored interpretation: the
+    # confirmed question replaces this turn's message and flows
+    # normally below (low is recomputed; the question is a plain
+    # "do you make ..." capability question, so _is_order, computed
+    # above from "yes", stays correctly False). A negative clears
+    # the state and re-asks; anything else clears it (the pop
+    # already cleared it) and flows normally on its own words.
+    _conf_state = meta.pop("confirm_meaning", None)
+    if _conf_state and len(low.split()) <= 4 and re.search(
+            r"^(yes|yeah|yep|ok|okay|sure|exactly|right|correct|haan|han|ji|sí|si)\b",
+            low):
+        # Confirmed: answer as a quote continuation, not a fresh
+        # capability question — the capability branch would dump
+        # the product's include list with no mention of the
+        # confirmed use and no pending question. The product is
+        # already in context (or set from the fragment), so the
+        # next script question is the relevant answer.
+        if not prior.get("product") and _conf_state.get("product"):
+            prior["product"] = _conf_state["product"]
+        _missing = script_missing(prior, meta)
+        _reply = f"Yes — we make {_conf_state['display']}."
+        if _missing:
+            _reply += " " + question_for(_missing[0], prior)
+        meta["last_bot_question"] = _reply
+        return _intent_result(_reply)
+    elif _conf_state and re.search(
+            r"^(no|nope|nah|nahi|not|wrong)\b", low):
+        _nreply = "No problem — could you say a bit more about what you need?"
+        meta["last_bot_question"] = _nreply
+        _save_session(store, session_id, prior)
+        _save_meta(store, session_id, meta)
+        return {"reply": _nreply, "language": language, "slots": prior,
+                "missing": script_missing(prior, meta), "sources": [],
+                "handoff": None, "llm_used": False,
+                "suggestions": _suggestions(prior, script_missing(prior, meta),
+                                            language=language)}
 
     if is_looking_for_work(message) or chat_is_a_pitch([message]):
         return _intent_result(JOB_MESSAGE if is_looking_for_work(message) else PITCH_MESSAGE,
@@ -1454,6 +1500,25 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "missing": script_missing(_slots2, meta), "sources": [],
                 "handoff": None, "llm_used": False, "suggestions": [],
                 "contact": _fcontact}
+    # --- "Did you mean" trigger (Oct 30) ---
+    # Placed AFTER all intent branches (complaints, cancellations,
+    # human requests, done/later all return early) but BEFORE
+    # extraction/script: a fragment that matched an intent never
+    # reaches here, and a fragment that would otherwise get a
+    # repeated script question gets an interpretation question
+    # instead — but only when retrieval finds nothing and an
+    # interpretation exists (product in context or in the
+    # fragment). Fragments with a KB foothold ("for coffee",
+    # "matte") have retrieval hits and flow on normally.
+    if is_use_fragment(message) and not retrieve(message):
+        _interp = interpret_fragment(message, prior.get("product"))
+        if _interp:
+            _display, _question = _interp
+            meta["confirm_meaning"] = {
+                "question": _question, "display": _display,
+                "product": fragment_product(message, prior.get("product"))}
+            return _intent_result(
+                f"Just to check — did you mean {_display}?")
     # Extraction must never crash the chat: a parser bug used to turn
     # into a 500 and the visitor saw "Message didn't send" (the
     # "15 thousand" case: float("15 thousand") raised ValueError).

@@ -1308,6 +1308,44 @@ check("payments-before-shipping does not steal shipping questions",
       "kb/policies/shipping.md" in r["sources"],
       f"reply={r['reply'][:250]!r} srcs={r['sources']}")
 
+# ---------- section 35: Oct 30 typo auto-fix + did-you-mean ----------
+# User's call: spelling mistakes are fixed automatically, and an
+# incomplete utterance gets a relevant answer plus a confirmation
+# ("did you mean ...?") instead of a wrong answer or a bare
+# team-confirm. Typos are corrected for matching only (vocab
+# near-misses); the confirm fires only for fragments with no KB
+# foothold and a real interpretation (product in context).
+r = run("ev-s35-lables", ["I need lables"])
+check("typo 'lables' flows as labels quote",
+      r["slots"].get("product") == "label" and "What size" in r["reply"],
+      f"reply={r['reply'][:250]!r} slots={r['slots']}")
+r = run("ev-s35-bannars", ["do you make bannars?"])
+check("typo 'bannars' answers banners",
+      "Yes" in r["reply"] and "banner" in r["reply"].lower(),
+      f"reply={r['reply'][:250]!r}")
+r = _steps("ev-s35-frag", ["I need boxes", "for candles"])
+check("fragment mid-quote asks did-you-mean, never guesses",
+      "did you mean boxes for candles?" in r[1]["reply"].lower(),
+      f"reply={r[1]['reply'][:250]!r}")
+r = _steps("ev-s35-fragyes", ["I need boxes", "for candles", "yes"])
+check("yes after did-you-mean answers the confirmed question",
+      "Yes" in r[2]["reply"] and "candle" in r[2]["reply"].lower()
+      and "What size" in r[2]["reply"],
+      f"reply={r[2]['reply'][:250]!r}")
+r = _steps("ev-s35-fragno", ["I need boxes", "for candles", "no"])
+check("no after did-you-mean re-asks instead of guessing",
+      "say a bit more" in r[2]["reply"].lower(),
+      f"reply={r[2]['reply'][:250]!r}")
+r = _steps("ev-s35-coffee", ["I need pouches", "for coffee"])
+check("fragment with a KB foothold never gets a did-you-mean",
+      "did you mean" not in r[1]["reply"].lower()
+      and "What size" in r[1]["reply"],
+      f"reply={r[1]['reply'][:250]!r}")
+r = run("ev-s35-scam", ["scammed"])
+check("complaint word never gets a did-you-mean",
+      "did you mean" not in r["reply"].lower(),
+      f"reply={r['reply'][:250]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)
