@@ -1302,6 +1302,28 @@ def _perfect_reply(slots: dict, language: str = "en", gave_up: list | None = Non
             f"{_below_min_note(slots, language)}")
 
 
+def _looks_like_bad_email(message: str, extracted: dict) -> bool:
+    """A wrong-email attempt at the email question (Nov 1 live
+    test): "ab" was treated as 'anything else' and the ask was
+    spent, so the quote ran on with no email at all. An "@" with
+    no usable address is always a bad email; a lone token that
+    extracted nothing (no size, spec, or quantity in it) is most
+    likely a mistyped username, not an answer to another question
+    — spec answers keep the old spent behavior."""
+    text = (message or "").strip()
+    if not text:
+        return False
+    if "@" in text and not email_in(text):
+        return True
+    # A lone token that extracted nothing — but never a bare fact
+    # topic ("Moq" at the email turn must still get the MOQ answer,
+    # Oct 30 brain2 case) or a spec word (extraction caught those).
+    if len(text.split()) == 1 and not any(c.isdigit() for c in text) \
+            and not extracted and asks_bare_fact_topic(text) is None:
+        return True
+    return False
+
+
 def _has_zero_dimension(sizes: str) -> bool:
     """True when a stored size span has a zero side ("0 x 0",
     "5x0"). Nov 1 senior demo: "0 x 0" was stored and confirmed
@@ -2088,9 +2110,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # suggestion. Skipped in the contact phase (a name is not
     # mash) and when curated retrieval finds something (a real
     # query in other words still flows normally; supplementary
-    # mentions do not count, Oct 30 kb_v2 fix).
+    # mentions do not count, Oct 30 kb_v2 fix). Skipped only for a
+    # plausible bad-email attempt while awaiting the step-2 email
+    # (Nov 1): a mistyped username ("abdullah") at the email
+    # question is a bad email, not mash — the email handler below
+    # corrects it. Real mash mid-quote ("jfdlsnvipojfn vfoljv")
+    # still gets the clarification, never a script question.
     if is_gibberish(message) and not retrieve_curated(message) \
             and not meta.get("awaiting_contact") \
+            and not (meta.get("awaiting_early_email")
+                     and _looks_like_bad_email(message, {})) \
             and not meta.get("complete"):
         return _intent_result(
             "Sorry, I didn't quite catch that — could you say a bit "
@@ -2318,7 +2347,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # the script continues in the same flow. If they refuse, insist
     # ONCE with the reason (same cap as the end contact flow), then
     # a second refusal retires email and the script continues
-    # without it — never a trap. If they answer with anything else
+    # without it — never a trap. If they answer with a wrong email
+    # ("ab", "ab@gmail"), correct them and re-ask — never spend
+    # the ask on a bad address. If they answer with anything else
     # (a size, a question, a spec word), the ask is spent: the
     # script continues and email is revisited at the end contact
     # flow, where missing_contact still asks it.
@@ -2354,6 +2385,27 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _save_session(store, session_id, slots)
             _save_meta(store, session_id, meta)
             # Fall through: script continues without an email.
+        elif _looks_like_bad_email(message, extracted):
+            # Nov 1 live test: "ab" fell through to the spent branch
+            # below and the quote ran on with no email. A bad address
+            # is not a refusal and not an answer — correct it and
+            # ask again, with the ask still pending. Declines are
+            # checked first, so "no"/"none" still retire instead of
+            # getting a correction. The visitor can still refuse to
+            # retire it, so this never traps them.
+            meta["last_bot_question"] = _contact_question("email", language)
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {
+                "reply": ("That doesn't look like a valid email — could you "
+                          "share your complete email address, like "
+                          "name@example.com? "
+                          + _contact_question("email", language)),
+                "language": language, "slots": slots,
+                "missing": script_missing(slots, meta),
+                "sources": _slot_sources(slots), "handoff": None,
+                "llm_used": False, "suggestions": [], "contact": contact,
+            }
         else:
             # Not an email, not a refusal: spent. Script continues;
             # email is revisited at the end contact flow.
