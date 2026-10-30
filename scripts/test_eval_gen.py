@@ -322,7 +322,7 @@ for msg, want in [("I need milar bags", "mylar bag"),
                   ("I need business cards", "business card")]:
     r = run(f"ev-typo-{msg}", [msg])
     check(f"typo order {msg!r}",
-          r["slots"].get("product") == want and "What size" in r["reply"],
+          r["slots"].get("product") == want and "email" in r["reply"].lower(),
           f"slots={r['slots']!r} reply={r['reply'][:100]!r}")
 
 # --- 17. trust, hostility, small talk: never a fact dump ---
@@ -388,7 +388,7 @@ r = run("ev-col-fin", ["I need mylar bags", "4x6", "stand-up", "Bag's"])
 check("unusable non-answer as finish re-asked, not stored",
       not r["slots"].get("finishes") and "finish" in r["reply"].lower(),
       f"slots={r['slots']} reply={r['reply'][:100]!r}")
-r = run("ev-col-bare10", ["I need mylar bags", "10"])
+r = run("ev-col-bare10", ["I need mylar bags", "ali@test.com", "10"])
 check("unusable bare number as size answer clarified, not quantity",
       not r["slots"].get("quantity") and "inches or mm" in r["reply"],
       f"slots={r['slots']} reply={r['reply'][:100]!r}")
@@ -517,7 +517,7 @@ check("live by-phrasing still stores size, not quantity",
       r["slots"].get("sizes") and not r["slots"].get("quantity")
       and "style" in r["reply"].lower(),
       f"slots={r['slots']}")
-r = run("ev-live-dim", ["I need mylar bags", "10 inches"])
+r = run("ev-live-dim", ["I need mylar bags", "ali@test.com", "10 inches"])
 check("live single dimension asks for the other dimension, not quantity",
       "other dimension" in r["reply"] and not r["slots"].get("quantity"),
       f"reply={r['reply'][:100]!r}")
@@ -581,10 +581,10 @@ check("suggestion coffee stays specific, not generic food",
 # never pouch types; a complaint about wrong suggestions must be
 # acknowledged, not fact-dumped. ---
 r = run("ev-box-purpose", ["i need large box"])
-check("vague large box asks purpose first, not size/style",
-      "for?" in r["reply"] and "sizes" in r["missing"],
+check("vague large box asks email at step 2, before purpose",
+      "email" in r["reply"].lower() and "sizes" in r["missing"],
       f"reply={r['reply'][:140]!r} missing={r['missing']}")
-r = run("ev-box-purpose-ans", ["i need large box", "shipping"])
+r = run("ev-box-purpose-ans", ["i need large box", "ali@test.com", "shipping"])
 check("purpose answer acknowledged, then size asked, no policy dump",
       r["reply"].startswith("Got it") and "What size do you need?" in r["reply"]
       and "free nationwide" not in r["reply"],
@@ -621,7 +621,7 @@ r = run("ev-box-cap-vague", ["do you make large boxes?"])
 check("capability question with vague size answered Yes, not purpose-trapped",
       r["reply"].startswith("Yes"),
       f"reply={r['reply'][:140]!r}")
-r = run("ev-box-purpose-stated", ["i need large box for shipping"])
+r = run("ev-box-purpose-stated", ["i need large box for shipping", "ali@test.com"])
 check("purpose already stated -> size asked, no purpose question",
       "What size do you need?" in r["reply"] and "for?" not in r["reply"],
       f"reply={r['reply'][:160]!r}")
@@ -851,7 +851,7 @@ _s = _steps("ev-s24-suggest", ["suggest me a box for coffee", "Suggest me a box 
 check("unmapped use (candles) never reuses a stale use (coffee) from history",
       "coffee" not in _s[1]["reply"].lower(),
       f"reply={_s[1]['reply'][:180]!r}")
-r = run("ev-s24-feet", ["I need a vinyl banner 4x8 feet for my shop"])
+r = run("ev-s24-feet", ["I need a vinyl banner 4x8 feet for my shop", "ali@test.com"])
 check("feet stated with the size is stored, no unit question",
       r["slots"].get("sizes") == "4x8 feet" and "What finish" in r["reply"],
       f"reply={r['reply'][:160]!r} slots={r['slots']}")
@@ -860,8 +860,8 @@ check("unit question offers feet as a chip",
       "feet" in r["reply"].lower() and "Feet" in r["suggestions"],
       f"reply={r['reply'][:160]!r} chips={r['suggestions']}")
 r = run("ev-s24-espurpose", ["Necesito cajas grandes para ropa"])
-check("spanish vague size asks purpose in spanish with spanish chips",
-      "¿Para qué" in r["reply"] and "Envío" in r["suggestions"],
+check("spanish vague size asks email at step 2, in spanish",
+      "correo" in r["reply"] and r["slots"].get("product") == "box",
       f"reply={r['reply'][:160]!r} chips={r['suggestions']}")
 r = run("ev-s24-esswitch", ["I need pouches", "4x6 inches", "Necesito cajas", "sí"])
 check("spanish switch answer (sí) switches to the new product",
@@ -1237,7 +1237,7 @@ r = run("ev-s32-oz", ["i need 8 oz coffee bags 100"])
 check("8 oz stripped, real quantity 100 kept (regression)",
       r["slots"].get("quantity") == "100",
       f"reply={r['reply'][:200]!r} slots={r['slots']}")
-r = run("ev-s32-sub", ["i need 500 custom boxes for candles"])
+r = run("ev-s32-sub", ["i need 500 custom boxes for candles", "ali@test.com"])
 check("sub-1000 boxes accepted with note + size question",
       "We can look at 500" in r["reply"] and "What size" in r["reply"],
       f"reply={r['reply'][:200]!r}")
@@ -1320,7 +1320,7 @@ check("payments-before-shipping does not steal shipping questions",
 # foothold and a real interpretation (product in context).
 r = run("ev-s35-lables", ["I need lables"])
 check("typo 'lables' flows as labels quote",
-      r["slots"].get("product") == "label" and "What size" in r["reply"],
+      r["slots"].get("product") == "label" and "email" in r["reply"].lower(),
       f"reply={r['reply'][:250]!r} slots={r['slots']}")
 r = run("ev-s35-bannars", ["do you make bannars?"])
 check("typo 'bannars' answers banners",
@@ -1450,7 +1450,7 @@ check("material answer after the image question is never swallowed",
       and "Do you have an image" not in _s[-1]["reply"]
       and "Just to confirm" in _s[-1]["reply"],
       f"pass={_s[-2]['reply'][:160]!r} confirm={_s[-1]['reply'][:160]!r}")
-r = run("ev-s37-imgvol", ["I need boxes 4x6, 2 designs"])
+r = run("ev-s37-imgvol", ["I need boxes 4x6, 2 designs", "ali@test.com"])
 check("volunteered designs never pull the image question ahead of size",
       "Do you have an image" not in r["reply"]
       and "Is that in inches" in r["reply"],

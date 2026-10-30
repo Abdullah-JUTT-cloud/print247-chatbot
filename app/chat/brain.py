@@ -62,6 +62,7 @@ from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A
                       NO_EMAIL_THEN_PHONE, PITCH_MESSAGE, SHARED_FILE_ANSWER, THANKS_ANSWER,
                       TRUST_ANSWER, YES_SEND_YOUR_NUMBER, asks_about_trust, asks_for_a_catalog,
                       asks_for_samples, asks_how_are_you, asks_only_if_we_are_a_bot,
+                      greeting_reply,
                       chat_is_a_pitch, chat_is_not_a_customer, claims_harm, claims_we_lied,
                       is_already_a_customer, is_dismissal, is_done_with_us, is_looking_for_work,
                       objects_to_the_price, offers_a_phone_number, puts_it_off_for_now,
@@ -71,7 +72,7 @@ from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A
 from .language import detect_language
 from .llm_extract import llm_extract
 from .price_questions import PRICING_COMES_WITH_THE_QUOTE, asks_about_price
-from .quantity_parse import minimum_already_stated, wants_smaller_run
+from .quantity_parse import below_minimum, explicit_smaller_run, minimum_already_stated, wants_smaller_run
 from .quote_value import is_our_own_menu, without_template_blanks
 from .repeated import SENTENCE_BREAK, repeats_the_question
 from .retrieval import _read_kb_files, retrieve, retrieve_curated
@@ -1005,9 +1006,11 @@ def _below_min_note(slots: dict, language: str) -> str:
     except (TypeError, ValueError):
         return ""
     if qty and qty < 1000 and guards.minimum_applies(slots.get("product")):
+        # User rule (Oct 30): never state the minimum in a
+        # confirmation unless the visitor asked about it. The team
+        # confirms the smaller run; the number stays out.
         return " " + _tr("below_min_note", language,
-                         "Note: {qty} is below our usual minimum of 1000 per size — "
-                         "the team will confirm the smaller run with you.", qty=qty)
+                         "Note: the team will confirm the smaller run with you.", qty=qty)
     return ""
 
 
@@ -1174,7 +1177,8 @@ def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
             "'your quote will carry the pricing' — never a figure, never the "
             "minimum as the answer. Banners have no minimum — never state one "
             "for them. A below-minimum quantity is never refused: say we can look "
-            "at it, state the usual minimum of 1000 per size, and carry on.\n"
+            "at it, we do smaller runs too, and carry on. NEVER state the "
+            "minimum unless the visitor asked about it.\n"
             "NEVER: say you will prepare, get or send a quote; say you will "
             "confirm, check or find something out; say you cannot go on without "
             "something; ask about proofs, artwork files, PDFs, approval links, "
@@ -1585,6 +1589,13 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         return _intent_result(BYE_ANSWER)
     if not _is_order and not meta.get("complete") and asks_how_are_you(message):
         return _intent_result(_with_next_question(HOW_ARE_YOU_ANSWER, prior,
+                                                 script_missing(prior, meta), language))
+    # Greeting-only ("good morning", "hi"): the bot greets back,
+    # then asks the product question — it never jumps straight to
+    # the product question with no greeting (Oct 30 screenshot).
+    _greet = greeting_reply(message, language) if not _is_order and not meta.get("complete") else None
+    if _greet:
+        return _intent_result(_with_next_question(_greet, prior,
                                                  script_missing(prior, meta), language))
     _named = rep_named_in(message, _session_rep(session_id))
     if _named:
@@ -2164,10 +2175,98 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "suggestions": [],
             }
 
+    # --- Early email (Oct 30 user rule, replaces the old "contact
+    # after the job details" order for EMAIL ONLY): step 1 is the
+    # product, step 2 is the email, then the quote chat continues.
+    # Name and phone still come after confirmation. The old
+    # reasoning ("someone greeted by a form has no reason to leave
+    # a number") is superseded by the senior direction: the email
+    # is compulsory at step 2, then the chat continues.
+    #
+    # One-shot ask: if the visitor gives an email, it is stored and
+    # the script continues in the same flow. If they refuse, insist
+    # ONCE with the reason (same cap as the end contact flow), then
+    # a second refusal retires email and the script continues
+    # without it — never a trap. If they answer with anything else
+    # (a size, a question, a spec word), the ask is spent: the
+    # script continues and email is revisited at the end contact
+    # flow, where missing_contact still asks it.
+    if meta.get("awaiting_early_email"):
+        _early_em = email_in(message)
+        if _early_em and is_contact_value_usable("email", _early_em):
+            contact["email"] = _early_em
+            meta["contact"] = contact
+            meta["awaiting_early_email"] = False
+            meta["early_email_just_cleared"] = True
+            meta.pop("email_insists", None)
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            # Fall through: the script flow below asks the next
+            # question (sizes), with the email now stored.
+        elif ask_outcome("email", message, False) == "declined":
+            if meta.get("email_insists", 0) < 1:
+                meta["email_insists"] = 1
+                meta["last_bot_question"] = _contact_question("email", language)
+                _save_session(store, session_id, slots)
+                _save_meta(store, session_id, meta)
+                return {
+                    "reply": ("I need an email to send your quote — "
+                              + _contact_question("email", language)),
+                    "language": language, "slots": slots,
+                    "missing": script_missing(slots, meta),
+                    "sources": _slot_sources(slots), "handoff": None,
+                    "llm_used": False, "suggestions": [], "contact": contact,
+                }
+            meta.setdefault("contact_retired", []).append("email")
+            meta["awaiting_early_email"] = False
+            meta.pop("email_insists", None)
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            # Fall through: script continues without an email.
+        else:
+            # Not an email, not a refusal: spent. Script continues;
+            # email is revisited at the end contact flow.
+            meta["awaiting_early_email"] = False
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+    elif (slots.get("product") and not meta.get("complete")
+            and not meta.get("awaiting_contact")
+            and not meta.get("early_email_asked")
+            and not is_contact_value_usable("email", contact.get("email"))
+            and "email" not in (meta.get("contact_retired") or [])
+            # _is_order ONLY — never extracted product alone: a fact
+            # or price question that merely names a product ("how
+            # quick can I have labels shipped?", "price for 5000
+            # bags") must be answered, not hijacked by an email
+            # question. _is_order itself is broad ("can i have",
+            # "quote for" also match questions), so a question
+            # never triggers: "When will I get my quote for
+            # custom-sized bags?" and "How quick can I have labels
+            # shipped?" are questions, not orders. Those visitors
+            # get email at the end contact flow if they turn into
+            # an order.
+            and _is_order and "?" not in message
+            and not visitor_is_asking(message)):
+        _eq = _contact_question("email", language)
+        meta["awaiting_early_email"] = True
+        meta["early_email_asked"] = True
+        meta["last_bot_question"] = _eq
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {
+            "reply": f"Got it — {slots.get('product')}. {_eq}",
+            "language": language, "slots": slots,
+            "missing": script_missing(slots, meta),
+            "sources": _slot_sources(slots), "handoff": None,
+            "llm_used": False, "suggestions": [], "contact": contact,
+        }
+
     # --- Contact flow (old contactFields.ts): asked after the job
     # details, in name -> email -> phone order, MAX_ASKS=2 per field,
     # a refusal retires the field at once, and the chat only finishes
     # when at least one reachable contact exists or both are exhausted.
+    # (Email is now ALSO asked early, above; this flow skips it when
+    # it is already collected, via _missing_contact.)
     if meta.get("awaiting_contact"):
         _field = meta.get("last_asked")
         if _field not in ("name", "email", "phone"):
@@ -3035,9 +3134,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # or per design — and a quantity given before the designs were
     # known is just as ambiguous. Ask it (at most twice, the old
     # cap), then default to per-design, the standing rule. Scope is
-    # read from VISITOR words only: the bot's own quantity question
-    # carries the MOQ line ("1000 per size and per design"), which
-    # would falsely count as the visitor stating per-design. An
+    # read from VISITOR words only: the bot's own replies never
+    # state the MOQ unless asked (Oct 30 user rule), so a bot reply
+    # must never count as the visitor stating per-design. An
     # answer to a per-design question counts as stated via the
     # asked_per_design flag set when that question went out.
     try:
@@ -3301,10 +3400,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _reply = _tr("not_sent", language, NOT_SENT_YET)
         return _final_return(_reply + (" " + _q if _q else ""), srcs=[])
 
-    # Smaller run after the minimum was stated: put it to the team
-    # (old ignoresTheSmallerRun) — never repeat the minimum at them,
-    # never turn them down.
-    if wants_smaller_run(message) and minimum_already_stated(meta.get("bot_replies") or []) \
+    # Smaller run request: put it to the team (old
+    # ignoresTheSmallerRun) — never state the minimum at them,
+    # never turn them down. Oct 30 user rule: the minimum is never
+    # volunteered, so this branch can no longer require that the
+    # minimum was already stated — a stored below-minimum quantity
+    # is enough on its own.
+    if explicit_smaller_run(message) and (minimum_already_stated(meta.get("bot_replies") or [])
+            or below_minimum(slots.get("quantity"))) \
             and not _bare_skus:
         _q = _next_question_text(slots, missing, language)
         _reply = _tr("smaller_run_note", language,
@@ -3326,10 +3429,11 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "or pick a common size to start with."),
                 srcs=_slot_sources(slots) or sources)
         if _first == "quantity":
+            # User rule (Oct 30): never volunteer the minimum, even
+            # as a starting point for a "not sure" visitor.
             return _final_return(
                 _tr("not_sure_quantity", language,
-                    "No problem — most orders start at the minimum of 1000 units "
-                    "per size. Would you like to start with 1000, or a rough range?"),
+                    "No problem — tell me a rough range and we will work from that."),
                 srcs=_slot_sources(slots) or sources)
         if _first in ("finishes", "extras", "material", "style", "skus"):
             slots[_first] = "1" if _first == "skus" else "none"
@@ -3341,10 +3445,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 return _final_return(_confirmation_text())
             return _final_return(_next_question_text(slots, _missing2, language))
 
-    # Below-minimum note (old composer: lead with what we can do,
-    # give the minimum after it, never a flat refusal). Prepended to
-    # the next question reply below, once — the quantity question
-    # itself already states the MOQ, so it never repeats.
+    # Below-minimum note (user rule Oct 30: lead with what we can
+    # do, NEVER give the minimum unless asked, never a flat
+    # refusal). Prepended to the next question reply below, once.
     _moq_note = ""
     try:
         _qty = int(float(str(slots.get("quantity", "0")).replace(",", "")))
@@ -3422,11 +3525,20 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                          # the purpose question too, not just size.
                          "grande", "grandes", "pequeño", "pequeña",
                          "pequeños", "mediano", "mediana")
+    # Oct 30 early-email fix: the vague word may have been said on
+    # the ORDER turn, while this turn is the email answer — the
+    # purpose question must still fire, once, from history. A "for"
+    # anywhere in history means the purpose was already stated.
+    _vague_in_history = any(
+        re.search(rf"\b{w}\b", (t or "").lower())
+        for t in visitor_messages for w in _VAGUE_SIZE_WORDS)
+    _for_in_history = any(
+        re.search(r"\bfor\b", (t or "").lower()) for t in visitor_messages)
     if not meta.get("purpose") and not meta.get("purpose_asked") \
             and slots.get("product") and not slots.get("sizes") \
             and not is_fact_question \
-            and any(re.search(rf"\b{w}\b", low) for w in _VAGUE_SIZE_WORDS) \
-            and not re.search(r"\bfor\b", low):
+            and _vague_in_history \
+            and not _for_in_history:
         meta["purpose_asked"] = True
         meta["awaiting_purpose"] = True
         _pq = _tr("purpose_q", language, "What do you need the {product} for?",
@@ -3452,8 +3564,13 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # normally (the size stays unitless for the team to confirm).
     if slots.get("sizes") and size_missing_unit(slots.get("sizes")) \
             and meta.get("unit_asked_for") != slots.get("sizes") \
-            and re.search(r"\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+", message,
-                          re.IGNORECASE):
+            and (re.search(r"\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+", message,
+                           re.IGNORECASE)
+                 or meta.get("early_email_just_cleared")):
+        # Early-email turn: the size span was said on the order
+        # turn, not this turn, so the span test above fails — the
+        # just-cleared flag carries it once, then is spent.
+        meta.pop("early_email_just_cleared", None)
         meta["unit_asked_for"] = slots["sizes"]
         _uq = f"Got it — {slots['sizes']}. Is that in inches, cm, mm, or feet?"
         meta["ai_count"] = meta.get("ai_count", 0) + 1

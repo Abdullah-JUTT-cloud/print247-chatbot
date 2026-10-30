@@ -1,10 +1,13 @@
 """Contact collection — ported from the old bot (contactFields.ts,
 ourOwnContacts.ts, and the deterministic half of contactExtractor.ts).
 
-Asked AFTER the job details, never before: someone who has just
-described what they want has a reason to leave a number; someone
-greeted by a form has not. A name is worth having but is not a way to
-reach anybody — at least one usable email OR phone is required, or the
+ORDER (changed Oct 30, user rule): EMAIL is asked at step 2 of the
+quote — step 1 is the product, step 2 is the email, then the quote
+chat continues. Name and phone still come after confirmation. The
+old "asked after the job details, never before" order is superseded
+for email only; the end contact flow skips email when it was already
+collected early. A name is worth having but is not a way to reach
+anybody — at least one usable email OR phone is required, or the
 chat is a transcript nobody can act on.
 
 Our own details are never recorded as the visitor's: the bot hands out

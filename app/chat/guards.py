@@ -6,17 +6,17 @@ rule is followed "most of the time" — and "most of the time" is how
 a customer who said "80" got thanked for an order that cannot be
 produced.
 
-MOQ rule (CHANGED with the full old-brain port, Oct 29): the new
-old-bot snapshot takes smaller runs (SAY_THE_MINIMUM = false) and
-its composer forbids a flat refusal ("Lead with what we can do —
-that we can look at their quantity — and give the minimum after
-it"). So a below-minimum quantity is NO LONGER a refusal: the bot
-states the minimum once, accepts the quantity, and the team
-confirms the smaller run. moq_check is kept for reporting (is a
-quantity below the minimum?) and for the confirmation note — it
-no longer blocks a quote. Banners are exempt from the minimum
-entirely, with the full banner family (pull-ups, roll-ups, pop-ups,
-retractables, backdrops, x-stands), not just the word "banner".
+MOQ rule (CHANGED Oct 30, user rule): the bot NEVER volunteers
+the minimum — not with a below-minimum quantity, not in a
+confirmation. A below-minimum quantity is NO LONGER a refusal:
+the bot accepts the quantity, says it does smaller runs, and the
+team confirms the smaller run. The 1000 figure appears only when
+the visitor asks about the minimum themselves. moq_check is kept
+for reporting (is a quantity below the minimum?) — it no longer
+blocks a quote and its message no longer states the minimum.
+Banners are exempt from the minimum entirely, with the full banner
+family (pull-ups, roll-ups, pop-ups, retractables, backdrops,
+x-stands), not just the word "banner".
 """
 import re
 
@@ -40,8 +40,9 @@ def moq_check(slots: dict) -> dict:
     """Return {'ok': bool, 'message': str|None}.
 
     ok=False now only REPORTS a below-minimum quantity (the brain
-    states the minimum and carries on — it never refuses). No
-    quantity yet -> ok. Banners -> ok (no minimum at all).
+    accepts it and carries on — it never refuses, and never states
+    the minimum unless asked). No quantity yet -> ok. Banners ->
+    ok (no minimum at all).
     """
     qty_raw = slots.get("quantity")
     if not qty_raw:
@@ -57,8 +58,7 @@ def moq_check(slots: dict) -> dict:
     return {
         "ok": False,
         "message": (
-            f"We can look at {qty} for you. Our standard MOQ is "
-            f"{MINIMUM_ORDER} per size and per design, but we do smaller runs too."
+            f"We can look at {qty} for you. We do smaller runs too."
         ),
     }
 

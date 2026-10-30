@@ -453,6 +453,33 @@ def asks_how_are_you(text: str) -> bool:
     return bool(_ASKS_HOW_ARE_YOU.search(text or ""))
 
 
+# Greeting-only messages (Oct 30, user screenshot: "good morning"
+# got only the product question, no greeting back). A greeting is
+# the whole message — "good morning, I need boxes" is an order, not
+# a greeting, and is handled by the order flow instead.
+_GREETING_ONLY = re.compile(
+    r"^\s*(good morning|good afternoon|good evening|hi|hello|hey|hiya|howdy|"
+    r"hola|buenos d[ií]as|buen d[ií]a|buenas)[\s,.!]*$",
+    re.IGNORECASE)
+
+
+def greeting_reply(text: str, language: str = "en") -> str | None:
+    """Mirror greeting for a greeting-only message, or None."""
+    m = _GREETING_ONLY.match((text or "").strip())
+    if not m:
+        return None
+    word = m.group(1).lower()
+    if language == "es" or word in ("hola", "buenos días", "buen día", "buenas"):
+        return "¡Hola!" if word == "hola" else "¡Buenos días!"
+    if word == "good morning":
+        return "Good morning!"
+    if word == "good afternoon":
+        return "Good afternoon!"
+    if word == "good evening":
+        return "Good evening!"
+    return "Hi there!"
+
+
 # --- Rep named (repPool.ts: repNamedIn, deterministic half) ---
 def rep_named_in(text: str, session_rep: str | None = None):
     """A rep named by the visitor, other than the rep already on this

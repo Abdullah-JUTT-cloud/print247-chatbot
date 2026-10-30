@@ -64,15 +64,18 @@ QUESTIONS = {
     "material": "Do you have any specific material or special features in mind?",
 }
 
-# The MOQ line the old script states WITH the quantity question on
-# live chat: a visitor who has not been told it answers "maybe 50",
-# which is not an order anybody can quote. Banners never get it.
+# MOQ line, kept ONLY for when the visitor asks about the minimum
+# themselves (the MOQ branch in brain.py). It is NEVER volunteered:
+# not with the quantity question, not with a below-minimum quantity,
+# not in a confirmation, not in a "not sure" reply (Oct 30 user
+# rule: "hame MOQ nhi batna kbhi bhi jab tak user khud na pooche").
 MOQ_LINE = "Our standard MOQ is 1000 per size and per design, but we do smaller runs too."
 
-# Below-minimum handling (new old-bot snapshot: SAY_THE_MINIMUM =
-# false — the team takes smaller runs). Never a refusal: lead with
-# what we can do, state the minimum after it.
-BELOW_MIN_NOTE = "We can look at {qty} for you. " + MOQ_LINE
+# Below-minimum handling: never a refusal, never the minimum.
+# Lead with what we can do ("we can do smaller runs for you"),
+# the team confirms the smaller run. The 1000 figure appears only
+# if the visitor asks about the minimum.
+BELOW_MIN_NOTE = "We can look at {qty} for you. We do smaller runs too."
 
 
 def is_banner_family(product: str | None) -> bool:
@@ -159,10 +162,10 @@ def question_for(field: str, slots: dict) -> str:
         return QUESTIONS["style_boxes"] if "box" in (slots.get("product") or "").lower() \
             else QUESTIONS["style_bags"]
     if field == "quantity":
-        # Senior directive (Oct 30): the MOQ is NOT shown with the
-        # quantity question — it comes only when the visitor asks
-        # about the minimum, or once with a below-minimum quantity
-        # (BELOW_MIN_NOTE). The question is just the question.
+        # User rule (Oct 30): the MOQ is NEVER volunteered — not
+        # with the quantity question, not with a below-minimum
+        # quantity. It comes only when the visitor asks about the
+        # minimum. The question is just the question.
         return QUESTIONS["quantity_banner"] if is_banner_family(slots.get("product")) \
             else QUESTIONS["quantity"]
     return QUESTIONS[field]

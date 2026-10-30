@@ -130,15 +130,18 @@ def fact_questions_unanswered(visitor_text: str, reply: str) -> list[str]:
 
 
 def facts_volunteered(visitor_said: list, reply: str, minimum_due: bool = False) -> list[str]:
-    """Facts a reply recites that nobody asked about. The minimum is
-    exempt when the quantity is under it, because then saying it is
-    the job."""
+    """Facts a reply recites that nobody asked about. The minimum
+    is NO LONGER exempt when the quantity is under it (Oct 30 user
+    rule: never state the minimum unless the visitor asked about
+    it). minimum_due is kept as a parameter only so existing
+    callers keep working; it no longer excuses a volunteered
+    minimum. A minimum the visitor DID ask about is still not
+    flagged, because asked_re matches their own words."""
     asked = "\n".join(str(t or "") for t in visitor_said)
     out = []
     for name, asked_re, _ans, volunteered, _q in TOPICS:
         if volunteered and volunteered.search(reply or "") \
-                and not asked_re.search(asked) \
-                and not (name == "the minimum order" and minimum_due):
+                and not asked_re.search(asked):
             out.append(name)
     return out
 

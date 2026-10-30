@@ -37,8 +37,10 @@ _STRINGS = {
         "ur-roman": "Finish kaunsi pasand hai: matte, gloss ya soft touch?",
     },
     "q_quantity": {
-        "es": "¿Qué cantidad quiere pedir en su primer pedido? Nuestro MOQ estándar es de 1000 por tamaño y por diseño, pero también hacemos tiradas más pequeñas.",
-        "ur-roman": "Pehli order mein kitni quantity chahiye? Hamara standard MOQ 1000 per size aur per design hai, lekin chhoti runs bhi kar lete hain.",
+        # Oct 30 user rule: never volunteer the MOQ — the question
+        # is just the question, in every language.
+        "es": "¿Qué cantidad quiere pedir en su primer pedido?",
+        "ur-roman": "Pehli order mein kitni quantity chahiye?",
     },
     "q_quantity_banner": {
         "es": "¿Qué cantidad quiere pedir en su primer pedido?",
@@ -77,8 +79,8 @@ _STRINGS = {
         "ur-roman": "Team aap ko kis phone number par contact kare?",
     },
     "moq_note": {
-        "es": "Podemos revisar {qty} para usted. Nuestro MOQ estándar es de 1000 por tamaño y por diseño, pero también hacemos tiradas más pequeñas.",
-        "ur-roman": "Hum {qty} dekh sakte hain aap ke liye. Hamara standard MOQ 1000 per size aur per design hai, lekin chhoti runs bhi kar lete hain.",
+        "es": "Podemos revisar {qty} para usted. También hacemos tiradas más pequeñas.",
+        "ur-roman": "Hum {qty} dekh sakte hain aap ke liye. Chhoti runs bhi kar lete hain.",
     },
     "smaller_run_note": {
         "es": "Le pasaré {qty} al equipo y le confirmaremos.",
@@ -97,8 +99,8 @@ _STRINGS = {
         "ur-roman": "Confirm kar lun — kya aap chahte hain",
     },
     "below_min_note": {
-        "es": "Nota: {qty} está por debajo de nuestro mínimo habitual de 1000 por tamaño; el equipo confirmará la tirada más pequeña con usted.",
-        "ur-roman": "Note: {qty} hamare usual minimum 1000 per size se kam hai — team aap se chhoti run confirm karegi.",
+        "es": "Nota: el equipo confirmará la tirada más pequeña con usted.",
+        "ur-roman": "Note: team aap se chhoti run confirm karegi.",
     },
     "noted": {
         "es": "Anotado: lo agregué a su solicitud.",
@@ -125,8 +127,8 @@ _STRINGS = {
         "ur-roman": "Koi baat nahi — batao andar kya hoga, ya ek common size choose kar lo shuru ke liye.",
     },
     "not_sure_quantity": {
-        "es": "No hay problema: la mayoría de los pedidos empiezan en el mínimo de 1000 unidades por tamaño. ¿Quiere empezar con 1000, o un rango aproximado?",
-        "ur-roman": "Koi baat nahi — aksar orders 1000 units per size ke minimum se shuru hote hain. 1000 se shuru karein, ya koi andaza dein?",
+        "es": "No hay problema: dime un rango aproximado y trabajaremos con eso.",
+        "ur-roman": "Koi baat nahi — koi andaza de dein, usi se kaam kar lenge.",
     },
     "yes_correct": {
         "es": "Sí, es correcto",

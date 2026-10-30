@@ -139,6 +139,17 @@ def wants_smaller_run(text: str) -> bool:
     return bool(_BARE_QUANTITY.match(said)) and below_minimum(said)
 
 
+def explicit_smaller_run(text: str) -> bool:
+    """True only when the visitor says smaller/less words themselves
+    ("can you do a smaller run", "less than that"). A bare quantity
+    ("300 units") answering the quantity question is NOT a
+    smaller-run request — it is a quantity answer, and the
+    acceptance note ("We can look at 300...") is the right reply,
+    not the team note. Used by the smaller-run branch so a first
+    below-minimum quantity is never mistaken for a request."""
+    return bool(_WANTS_LESS.search((text or "").strip()))
+
+
 def answer_to_the_minimum(their_reply: str, our_question: str) -> str | None:
     """'smaller' | 'minimum' | None. A bare yes/no only counts against
     a question that states the minimum AND asks if it works AND has no
