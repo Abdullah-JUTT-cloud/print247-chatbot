@@ -218,6 +218,68 @@ def fragment_product(text: str, product: str | None) -> str | None:
     return None
 
 
+# Words that keep a message from looking like gibberish even when
+# it names no product: question words + business words. A real
+# question ("what is your return policy?") has no vocab word.
+_COMMON_WORDS = {
+    "i", "need", "want", "do", "does", "you", "make", "have", "get",
+    "can", "could", "would", "will", "please", "thanks", "thank", "hi",
+    "hello", "hey", "yes", "no", "my", "order", "price", "much", "how",
+    "what", "when", "where", "is", "are", "for", "with", "in", "on",
+    "to", "a", "an", "the", "this", "that", "it", "me", "us", "we",
+    "your", "our", "about", "return", "policy", "shipping", "delivery",
+    "payment", "pay", "cost", "time", "long", "take", "arrive", "open",
+    "close", "hours", "located", "company", "name", "email", "phone",
+    "stop", "bye", "ok", "okay", "sure", "si", "minimum", "moq",
+    "sample", "samples", "quote", "size", "sizes", "quantity", "finish",
+    "material", "style", "type", "design", "designs", "color", "colour",
+    "help", "info", "information", "details", "website", "store", "shop",
+    # Number + unit words: a spelled quantity ("fifteen thousand",
+    # "two thousand units") is an answer, never mash.
+    "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+    "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+    "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+    "eighty", "ninety", "hundred", "thousand", "million",
+    "unit", "units", "pcs", "pieces",
+}
+_UNIT_WORDS = {"mm", "cm", "inches", "inch", "in", "feet", "ft", "oz",
+               "ml", "kg", "g", "lb", "lbs", "pt"}
+# Spanish is the supported second language: its words are not in
+# the English vocab, so a Spanish message must never read as mash.
+_SPANISH_WORDS = {
+    "necesito", "quiero", "quisiera", "cajas", "caja", "bolsas",
+    "bolsa", "para", "grandes", "grande", "pequeno", "pequena",
+    "pequenos", "pulgadas", "centimetros", "milimetros", "gracias",
+    "hola", "etiquetas", "botellas",
+}
+
+
+def is_gibberish(text: str) -> bool:
+    """True when no word in the message is recognizable: no domain
+    word (exact or near, ratio >= 0.7), no common word, no unit,
+    no Spanish word. Random keyboard mash ("jfdlsnvipojfn ...")
+    must get a clarification, never a product pitch — the live
+    stack once answered mash with a food-box suggestion. At least
+    one word of length >= 4 must be present: short noise ("xyz")
+    falls through to the normal product question instead. Any
+    digit exempts the message outright: quantities and dimensions
+    ("15 thousand", "4x6") are answers, never mash."""
+    if re.search(r"\d", text or ""):
+        return False
+    tokens = re.findall(r"[a-z]+", _plain(text))
+    if not tokens or not any(len(t) >= 4 for t in tokens):
+        return False
+    for tok in tokens:
+        if tok in _COMMON_WORDS or tok in _UNIT_WORDS \
+                or tok in _SPANISH_WORDS or tok in VOCAB:
+            return False
+        if any(difflib.SequenceMatcher(None, tok, v).ratio() >= 0.7
+               for v in VOCAB):
+            return False
+    return True
+
+
 def is_use_fragment(text: str) -> bool:
     """Trigger gate for did-you-mean: a USE/purpose phrase, not a
     bare word. Bare single words are answers (a name, a unit,

@@ -83,7 +83,20 @@ check("empty fragment means no interpretation",
 # the pending question re-asks — the trigger must never swallow
 # them (it did, and broke the contact flow, stop, the unit
 # question, and the Spanish switch answer).
-from app.chat.normalize import fragment_product, is_use_fragment
+from app.chat.normalize import fragment_product, is_gibberish, is_use_fragment
+check("keyboard mash is gibberish",
+      is_gibberish("jfdlsnvipojfn vfoljvniofkdlcxn pf;kjcxv klfnc"))
+check("single long nonsense word is gibberish",
+      is_gibberish("asdfghjkl"))
+check("real words are never gibberish",
+      not is_gibberish("for candles")
+      and not is_gibberish("what is your return policy?")
+      and not is_gibberish("I need boxes")
+      and not is_gibberish("5x8+3 inches"))
+check("spanish is never gibberish",
+      not is_gibberish("Necesito cajas grandes para ropa"))
+check("short noise falls through instead",
+      not is_gibberish("xyz"))
 check("leading-prep phrase is a use fragment",
       is_use_fragment("for candles"))
 check("dangling-prep phrase is a use fragment",

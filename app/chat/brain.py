@@ -75,13 +75,13 @@ from .quote_value import is_our_own_menu, without_template_blanks
 from .repeated import SENTENCE_BREAK, repeats_the_question
 from .retrieval import _read_kb_files, retrieve
 from .normalize import (correct_query, fragment_product,
-                        interpret_fragment, is_use_fragment)
+                        interpret_fragment, is_gibberish, is_use_fragment)
 from .srag import srag_check, strip_internal_notes
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
 from .size_unit import apply_unit_answer, size_missing_unit, unit_answer
-from .slots import (_PRODUCTS, _find, extract_from_message, fuzzy_product,
-                     merge_slots, missing_fields)
+from .slots import (_PRODUCTS, _find, attach_gusset, extract_from_message,
+                     fuzzy_product, merge_slots, missing_fields)
 
 # A decline of a script field ("no", "none", "no preference"): the
 # field is recorded as "none"/"1" and the script moves on, instead
@@ -157,7 +157,15 @@ def _suggestions(slots: dict, missing: list[str], reply: str = "", language: str
         # does: pouch styles under a box question were the "mylar
         # bag suggestions" in the Oct 29 live transcript.
         if "box" in (slots.get("product") or "").lower():
-            return ["Mailer", "Tuck-end", "Rigid", "Folding carton"]
+            # The chosen type is not a style choice: offering
+            # "Mailer" as a style chip right after the visitor
+            # picked mailer as the type is the confusion in the
+            # Oct 30 live transcript (type mailer, then style
+            # chips Mailer/Tuck-end/Rigid/Folding carton).
+            _type = (slots.get("type") or "").lower()
+            return [c for c in ["Mailer", "Tuck-end", "Rigid",
+                                "Folding carton"]
+                    if c.lower() != _type]
         return ["Flat", "Stand-up", "Flat-bottom"]
     if "finishes" in missing:
         return ["Matte", "Gloss", "Soft touch", "No preference"]
@@ -1519,6 +1527,19 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "product": fragment_product(message, prior.get("product"))}
             return _intent_result(
                 f"Just to check — did you mean {_display}?")
+    # --- Gibberish guard (Oct 30 live transcript) ---
+    # Random keyboard mash gets a clarification, never a product
+    # pitch: the live stack once answered mash with a food-box
+    # suggestion. Skipped in the contact phase (a name is not
+    # mash) and when retrieval finds something (a real query in
+    # other words still flows normally).
+    if is_gibberish(message) and not retrieve(message) \
+            and not meta.get("awaiting_contact") \
+            and not meta.get("complete"):
+        return _intent_result(
+            "Sorry, I didn't quite catch that — could you say a bit "
+            "more about what you need? For example, are you looking "
+            "for mylar bags, pouches, boxes, or labels?")
     # Extraction must never crash the chat: a parser bug used to turn
     # into a 500 and the visitor saw "Message didn't send" (the
     # "15 thousand" case: float("15 thousand") raised ValueError).
@@ -1632,6 +1653,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         if _size_flavored:
             extracted.pop("quantity", None)
     slots = merge_slots(prior, extracted)
+    # Gusset with the SESSION product: a size given alone in a
+    # later turn ("5x8+3 inches") carries no product word, so
+    # extraction's own join skipped it and the size lost both the
+    # gusset and the unit (Oct 30 live transcript). The merged
+    # product is the real one — join here too.
+    if slots.get("sizes"):
+        slots["sizes"] = attach_gusset(slots["sizes"], message,
+                                       slots.get("product"))
     # A contact answer is not an order: while awaiting contact, a
     # phone number ("5551234567") must never overwrite the quantity
     # — digits answered to the phone question are a phone number,
@@ -2314,6 +2343,33 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     missing = script_missing(slots, meta)
     _gave_up = list(meta.get("gave_up") or [])
 
+    # Product-naming fact question ("what labels do you offer?"):
+    # the answer names the product, so store it and continue to
+    # size — the old path left the product empty and re-asked
+    # "what product are you looking for?" right after answering
+    # about labels (Oct 30 live transcript). Only when the top
+    # fact IS that product's own file (a shipping question that
+    # merely mentions boxes must not store boxes), only for a
+    # question (a statement keeps the old flow), and never for
+    # capability-form questions (those have their own branch
+    # with the Yes-first answer).
+    if not slots.get("product") and facts \
+            and ("?" in message or visitor_is_asking(message)) \
+            and not capability_product(message):
+        _pfile = {"kb/products/boxes.md": "box",
+                  "kb/products/labels.md": "label",
+                  "kb/products/labels-bottle-wine-spirits.md": "label",
+                  "kb/products/business-cards.md": "business card",
+                  "kb/products/banners.md": "banner",
+                  "kb/products/pouches.md":
+                      ("mylar bag" if "mylar" in low else "pouch")}
+        _pprod = _pfile.get(facts[0]["source"])
+        if _pprod and _find(low, _PRODUCTS) == _pprod:
+            slots["product"] = _pprod
+            if "product" not in meta.setdefault("answered_fields", []):
+                meta["answered_fields"].append("product")
+            missing = script_missing(slots, meta)
+
     # The purpose question's answer is context, not a script field:
     # store it and acknowledge it briefly with the next question.
     # Answering it from the KB ("shipping" -> the shipping policy)
@@ -2445,6 +2501,49 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _smiss = script_missing(slots, meta)
         _sq = _next_question_text(slots, _smiss, language)
         return _final_return(_slist + (f" {_sq}" if _sq else ""), srcs=[])
+
+    # MOQ question with a product ("minimum order for mylar
+    # bags"): answer directly from moq.md in ONE turn. The old
+    # path sent it through retrieval + SRAG, which asked a
+    # clarifying question first ("Are you asking about the
+    # MOQ...?") even though the answer is a single published
+    # sentence — and when retrieval ranked the product file
+    # first, it answered the product overview instead of the MOQ
+    # (Oct 30 live transcript, both failures). No digits: "is 300
+    # below the minimum?" is a quantity answer, not an MOQ
+    # question. Banners skip it: their minimum is genuinely
+    # different (no-minimum per the sales script, 1000-spec
+    # short runs) — the chain answers those from the KB.
+    # A product mismatch was already handled by the switch block
+    # above (it returns before reaching here), so the session
+    # product here is either the named one or none.
+    _moq_q = (re.search(r"\b(minimum order|minimum quantity|\bmoq\b)", low)
+              or (re.search(r"\bminimum\b", low)
+                  and ("?" in message or visitor_is_asking(message))))
+    if _moq_q and not re.search(r"\d", message):
+        _moq_named = _find(low, _PRODUCTS)
+        _moq_prod = slots.get("product") or _moq_named
+        if _moq_prod is None or guards.minimum_applies(_moq_prod):
+            if _moq_prod and not slots.get("product"):
+                slots["product"] = _moq_prod
+                if "product" not in meta.setdefault("answered_fields", []):
+                    meta["answered_fields"].append("product")
+            _moq_plural = {"mylar bag": "mylar bags", "box": "boxes",
+                           "pouch": "pouches", "label": "labels",
+                           "sticker": "stickers", "banner": "banners",
+                           "business card": "business cards"}.get(
+                               _moq_prod, (_moq_prod + "s") if _moq_prod else "")
+            if _moq_prod:
+                _moq_text = (f"For {_moq_plural}, the minimum order "
+                             f"quantity is 1000 units per size.")
+            else:
+                _moq_text = ("Minimum order quantity is 1000 units per "
+                             "size for most products.")
+            _moq_miss = script_missing(slots, meta)
+            _moq_nq = _next_question_text(slots, _moq_miss, language)
+            return _final_return(
+                _moq_text + (f" {_moq_nq}" if _moq_nq else ""),
+                srcs=["kb/facts/moq.md"])
 
     # Hours question ("what are your support hours?", "are you
     # guys open", "what time do you close"): _direct_answer scores
@@ -2922,6 +3021,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         # missing. Exhausted fields are skipped for the next question
         # instead of being asked a third time. Product is never given
         # up — nothing else on the script may be asked before it.
+        _newly_gave_up = None
         _last = meta.get("last_asked")
         _asks = dict(meta.get("asks") or {})
         if _last in ("product", "sizes", "style", "finishes", "quantity",
@@ -2935,6 +3035,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 meta.setdefault("gave_up", [])
                 if _last not in meta["gave_up"]:
                     meta["gave_up"].append(_last)
+                    _newly_gave_up = _last
                 missing = script_missing(slots, meta)
                 _gave_up = list(meta["gave_up"])
         _askable = [f for f in missing if _asks.get(f, 0) < MAX_ASKS]
@@ -2981,6 +3082,41 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 reply = _QUESTION_VARIANTS.get(_asked_field, reply) \
                     if _asked_field != "quantity" or not per_design_quantity(slots) \
                     else _QUESTION_VARIANTS["per_design"]
+            # Out-of-order answers + give-ups, said out loud (Oct 30
+            # live transcript): the visitor answered "matte" while
+            # style was pending, and the bot re-asked style twice
+            # with no acknowledgment — so the visitor repeated
+            # "matte", and style was then abandoned SILENTLY (it
+            # only surfaced later as "team will confirm"). A field
+            # filled this turn gets named before the pending
+            # question; a field given up this turn gets named too,
+            # instead of vanishing.
+            if _newly_gave_up:
+                _glabel = {"finishes": "finish", "skus": "designs",
+                           "sizes": "size"}.get(_newly_gave_up, _newly_gave_up)
+                reply = (f"No problem — we'll leave {_glabel} for the "
+                         f"team to confirm with you. {reply}")
+            elif not visitor_is_asking(message) \
+                    and _pend_pre not in extracted:
+                # Only when the visitor did NOT answer the field
+                # that was actually asked: answering the pending
+                # size question ("5x8+3 inches") earns the next
+                # question alone, never a "noted" line — and the
+                # value shown must be the merged one (the gusset
+                # join runs after extraction, so extracted still
+                # holds the pre-join "5x8").
+                _flabel = {"finishes": "finish", "sizes": "size",
+                           "quantity": "units", "skus": "designs",
+                           "material": "material", "style": "style",
+                           "type": "type", "extras": "", "product": ""}
+                _acked = []
+                for _k in extracted:
+                    if prior.get(_k) == extracted[_k]:
+                        continue
+                    _v = slots.get(_k, extracted[_k])
+                    _acked.append(f"{_v} {_flabel.get(_k, _k)}".strip())
+                if _acked:
+                    reply = f"Got it — {', '.join(_acked)} noted. {reply}"
             meta["last_asked"] = _asked_field
             # A quantity answer to a per-design question IS per-design
             # by construction — the split question must never re-ask it.

@@ -376,6 +376,44 @@ def _skus_in(text: str) -> str | None:
     return str(_WORD_SKUS[m.group(1)]) if m else None
 
 
+def attach_gusset(size: str | None, text: str, product: str | None) -> str | None:
+    """Join a pouch gusset onto a size: "5x8+3 inches" is ONE size
+    (width x height + gusset), never "5x8" + a unit question.
+    Only pouch-family products (boxes have no gussets), and the
+    "+N" must follow a dimension or the word gusset — "2+1
+    designs" must never become a size. A unit written after the
+    gusset ("5x8+3 inches") or an inch mark ("5x8+3\\"") stays on
+    the size, so the unit question never fires for a unit the
+    visitor already gave (Oct 30 live transcript: "5x8+3
+    inches" stored "5x8" and asked for the unit anyway, because
+    the size came alone in turn 2 and the join only saw the
+    message's own product — the brain re-runs this after merging
+    with the session product). Returns the input unchanged when
+    there is nothing to join."""
+    if not size or "+" in size:
+        return size
+    prod = product or ""
+    if not (prod in ("pouch", "mylar bag", "stand-up pouch", "bag")
+            or prod.endswith("pouch")):
+        return size
+    low = (text or "").lower()
+    gus = re.search(
+        r"\d+\s*(?:\"|″)?\s*[x×]\s*\d+\s*(?:\"|″)?\s*\+\s*(\d+(?:\.\d+)?)"
+        r"|\+\s*(\d+(?:\.\d+)?)\s*(?:\"|″|inches|inch)?\s*gusset", low)
+    n = (gus.group(1) or gus.group(2)) if gus else None
+    if not n:
+        return size
+    if size.endswith(" inches"):
+        return size[:-len(" inches")] + f"+{n} inches"
+    unit = re.search(r"\+\s*\d+(?:\.\d+)?\s*(inches|inch|cm|mm|feet|ft)\b", low)
+    if unit:
+        return size + f"+{n} {unit.group(1)}"
+    mark = re.search(r"\+\s*\d+(?:\.\d+)?\s*([\"″])", low)
+    if mark:
+        return size + f"+{n}{mark.group(1)}"
+    return size + f"+{n}"
+
+
 def extract_from_message(text: str) -> dict:
     """Deterministic slot extraction from one visitor message.
 
@@ -421,24 +459,12 @@ def extract_from_message(text: str) -> dict:
                     out["sizes"] = paper.group(0).upper()
     # Pouch gusset: "5x8+3" and "6x9 + 3\" gusset" are ONE size in
     # this shop's own format (width x height + gusset). The "+N"
-    # is stripped from quantity above; here it joins the size.
-    # Only pouch-family products: boxes have no gussets. The "+N"
-    # must follow a dimension (or the word gusset) — "2+1 designs"
-    # must never become a size.
-    _prod = out.get("product") or ""
-    if out.get("sizes") and "+" not in out["sizes"] and \
-            (_prod in ("pouch", "mylar bag", "stand-up pouch", "bag")
-             or _prod.endswith("pouch")):
-        _gus = re.search(
-            r"\d+\s*(?:\"|″)?\s*[x×]\s*\d+\s*(?:\"|″)?\s*\+\s*(\d+(?:\.\d+)?)"
-            r"|\+\s*(\d+(?:\.\d+)?)\s*(?:\"|″|inches|inch)?\s*gusset", low)
-        _gus_n = (_gus.group(1) or _gus.group(2)) if _gus else None
-        if _gus_n:
-            _sz = out["sizes"]
-            if _sz.endswith(" inches"):
-                out["sizes"] = _sz[:-len(" inches")] + f"+{_gus_n} inches"
-            else:
-                out["sizes"] = _sz + f"+{_gus_n}"
+    # is stripped from quantity above; here it joins the size
+    # (attach_gusset also keeps a unit written after the gusset).
+    # The brain re-runs the join after merging, with the session
+    # product, for sizes given alone in a later turn.
+    if out.get("sizes"):
+        out["sizes"] = attach_gusset(out["sizes"], low, out.get("product"))
     finish = _find(low, _FINISHES)
     if finish:
         out["finishes"] = normalise_finish(finish)

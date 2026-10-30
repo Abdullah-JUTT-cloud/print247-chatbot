@@ -1346,6 +1346,74 @@ check("complaint word never gets a did-you-mean",
       "did you mean" not in r["reply"].lower(),
       f"reply={r['reply'][:250]!r}")
 
+# ---------- section 36: Oct 30 live-transcript global fixes ----------
+# One live transcript, fixed globally, not per-message: gusset+unit
+# parsing, out-of-order answers, gibberish, "my order" hijack,
+# MOQ-with-product, product-naming fact questions.
+r = _steps("ev-s36-gusset", ["I need mylar bags", "5x8+3 inches"])
+check("gusset size keeps gusset + unit, never re-asks unit",
+      r[1]["slots"].get("sizes") == "5x8+3 inches"
+      and "Is that in inches" not in r[1]["reply"]
+      and "What style" in r[1]["reply"],
+      f"reply={r[1]['reply'][:160]!r} slots={r[1]['slots']}")
+r = _steps("ev-s36-style", ["I need custom boxes", "12x9x4", "Inches",
+                             "Mailer", "matte", "matte"])
+check("out-of-order finish is acknowledged before the style re-ask",
+      "matte finish noted" in r[4]["reply"].lower()
+      and "style" in r[4]["reply"].lower()
+      and "Mailer" not in r[4]["suggestions"],
+      f"reply={r[4]['reply'][:160]!r} chips={r[4]['suggestions']}")
+check("style given up after two tries is said out loud, not silent",
+      "leave style for the team" in r[5]["reply"].lower()
+      and "What quantity" in r[5]["reply"],
+      f"reply={r[5]['reply'][:160]!r}")
+r = run("ev-s36-pay", ["Can I pay cash when my order arrives?"])
+check("pay-on-arrival is a COD answer, not an existing-order handoff",
+      "Cash on delivery" in r["reply"] and r.get("handoff") is None,
+      f"reply={r['reply'][:160]!r} handoff={r.get('handoff')}")
+r = run("ev-s36-time", ["How long will my order take to arrive?"])
+check("turnaround question is a turnaround answer, not a handoff",
+      "12 to 15 business days" in r["reply"] and r.get("handoff") is None,
+      f"reply={r['reply'][:160]!r} handoff={r.get('handoff')}")
+r = run("ev-s36-where", ["Where is my order?"])
+check("genuine order-status question still hands off",
+      r.get("handoff") == "existing_customer",
+      f"reply={r['reply'][:160]!r} handoff={r.get('handoff')}")
+r = run("ev-s36-moq", ["What is the minimum order for mylar bags?"])
+check("MOQ with product answers directly in one turn",
+      "For mylar bags, the minimum order quantity is 1000 units per size." in r["reply"]
+      and "What size" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s36-moqbare", ["Do you have a minimum?"])
+check("bare minimum question gets the MOQ sentence",
+      "1000 units per size" in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+r = _steps("ev-s36-moqswitch", ["I need pouches",
+                                 "What is the minimum order for mylar bags?",
+                                 "switch to mylar bag",
+                                 "What is the minimum order for mylar bags?"])
+check("MOQ after a product switch answers directly, no clarification dance",
+      "For mylar bags, the minimum order quantity is 1000 units per size." in r[3]["reply"]
+      and "What size" in r[3]["reply"],
+      f"reply={r[3]['reply'][:200]!r}")
+r = run("ev-s36-labels", ["what labels do you offer?"])
+check("product-naming fact question stores the product, asks size",
+      r["slots"].get("product") == "label" and "What size" in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s36-gib", ["jfdlsnvipojfn vfoljvniofkdlcxn pf;kjcxv klfnc"])
+check("keyboard mash gets a clarification, never a product pitch",
+      "didn't quite catch that" in r["reply"].lower(),
+      f"reply={r['reply'][:200]!r}")
+r = _steps("ev-s36-gibmid", ["I need boxes",
+                              "jfdlsnvipojfn vfoljv"])
+check("keyboard mash mid-quote also gets a clarification",
+      "didn't quite catch that" in r[1]["reply"].lower(),
+      f"reply={r[1]['reply'][:200]!r}")
+r = run("ev-s36-span", ["Necesito cajas grandes para ropa"])
+check("spanish message is never treated as gibberish",
+      "didn't quite catch that" not in r["reply"].lower(),
+      f"reply={r['reply'][:160]!r}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

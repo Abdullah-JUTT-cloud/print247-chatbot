@@ -360,10 +360,31 @@ ALREADY_CUSTOMER_MESSAGE = (
     "Thanks for telling me — let me pass this to a team member who can look into your existing order.")
 
 
+# A question about a FUTURE order must never read as an existing
+# one: "my order" alone in the pattern below hijacked both "Can I
+# pay cash when my order arrives?" (a COD question) and "How long
+# will my order take to arrive?" (a turnaround question) into the
+# existing-order handoff (Oct 30 live transcript). The exclusion
+# lifts only when a past/complaint cue is present ("hasn't
+# arrived, how long?" is still a status question).
+_FUTURE_ORDER_QUESTION = re.compile(
+    r"how long[^.?!]{0,40}\b(arrive|arrives|deliver|delivery)\b"
+    r"|\btake to (arrive|deliver)\b"
+    r"|\bwhen (?:will )?my order (?:arrives?|will arrive)\b"
+    r"|\bpay (cash|on delivery)\b|\bcash on delivery\b|\bpay on delivery\b",
+    re.IGNORECASE)
+_PAST_ORDER_CUE = re.compile(
+    r"\b(haven'?t|have not|hasn'?t|has not|didn'?t|did not|never|late|delayed|wrong|damaged|status|track|refund|cancel|where is)\b",
+    re.IGNORECASE)
+
+
 def is_already_a_customer(text: str) -> bool:
     """Deliberately narrow: 'order' alone is not enough (plenty of new
     enquiries say 'I want to order'); it needs past tense, a delivery
     that has not arrived, or a complaint about an existing order."""
+    if _FUTURE_ORDER_QUESTION.search(text or "") \
+            and not _PAST_ORDER_CUE.search(text or ""):
+        return False
     return bool(_ALREADY_A_CUSTOMER.search(text or ""))
 
 
