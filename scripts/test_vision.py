@@ -4,7 +4,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, ".")
-from app.chat.uploads import save_upload, safe_filename, validate_upload
+from app.chat.uploads import (resolve_image, save_upload, safe_filename,
+                              validate_upload)
 from app.chat.vision import describe_image
 
 FAILURES = []
@@ -55,6 +56,18 @@ with tempfile.TemporaryDirectory() as td:
           os.path.isfile(os.path.join(td, "sess-1", stored)))
     with open(os.path.join(td, "sess-1", stored), "rb") as fh:
         check("bytes round-trip", fh.read() == b"PNGDATA")
+    check("stored image resolves",
+          resolve_image(td, "sess-1", stored) is not None)
+    check("traversal name never resolves",
+          resolve_image(td, "sess-1", "../sess-1/" + stored) is None
+          and resolve_image(td, "sess-1", "../../etc/passwd") is None)
+    check("missing file never resolves",
+          resolve_image(td, "sess-1", "deadbeef-nope.png") is None)
+    pdf_stored = save_upload(td, "sess-1", "art.pdf", b"PDFDATA")
+    check("non-image never resolves",
+          resolve_image(td, "sess-1", pdf_stored) is None)
+    check("other session never resolves",
+          resolve_image(td, "sess-2", stored) is None)
 
 print(f"VISION: {len(FAILURES)} failed")
 if FAILURES:

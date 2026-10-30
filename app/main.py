@@ -40,7 +40,7 @@ import os
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
@@ -50,7 +50,7 @@ from .admin_auth import (COOKIE, admin_config, check_credentials,
 from .chat.brain import handle_message
 from .chat.monitoring import (learned_facts_html, monitoring_html,
                               summarize_turns, turn_flags)
-from .chat.uploads import save_upload, validate_upload
+from .chat.uploads import resolve_image, save_upload, validate_upload
 from .chat.vision import IMAGE_MIMES, describe_image, openai_vision_fn
 from .chat.store import get_store
 from .web import ADMIN_HTML, CHAT_HTML
@@ -351,11 +351,29 @@ async def chat_upload(request: Request):
         msg = f"Here's what I can see in your design: {desc}"
     else:
         msg = "Thanks — I've saved your design file with this quote."
-    _log_chat(f"[design file uploaded: {filename}]", str(session_id),
+    # The log row carries the STORED name (uuid prefix), not the
+    # original: history restore rebuilds the image URL from it, and
+    # the original name stays in meta for the confirmation note.
+    _log_chat(f"[design file uploaded: {stored}]", str(session_id),
               {"reply": msg, "sources": [], "suggestions": [],
                "handoff": None, "llm_used": bool(desc), "language": "en"})
     return {"ok": True, "file": filename, "stored": stored,
             "description": desc, "reply": msg}
+
+
+@app.get("/api/chat/file")
+def chat_file(session_id: str, name: str):
+    """Serve one stored design image back to its own chat, so the
+    visitor sees the picture they sent instead of only its name.
+    Images only (never AI/EPS/ZIP), and only inside the session's
+    own folder — resolve_image refuses traversal names outright."""
+    path = resolve_image("uploads", session_id or "web-ui", name or "")
+    if path is None:
+        return {"ok": False, "detail": "File not found."}
+    media = {"png": "image/png", "jpg": "image/jpeg",
+             "jpeg": "image/jpeg", "webp": "image/webp"}[
+                 path.rsplit(".", 1)[-1].lower()]
+    return FileResponse(path, media_type=media)
 
 
 @app.get("/api/chat/history")

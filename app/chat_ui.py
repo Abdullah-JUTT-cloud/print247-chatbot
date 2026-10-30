@@ -612,6 +612,8 @@ body.widget-mode .widget-only { display: inline-flex; }
 .bubble ul, .bubble ol { margin: .3em 0 .65em; padding-left: 1.15em; }
 .bubble li { margin: .18em 0; padding-left: .15em; }
 .bubble li::marker { color: var(--accent); }
+.bubble img.design-img { display: block; max-width: 260px; max-height: 320px; width: auto; height: auto; border-radius: 12px; margin: 0 0 .4em; object-fit: contain; background: rgba(255,255,255,.06); }
+.bubble .design-name { font-size: .82em; opacity: .75; word-break: break-all; }
 .bubble h4 { margin: .25em 0 .4em; font-family: var(--font-display); font-size: 1.02em; letter-spacing: -.01em; }
 .bubble code {
   padding: .08em .32em; border: 1px solid var(--border); border-radius: 5px;
@@ -1639,6 +1641,26 @@ function addMe(t, quote, stamp) {
     `<div class="msg-meta">${stampHTML(stamp)}</div></div></div>`;
   insert(html, true);
 }
+function isDesignImageName(name) {
+  return /\.(png|jpe?g|webp)$/i.test(name || '');
+}
+function designFileURL(stored) {
+  return '/api/chat/file?session_id=' + encodeURIComponent(sessionId) +
+    '&name=' + encodeURIComponent(stored);
+}
+function designDisplayName(stored) {
+  return String(stored || '').replace(/^[0-9a-f]{8}-/, '');
+}
+function addMeImage(name, url, stamp) {
+  if (stamp === undefined) stamp = timeNow();
+  const grouped = lastSender() === 'me' ? ' grouped' : '';
+  const html = `<div class="row me${grouped}"><div class="msg-stack">` +
+    `<div class="bubble"><img class="design-img" src="${esc(url)}" alt="${esc(name)}">` +
+    `<div class="design-name">${esc(name)}</div></div>` +
+    `<div class="msg-meta">${stampHTML(stamp)}</div></div></div>`;
+  insert(html, true);
+  return log.lastElementChild;
+}
 function typingRow() {
   removeTyping();
   const html = `<div class="row bot" id="typing">` + avatarHTML() +
@@ -1852,17 +1874,37 @@ function pickDesignFile() {
 }
 async function uploadDesign(file) {
   if (!file) return;
+  const isImg = (file.type || '').startsWith('image/') || isDesignImageName(file.name);
   const fd = new FormData();
   fd.append('session_id', sessionId);
   fd.append('file', file);
-  addMe('Design file: ' + file.name);
+  // Images show at once (local preview), then the src swaps to the
+  // saved server copy once the upload lands — so the picture is
+  // visible while vision is still reading it, and survives a
+  // refresh through /api/chat/file. Other files keep the text row.
+  let row = null;
+  let previewURL = null;
+  if (isImg) {
+    previewURL = URL.createObjectURL(file);
+    row = addMeImage(file.name, previewURL);
+  } else {
+    addMe('Design file: ' + file.name);
+  }
   try {
     const r = await fetch('/api/chat/upload', { method: 'POST', body: fd });
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.detail || 'upload failed');
+    if (row && d.stored) {
+      const img = row.querySelector('img.design-img');
+      if (img) img.src = designFileURL(d.stored);
+    }
     addBot(d.reply, [], [], undefined, d);
   } catch (err) {
+    if (row) row.remove();
+    if (isImg) addMe('Design file: ' + file.name);
     showToast('Could not upload that file — please try a PNG, JPG, PDF, AI, EPS or ZIP file under 10MB.');
+  } finally {
+    if (previewURL) URL.revokeObjectURL(previewURL);
   }
 }
 
@@ -1916,7 +1958,15 @@ showSkeleton();
     if (h && h.length) {
       log.innerHTML = '';
       h.forEach(m => {
-        if (m.reply_to) addMe(m.message, m.reply_to, null);
+        // Upload rows carry the stored name: new-format rows show
+        // the picture again, old rows (original name, no server
+        // copy under that name) fall back to the text row.
+        const up = /^\[design file uploaded: (.+)\]$/.exec(m.message || '');
+        if (up && /^[0-9a-f]{8}-/.test(up[1]) && isDesignImageName(up[1])) {
+          addMeImage(designDisplayName(up[1]), designFileURL(up[1]), null);
+        } else if (up) {
+          addMe('Design file: ' + designDisplayName(up[1]), null, null);
+        } else if (m.reply_to) addMe(m.message, m.reply_to, null);
         else addMe(m.message, null, null);
         addBot(m.reply, m.suggestions || [], m.sources || [], null, null);
       });
