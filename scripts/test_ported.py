@@ -184,7 +184,7 @@ check("brain: yes -> name -> email -> phone -> Texas complete",
       r["handoff"] == "complete" and r.get("contact", {}).get("email") == "sara@example.com"
       and r["slots"].get("quantity") == "5000")
 r = run("p-contact2", _SCRIPT + ["Yes, that's correct",
-                                 "no", "no", "no"])
+                                 "no", "no", "no", "no"])
 check("brain: contact refusals still finish, flagged no-contact",
       r["handoff"] == "complete_no_contact")
 r = run("p-unit", ["I need labels", "50x30", "mm"])

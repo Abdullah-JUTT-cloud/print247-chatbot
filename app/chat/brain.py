@@ -54,6 +54,7 @@ from .websearch import web_search
 from .fact_topics import asks_bare_fact_topic, fact_topics_asked, topic_query
 from .finished import (NOTED_AFTER_THE_QUOTE, NOT_SENT_YET, SIGN_OFFS,
                        asks_if_it_arrived, is_pleasantry)
+from .glossary import explain_term
 from .i18n import tr as _tr
 from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A_PRICE_OBJECTION,
                       ANSWER_TO_ARE_YOU_A_BOT, ANSWER_TO_SAMPLES, BYE_ANSWER, DONE_WITH_US_MESSAGE,
@@ -435,7 +436,10 @@ _SUGGESTION_ANSWERS = {
         "For beef jerky boxes, food boxes work — 14pt to 16pt lightweight, "
         "18pt to 20pt standard, 24pt heavy duty.",
     ("coffee", "mylar bag"):
-        "For coffee, we suggest coffee pouches.",
+        "For coffee, we suggest coffee pouches — these are mylar "
+        "pouches with high-barrier metalized foil for maximum "
+        "protection, and only FDA-approved food-grade materials are "
+        "used for food. You can also add a degassing valve.",
     ("coffee", "box"):
         "For coffee, food and beverage boxes work — 14pt to 16pt lightweight, "
         "18pt to 20pt standard, 24pt heavy duty.",
@@ -708,12 +712,12 @@ def _named_types(text: str, product: str) -> list[str]:
     return _out
 
 
-def _is_img_yes(low: str) -> bool:
-    """Yes to the design-image question — deliberately NARROW.
+def _is_short_yes(low: str) -> bool:
+    """A short yes to a yes/no question — deliberately NARROW.
     The confirm handler's broad yes-regex would eat slot answers,
     and here that matters: "Yes, kraft" must stay a material
-    answer, not an image yes. Only a bare yes, or a yes that says
-    they have one, counts."""
+    answer, not a yes. Only a bare yes, or a yes that says they
+    have one, counts."""
     s = low.strip().strip(".,!? ")
     if s in ("yes", "yeah", "yep", "ok", "okay", "sure", "haan", "han",
              "ji", "sí", "si"):
@@ -722,9 +726,9 @@ def _is_img_yes(low: str) -> bool:
                                                 "yes i have one")
 
 
-def _is_img_no(low: str) -> bool:
-    """No to the design-image question — deliberately NARROW.
-    "No preference" is an extras/material answer, NOT an image no
+def _is_short_no(low: str) -> bool:
+    """A short no to a yes/no question — deliberately NARROW.
+    "No preference" is an extras/material answer, NOT a no
     (the broad no-regex ate it and broke four full-flow tests).
     Only a bare no, the chip text, or a no-that-says-they-have-no-
     image counts."""
@@ -738,6 +742,184 @@ def _is_img_no(low: str) -> bool:
     if re.search(r"\bno (image|design|photo|picture)\b", low):
         return True
     return False
+
+
+# Product families (Oct 30 senior transcript): a generic "bag"
+# inside a use phrase ("coffee bag") is NOT a product switch away
+# from a bag-family quote, and a bag-family product answers the
+# mylar-bag suggestion entries. Label family likewise.
+_BAG_FAMILY = {"mylar bag", "pouch", "bag", "stand-up pouch",
+               "flat pouch", "flat-bottom pouch"}
+_LABEL_FAMILY = {"label", "sticker"}
+
+
+def _product_family(product: str | None) -> str | None:
+    if product in _BAG_FAMILY:
+        return "bag"
+    if product in _LABEL_FAMILY:
+        return "label"
+    return product
+
+
+def _same_family(a: str | None, b: str | None) -> bool:
+    return a is not None and _product_family(a) == _product_family(b)
+
+
+def _suggest_key_product(product: str | None) -> str | None:
+    """Suggestion-map key: bag-family products answer the mylar-bag
+    entries (a fresh "which is best for coffee bags" has product
+    "bag", but the KB-grounded answer lives under mylar bag)."""
+    if product in _BAG_FAMILY:
+        return "mylar bag"
+    return product
+
+
+def _size_dim_count(sizes: str | None) -> int:
+    """How many dimensions a stored size has: "4x6 inches" -> 2,
+    "4x6x4 inches" -> 3, "10 length x 6 width inches" -> 2."""
+    if not sizes:
+        return 0
+    s = (sizes or "").lower()
+    s = re.sub(r"\b(length|width|height|depth|long|wide|tall)\b", " ", s)
+    s = re.sub(r"\b(inches?|inch|in|mm|cm|feet|ft|\"|″)\b", " ", s)
+    s = re.sub(r"[^\dx×*]", " ", s)
+    parts = [p for p in re.split(r"[x×*]", s) if p.strip()]
+    return len(parts)
+
+
+def _size_unit(sizes: str | None) -> str:
+    m = re.search(r"(inches?|inch|mm|cm|feet|ft|\"|″)\b",
+                  (sizes or "").lower())
+    return m.group(1) if m else "inches"
+
+
+# Extra variants, every word KB-grounded (extras.md, pouches-mylar-
+# filling-use.md): hang holes come as round / sombrero / Euro hole;
+# zippers as child-resistant / easy-open standard. Valve has only
+# one KB type (degassing), so it never asks — it stays plain.
+_EXTRA_VARIANTS = {
+    "hang hole": [("round", "Round"), ("sombrero", "Sombrero"),
+                  ("euro", "Euro hole")],
+    "zipper": [("child", "Child-resistant"),
+               ("easy-open", "Easy-open standard"),
+               ("easy open", "Easy-open standard"),
+               ("standard", "Easy-open standard")],
+}
+
+
+def _variant_in(text: str, extra: str) -> str | None:
+    low = (text or "").lower()
+    for word, label in _EXTRA_VARIANTS.get(extra, []):
+        if word in low:
+            return label
+    return None
+
+
+def _attach_extra_variant(extras: str, extra: str, variant: str) -> str:
+    """'hang hole' -> 'hang hole (Round)' inside a ', '-joined
+    extras string; other extras untouched."""
+    parts = [p.strip() for p in (extras or "").split(",") if p.strip()]
+    out = []
+    for p in parts:
+        if p == extra:
+            out.append(f"{extra} ({variant})")
+        else:
+            out.append(p)
+    return ", ".join(out)
+
+
+def _is_depth_no(low: str) -> bool:
+    s = low.strip().strip(".,!? ")
+    if s in ("no", "nope", "nah", "nahi", "no need", "not needed",
+             "no, not needed", "no depth", "no thanks"):
+        return True
+    return "enough" in low or s.startswith("no need")
+
+
+def _parse_single_dimension(text: str) -> str | None:
+    """A lone depth answer: '4', '4 inches', '4in', '4"' -> '4'."""
+    m = re.fullmatch(
+        r"\s*(\d+(?:\.\d+)?)\s*(?:inches?|inch|in|mm|cm|feet|ft|\"|″)?\s*[.!?]*\s*",
+        (text or ""), re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def _llm_ack_sentence(message: str, asked: str) -> str | None:
+    """One short acknowledging sentence for a slot-collection turn
+    the code could not parse (Oct 30: 'AI on every message to make
+    things clear'). It NEVER asks a question and NEVER states a
+    product fact — the deterministic pending question follows it.
+    None without a key or on any failure: the deterministic re-ask
+    stands on its own."""
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return None
+    try:
+        from openai import OpenAI
+
+        client = OpenAI()
+        resp = client.chat.completions.create(
+            model=os.environ.get("HELPER_MODEL", "gpt-5-nano"),
+            messages=[
+                {"role": "system",
+                 "content": (
+                     "The visitor is answering a packaging sales chat. "
+                     "They just said something the script could not parse. "
+                     "Reply with ONE short sentence (under 20 words) "
+                     "acknowledging what they most likely mean, in plain "
+                     "friendly words. Do NOT ask a question. Do NOT mention "
+                     "products, prices, materials or facts. If you cannot "
+                     "tell what they mean, reply exactly: Got it — thanks "
+                     "for sharing that.")},
+                {"role": "user",
+                 "content": f"Visitor said: {message[:300]}\nWe asked: {asked[:200]}"},
+            ],
+            timeout=10,
+        )
+        out = (resp.choices[0].message.content or "").strip()
+        if not out or "?" in out:
+            return None
+        return out
+    except Exception:
+        return None
+
+
+# Words that are never an unlisted product: "i need help" must not
+# become "we don't make help".
+_UNLISTED_STOPLIST = {
+    "help", "quote", "quotes", "sample", "samples", "price", "pricing",
+    "info", "information", "call", "callback", "design", "designs",
+    "artwork", "file", "files", "image", "images", "logo", "delivery",
+    "shipping", "refund", "return", "support", "team", "person",
+    "human", "agent", "catalog", "catalogue", "list", "options",
+    "something", "anything", "everything", "it", "them", "this",
+    "that", "one", "ones", "stuff", "things", "product", "products",
+    "packaging", "order", "orders", "details", "question", "questions",
+}
+
+
+def _unlisted_candidate(message: str) -> str | None:
+    """The ordered thing when it is NOT one of our products: 'i need
+    tins' -> 'tins'. None when a listed product matches, the message
+    is a question, or the noun is a stoplisted non-product."""
+    low = (message or "").lower().strip()
+    if "?" in low:
+        return None
+    m = re.match(
+        r"^(?:i\s+)?(?:need|want|looking for|get|order|buy)\s+"
+        r"(?:a\s+|an\s+|some\s+|custom\s+)?([a-z][a-z\- ]*?)\s*"
+        r"(?:for\b|[.!?]|$)", low)
+    if not m:
+        return None
+    cand = m.group(1).strip()
+    if not cand or cand in _UNLISTED_STOPLIST:
+        return None
+    words = cand.split()
+    if any(w in _UNLISTED_STOPLIST for w in words):
+        return None
+    if len(words) > 2:
+        cand = " ".join(words[:2])
+    return cand
 
 
 def _design_files_note(meta: dict) -> str:
@@ -1088,7 +1270,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                                           # confirmation answer.
                                           "necesito", "quiero", "quisiera"))
 
-    def _intent_result(reply, handoff=None, suggestions=None, contact=None):
+    def _intent_result(reply, handoff=None, suggestions=None, contact=None,
+                       sources=None):
         # Old max-turns rule (12 AI messages): count bot replies here
         # and in the final branch; the contact flow is bounded by its
         # 3 fields x 2 asks, so it cannot hit the cap on its own.
@@ -1096,7 +1279,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _save_session(store, session_id, prior)
         _save_meta(store, session_id, meta)
         _res = {"reply": reply, "language": language, "slots": prior,
-                "missing": script_missing(prior, meta), "sources": [],
+                "missing": script_missing(prior, meta),
+                "sources": sources if sources is not None else [],
                 "handoff": handoff, "llm_used": False,
                 "suggestions": suggestions if suggestions is not None else []}
         # Callers that answer from stored data (own-data) carry the
@@ -1191,7 +1375,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # a material answer ("kraft") right after the image question
     # is never swallowed as a yes/no.
     _img_state = meta.pop("awaiting_design_image", None)
-    if _img_state and _is_img_yes(low):
+    if _img_state and _is_short_yes(low):
         _imiss = script_missing(prior, meta)
         _ireply = ("Great — please attach it with the paperclip button "
                    "below.")
@@ -1199,7 +1383,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _ireply += " " + _next_question_text(prior, _imiss, language)
         meta["last_bot_question"] = _ireply
         return _intent_result(_ireply)
-    elif _img_state and _is_img_no(low):
+    elif _img_state and _is_short_no(low):
         _imiss = script_missing(prior, meta)
         _ireply = ("No problem — we offer free design support, so the "
                    "team can help create your design.")
@@ -1207,6 +1391,158 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _ireply += " " + _next_question_text(prior, _imiss, language)
         meta["last_bot_question"] = _ireply
         return _intent_result(_ireply)
+
+    # Depth answer (Oct 30 senior transcript): the box depth
+    # question is pending. A lone dimension appends to the size, a
+    # no continues with width x height, "add depth" asks for the
+    # number — anything else pops the state and flows normally.
+    _dep_val = meta.pop("awaiting_depth_value", None)
+    _dep = meta.pop("awaiting_depth", None)
+    if _dep_val:
+        _dd = _parse_single_dimension(message)
+        if _dd:
+            _dbase = re.sub(r"\s*(inches?|inch|in|mm|cm|feet|ft|\"|″)\s*$",
+                            "", prior.get("sizes", ""))
+            _dunit = _size_unit(prior.get("sizes"))
+            prior["sizes"] = f"{_dbase}x{_dd} {_dunit}"
+            _dmiss = script_missing(prior, meta)
+            _dreply = f"Got it — depth {_dd} {_dunit} added."
+            if _dmiss:
+                _dreply += " " + _next_question_text(prior, _dmiss, language)
+            meta["last_bot_question"] = _dreply
+            return _intent_result(
+                _dreply,
+                suggestions=_suggestions(prior, _dmiss, _dreply, language))
+    elif _dep:
+        if _is_depth_no(low):
+            _dmiss = script_missing(prior, meta)
+            _dreply = "Got it — we'll go with width x height."
+            if _dmiss:
+                _dreply += " " + _next_question_text(prior, _dmiss, language)
+            meta["last_bot_question"] = _dreply
+            return _intent_result(
+                _dreply,
+                suggestions=_suggestions(prior, _dmiss, _dreply, language))
+        _dd = _parse_single_dimension(message)
+        if _dd:
+            _dbase = re.sub(r"\s*(inches?|inch|in|mm|cm|feet|ft|\"|″)\s*$",
+                            "", prior.get("sizes", ""))
+            _dunit = _size_unit(prior.get("sizes"))
+            prior["sizes"] = f"{_dbase}x{_dd} {_dunit}"
+            _dmiss = script_missing(prior, meta)
+            _dreply = f"Got it — depth {_dd} {_dunit} added."
+            if _dmiss:
+                _dreply += " " + _next_question_text(prior, _dmiss, language)
+            meta["last_bot_question"] = _dreply
+            return _intent_result(
+                _dreply,
+                suggestions=_suggestions(prior, _dmiss, _dreply, language))
+        if _is_short_yes(low) or "add depth" in low:
+            meta["awaiting_depth_value"] = True
+            _dreply = (f"What depth do you need, "
+                       f"in {_size_unit(prior.get('sizes'))}?")
+            meta["last_bot_question"] = _dreply
+            return _intent_result(_dreply)
+
+    # Extra-variant answer (Oct 30 senior transcript): a hang-hole
+    # or zipper type was asked. A named variant attaches to the
+    # extra ("hang hole (Round)"); anything else pops the state
+    # and flows normally — the extra itself stays, untyped.
+    _var_state = meta.pop("awaiting_extra_variant", None)
+    if _var_state:
+        _vv = _variant_in(message, _var_state)
+        if _vv:
+            prior["extras"] = _attach_extra_variant(
+                prior.get("extras", ""), _var_state, _vv)
+            _vmiss = script_missing(prior, meta)
+            _vreply = f"Got it — {_vv} {_var_state} noted."
+            if _vmiss:
+                _vreply += " " + _next_question_text(prior, _vmiss, language)
+            meta["last_bot_question"] = _vreply
+            return _intent_result(
+                _vreply,
+                suggestions=_suggestions(prior, _vmiss, _vreply, language))
+
+    # Unlisted-offer answer (Oct 30 senior transcript): "we don't
+    # make tins, but labels for tins are possible". Yes starts the
+    # labels quote; "something else" (or a no) goes back to the
+    # product question; anything else pops and flows normally.
+    _unl_state = meta.pop("unlisted_offer", None)
+    if _unl_state:
+        if _is_short_yes(low) or "labels for" in low:
+            prior["product"] = "label"
+            if "product" not in meta.setdefault("answered_fields", []):
+                meta["answered_fields"].append("product")
+            _umiss = script_missing(prior, meta)
+            _ureply = f"Great — labels for {_unl_state} it is."
+            if _umiss:
+                _ureply += " " + _next_question_text(prior, _umiss, language)
+            meta["last_bot_question"] = _ureply
+            return _intent_result(
+                _ureply,
+                suggestions=_suggestions(prior, _umiss, _ureply, language))
+        if _is_short_no(low) or "something else" in low:
+            _uq = _next_question_text(prior, script_missing(prior, meta),
+                                      language)
+            meta["last_bot_question"] = _uq
+            return _intent_result(
+                _uq,
+                suggestions=_suggestions(prior, script_missing(prior, meta),
+                                         _uq, language))
+
+    # Glossary (Oct 30 senior transcript): "what is sku?", "what
+    # is flat-bottom?" — explain, then re-ask the pending question.
+    # Never advance past an unclear term: the explanation PLUS the
+    # pending question is the whole reply.
+    _pend_gloss = (script_missing(prior, meta) or [None])[0]
+    _gloss = explain_term(message, _pend_gloss)
+    if _gloss:
+        _expl, _gsrc = _gloss
+        _gmiss = script_missing(prior, meta)
+        _greply = _expl
+        if _gmiss:
+            _greply += " " + _next_question_text(prior, _gmiss, language)
+        meta["last_bot_question"] = _greply
+        return _intent_result(
+            _greply,
+            suggestions=_suggestions(prior, _gmiss, _greply, language),
+            sources=_gsrc)
+
+    # Confusion (Oct 30 senior transcript: "what a joke"): do not
+    # advance. Restate where the quote stands and what is needed
+    # next, so the visitor can see what went wrong.
+    if prior.get("product") and script_missing(prior, meta) and (
+            re.search(r"\bwhat a joke\b|\bconfus\w*\b|\bdon'?t understand\b|"
+                      r"\bmakes no sense\b|\bi'?m lost\b", low)
+            or low.strip().strip("?.! ") in ("what", "huh")):
+        _cmiss = script_missing(prior, meta)
+        _spec = _spec_parts(prior, meta.get("gave_up") or [],
+                            meta.get("qty_split"))
+        _creply = (f"No worries — here's where we are: {_spec}. "
+                   f"Next I need: {_next_question_text(prior, _cmiss, language)}")
+        meta["last_bot_question"] = _creply
+        return _intent_result(
+            _creply,
+            suggestions=_suggestions(prior, _cmiss, _creply, language))
+
+    # Unlisted product order (Oct 30 senior transcript): "i need
+    # tins" must not get the generic product question. Say plainly
+    # we don't make it, and offer what we DO make for it — labels
+    # and stickers. Only for order phrasing with no listed product
+    # (capability questions keep their own path; the "?" guard in
+    # _unlisted_candidate excludes them).
+    if not prior.get("product") and _is_order \
+            and _find(low, _PRODUCTS) is None:
+        _cand = _unlisted_candidate(message)
+        if _cand and _find(_cand, _PRODUCTS) is None:
+            meta["unlisted_offer"] = _cand
+            _ureply = (f"We don't make {_cand}, but we do print labels "
+                       f"and stickers for {_cand}. Would you like labels "
+                       f"for your {_cand}?")
+            meta["last_bot_question"] = _ureply
+            return _intent_result(
+                _ureply,
+                suggestions=[f"Labels for {_cand}", "Something else"])
 
     if is_looking_for_work(message) or chat_is_a_pitch([message]):
         return _intent_result(JOB_MESSAGE if is_looking_for_work(message) else PITCH_MESSAGE,
@@ -1333,7 +1669,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if asks_for_suggestion(message):
         _s_use = suggestion_use(message, meta.get("visitor_messages") or [])
         _s_prod = suggestion_product(message, prior.get("product"))
-        _s_ans = _SUGGESTION_ANSWERS.get((_s_use, _s_prod)) if _s_use else None
+        _s_ans = _SUGGESTION_ANSWERS.get(
+            (_s_use, _suggest_key_product(_s_prod))) if _s_use else None
         if _s_prod:
             prior["product"] = _s_prod
             meta.setdefault("answered_fields", [])
@@ -1358,6 +1695,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                                            script_missing(prior, meta), language)
             meta["last_bot_question"] = _s_reply
             meta["last_asked"] = (script_missing(prior, meta) or [None])[0]
+            if _s_use:
+                meta.setdefault("suggested_uses", []).append(_s_use)
             return _intent_result(_s_reply)
         # Unmapped use: do NOT fall through to the bare script
         # question — that ignored the suggestion entirely. First
@@ -1860,6 +2199,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 contact[_field] = _candidate
                 meta["contact"] = contact
                 meta.setdefault("asks", {})[_field] = 0
+                if _field == "email":
+                    meta.pop("email_insists", None)
                 _next = (_missing_contact(meta, contact) or [None])[0]
                 if _next is None:
                     meta["awaiting_contact"] = False
@@ -1883,6 +2224,29 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "reply": _q, "language": language, "slots": slots,
                     "missing": missing_fields(slots), "sources": _slot_sources(slots),
                     "handoff": None, "llm_used": False, "suggestions": [], "contact": contact,
+                }
+            if _field == "email" and not _usable and _outcome != "free" \
+                    and meta.get("email_insists", 0) < 1:
+                # Email is COMPULSORY (Oct 30 senior direction): it
+                # is step 2 of contact and the quote cannot be sent
+                # without it. One refusal never retires it the way
+                # phone does — insist with the reason and re-ask.
+                # A SECOND refusal retires it like any other field:
+                # otherwise a determined refuser is trapped in an
+                # email loop forever, and the honest no-contact
+                # close could never be reached.
+                meta["email_insists"] = 1
+                meta["last_asked"] = "email"
+                _save_session(store, session_id, slots)
+                _save_meta(store, session_id, meta)
+                return {
+                    "reply": ("I need an email to send your quote — "
+                              + _contact_question("email", language)),
+                    "language": language, "slots": slots,
+                    "missing": missing_fields(slots),
+                    "sources": _slot_sources(slots), "handoff": None,
+                    "llm_used": False, "suggestions": [],
+                    "contact": contact,
                 }
             if _outcome == "free":
                 # They asked us something instead of answering: answer
@@ -2058,6 +2422,17 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "handoff": None, "llm_used": False,
                     "suggestions": _suggestions(slots, _cmiss, _creply, language)}
         _pend_pre2 = (script_missing(prior, meta) or [None])[0]
+        # Generic "bag" is not a switch (Oct 30 senior transcript):
+        # "i need coffee bag" mid-mylar-quote is a USE (coffee), not
+        # a new order — the old code asked "switch to bag?". A
+        # generic bag never leaves a bag-family quote; the session
+        # product is restored so the quote does not downgrade
+        # mylar bag -> bag, and extraction's product is aligned so
+        # the ack block does not announce a "bag product" change.
+        if extracted.get("product") == "bag" \
+                and prior.get("product") in _BAG_FAMILY:
+            slots["product"] = prior["product"]
+            extracted["product"] = prior["product"]
         if extracted.get("product") and extracted["product"] != prior["product"] \
                 and not (_pend_pre2 and _pend_pre2 in extracted) and _is_order:
             meta["pending_switch"] = {"product": extracted["product"],
@@ -2169,7 +2544,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "suggestions": _suggestions(slots, ["sizes"], language=language),
         }
     if low in ("yes", "yes, that's correct", "yes thats correct",
-               "yes, that's right", "confirm", "confirmed", "correct") \
+               "yes, that's right", "confirm", "confirmed", "correct",
+               "ok", "okay", "yeah", "yep") \
             and script_complete(slots, meta):
         # Whole-chat not-a-customer check: a job seeker who later
         # typed an order word is still not a lead if the chat as a
@@ -2995,12 +3371,20 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             if "extras" not in meta["answered_fields"]:
                 meta["answered_fields"].append("extras")
         elif _last == "skus":
+            # Only a real count answers the designs question. The
+            # old code marked skus answered whenever slots had ANY
+            # value — and skus defaults to "1", so ANY non-question
+            # message ("something for my shop") silently recorded
+            # 1 design the visitor never said, and the image
+            # question fired a step early (Oct 30 senior round).
             _m = _BARE_NUMBER.match(message.strip())
             if _m:
                 slots["skus"] = _m.group(1)
+                meta.setdefault("answered_fields", [])
+                if "skus" not in meta["answered_fields"]:
+                    meta["answered_fields"].append("skus")
             elif message.strip().lower() in _BARE_SPELLED:
                 slots["skus"] = _BARE_SPELLED[message.strip().lower()]
-            if slots.get("skus"):
                 meta.setdefault("answered_fields", [])
                 if "skus" not in meta["answered_fields"]:
                     meta["answered_fields"].append("skus")
@@ -3090,6 +3474,47 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         llm_used = False
         sources = _slot_sources(slots)
     elif not is_fact_question or (is_fact_question and len(facts) == 1):
+        # Box depth (Oct 30 senior transcript): the size question
+        # asks width x height x depth, but the visitor gave two
+        # numbers. Ask about the third before moving on; "no need"
+        # continues with two. Only for boxes (bags take width x
+        # height + gusset), only with a unit already on the size
+        # (the unit question runs first otherwise), only once.
+        if slots.get("product") == "box" and slots.get("sizes") \
+                and not meta.get("depth_asked") and not is_fact_question \
+                and _size_dim_count(slots.get("sizes")) == 2 \
+                and re.search(r"(inches?|inch|mm|cm|feet|ft|\"|″)\b",
+                              (slots.get("sizes") or "").lower()):
+            meta["depth_asked"] = True
+            meta["awaiting_depth"] = True
+            return _final_return(
+                f"You gave width x height ({slots.get('sizes')}). Do you "
+                f"need a depth for the box as well, or is width x height "
+                f"enough?",
+                suggestions=["Add depth", "No need"])
+        # Extra variants (Oct 30 senior transcript): an extra named
+        # without its type is unclear — "hang hole" has round /
+        # sombrero / Euro types. A variant word in this same message
+        # attaches at once; otherwise ask once (the asked flag, not
+        # the awaiting flag, prevents re-asks when the visitor
+        # answers something else).
+        _slots_extras = [p.strip() for p in
+                         (slots.get("extras") or "").split(",")
+                         if p.strip()]
+        for _ex in _slots_extras:
+            if _ex in _EXTRA_VARIANTS and not is_fact_question \
+                    and not (meta.get("extra_variant_asked") or {}).get(_ex):
+                _mv = _variant_in(message, _ex)
+                if _mv:
+                    slots["extras"] = _attach_extra_variant(
+                        slots.get("extras", ""), _ex, _mv)
+                else:
+                    meta.setdefault("extra_variant_asked", {})[_ex] = True
+                    meta["awaiting_extra_variant"] = _ex
+                    return _final_return(
+                        f"Which type of {_ex} do you need?",
+                        suggestions=[lbl for _, lbl in
+                                     _EXTRA_VARIANTS[_ex]])
         # Design-image question (Oct 30): once the designs step is
         # resolved (count given, or given up after 2 tries) AND
         # every earlier step is resolved or given up (a volunteered
@@ -3214,6 +3639,36 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     _acked.append(f"{_v} {_flabel.get(_k, _k)}".strip())
                 if _acked:
                     reply = f"Got it — {', '.join(_acked)} noted. {reply}"
+            # Volunteered use (Oct 30 senior transcript): "i need
+            # coffee bag" mid-quote is not a slot, so the ack above
+            # stays silent — but the visitor's use still deserves
+            # its suggestion before the pending question. Current
+            # message only (empty history): a stale use from an
+            # earlier turn must never be re-suggested here.
+            _vu = suggestion_use(message, ())
+            _vp = suggestion_product(message, slots.get("product"))
+            _vans = _SUGGESTION_ANSWERS.get(
+                (_vu, _suggest_key_product(_vp))) if _vu else None
+            if _vans and _vans not in reply \
+                    and _vu not in (meta.get("suggested_uses") or []):
+                meta.setdefault("suggested_uses", []).append(_vu)
+                reply = f"{_vans} {reply}"
+            # AI on every message (Oct 30): a slot-collection turn
+            # the code could not parse at all ("something for my
+            # shop") used to re-ask the pending question with no
+            # acknowledgment. One LLM sentence names what they
+            # likely mean; the deterministic pending question still
+            # follows, and without a key nothing changes. Declines,
+            # questions and one-word answers are excluded — those
+            # already have their own handling.
+            if not extracted and _last in missing \
+                    and not visitor_is_asking(message) \
+                    and "?" not in message \
+                    and not _DECLINE.match(message.strip()) \
+                    and len(low.split()) >= 3:
+                _aack = _llm_ack_sentence(message, reply)
+                if _aack:
+                    reply = f"{_aack} {reply}"
             meta["last_asked"] = _asked_field
             # A quantity answer to a per-design question IS per-design
             # by construction — the split question must never re-ask it.

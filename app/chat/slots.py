@@ -49,7 +49,13 @@ _PRODUCTS = [
 ]
 
 _MATERIALS = [
-    "kraft", "pet", "mpet", "pe", "foil", "vinyl", "cardboard",
+    "kraft",
+    # Metallized BEFORE foil: "metallized foil" must store
+    # metallized, not fall through to the bare foil entry (Oct 30
+    # senior transcript: "yes metallized" stored nothing and the
+    # material question looped).
+    "metallized", "metalized",
+    "pet", "mpet", "pe", "foil", "vinyl", "cardboard",
     "corrugated", "matte bopp", "sbs", "plastic", "paper",
     # Rigid chipboard is a real box material (boxes.md: 32-80pt):
     # "plain rigid box" as a material answer must store it, not loop.
@@ -342,6 +348,12 @@ _STYLE_WORDS = [
     ("pinch bottom", "pinch bottom"),
     ("flat-bottom", "flat-bottom"),
     ("flat bottom", "flat-bottom"),
+    # Bare "flat" (Oct 30 senior transcript): the style question
+    # itself offers a "Flat" chip, but bare "flat" matched NO style
+    # word, so the style question looped twice and gave up. It must
+    # sit AFTER the flat-bottom entries: _style_in takes the first
+    # substring match, and "flat" is a substring of "flat-bottom".
+    ("flat", "flat"),
     ("stand-up", "stand-up"),
     ("stand up", "stand-up"),
     ("standup", "stand-up"),
@@ -373,7 +385,20 @@ def _skus_in(text: str) -> str | None:
     if m:
         return m.group(1)
     m = re.search(r"\b(single|one|two|three|four|five)\s+(?:designs?|skus?|variants?|artworks?)\b", text.lower())
-    return str(_WORD_SKUS[m.group(1)]) if m else None
+    if m:
+        return str(_WORD_SKUS[m.group(1)])
+    # Designs count stated as a possession ("300 for each design i
+    # have 5", Oct 30 senior transcript): the count was lost and
+    # the bot re-asked designs the visitor had already given.
+    # Gated on "design" in the message, so "i have 5 boxes" never
+    # becomes a designs count.
+    if "design" in text.lower():
+        m = re.search(r"\bhave\s+(one|two|three|four|five|\d+)\b",
+                      text.lower())
+        if m:
+            w = m.group(1)
+            return str(_WORD_SKUS[w]) if w in _WORD_SKUS else w
+    return None
 
 
 def attach_gusset(size: str | None, text: str, product: str | None) -> str | None:
@@ -426,6 +451,11 @@ def extract_from_message(text: str) -> dict:
     low = (text or "").lower().replace("pulgadas", "inches").replace(
         "centímetros", "cm").replace("centimetros", "cm").replace(
         "milímetros", "mm").replace("milimetros", "mm")
+    # A leading affirmation carries no slot ("yes metallized" is a
+    # material answer, Oct 30 senior transcript): strip it for
+    # matching only. The original text is untouched for negation
+    # and quantity parsing below.
+    low = re.sub(r"^(yes|yeah|yep|ok|okay|sure)\b[,. ]*", "", low)
     out: dict = {}
     product = _find(low, _PRODUCTS) or fuzzy_product(low)
     if product == "bag" and mylar_like(low):

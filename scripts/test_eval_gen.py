@@ -594,7 +594,8 @@ check("bare 3x4 asks inches/cm/mm/feet, stored pending, never quantity",
       "inches, cm, mm, or feet" in r["reply"] and r["slots"].get("sizes") == "3x4"
       and not r["slots"].get("quantity"),
       f"reply={r['reply'][:140]!r} slots={r['slots']}")
-r = run("ev-box-unit-ans", ["i need large box", "shipping", "3x4", "mm"])
+r = run("ev-box-unit-ans", ["i need large box", "shipping", "3x4", "mm",
+                             "No need"])
 check("unit answer completes size, type asked with BOX chips",
       r["slots"].get("sizes") == "3x4 mm"
       and "Which type would you like?" in r["reply"]
@@ -694,7 +695,7 @@ check("'cannot share' first refusal closes at once with the email named",
       and "abdu@gmail.com" in r["reply"]
       and "don't have an email" not in r["reply"],
       f"reply={r['reply'][:160]!r}")
-r = run("ev-own-nocontact", _QUOTE + ["no", "no", "no"])
+r = run("ev-own-nocontact", _QUOTE + ["no", "no", "no", "no"])
 check("all three fields refused -> honest no-contact close",
       r.get("handoff") == "complete_no_contact"
       and "here in this chat" in r["reply"],
@@ -922,12 +923,12 @@ check("flat-bottom alone never counts as two types",
 
 # ---------- section 26: Oct 30 size-phrase guard round ----------
 _s = _steps("ev-s26-reported", ["which box types do you offer?", "Corrugated",
-                                 "1 feet by 2 feet"])
+                                 "1 feet by 2 feet", "No need"])
 check("reported failure: each-unit size parses, no quantity leak, style asked",
-      _s[2]["slots"].get("sizes") == "1x2 feet"
-      and "quantity" not in _s[2]["slots"]
-      and "What style of box" in _s[2]["reply"],
-      f"reply={_s[2]['reply'][:160]!r} slots={_s[2]['slots']}")
+      _s[-1]["slots"].get("sizes") == "1x2 feet"
+      and "quantity" not in _s[-1]["slots"]
+      and "What style of box" in _s[-1]["reply"],
+      f"reply={_s[-1]['reply'][:160]!r} slots={_s[-1]['slots']}")
 _s = _steps("ev-s26-eachunit", ["I need custom boxes", "10 inches by 6 inches"])
 check("each-unit inches normalize to NxM inches",
       _s[1]["slots"].get("sizes") == "10x6 inches",
@@ -999,12 +1000,13 @@ def _fake_llm(message, asked=None, product=None):
 
 _B.llm_extract = _fake_llm
 try:
-    _s = _steps("ev-s27-modeldrop", ["I need custom boxes", "1 foot wide, 2 foot tall"])
+    _s = _steps("ev-s27-modeldrop", ["I need custom boxes", "1 foot wide, 2 foot tall",
+                                     "No need"])
     check("model filling size drops code's leaked quantity=1",
-          _s[1]["slots"].get("sizes") == "1x2 feet"
-          and "quantity" not in _s[1]["slots"]
-          and "Which type would you like?" in _s[1]["reply"],
-          f"reply={_s[1]['reply'][:120]!r} slots={_s[1]['slots']}")
+          _s[2]["slots"].get("sizes") == "1x2 feet"
+          and "quantity" not in _s[2]["slots"]
+          and "Which type would you like?" in _s[2]["reply"],
+          f"reply={_s[2]['reply'][:120]!r} slots={_s[2]['slots']}")
     _s = _steps("ev-s27-modelqty", ["I need custom boxes",
                                     "1 foot wide, 2 foot tall, 500 units"])
     check("model's explicit quantity beats code's leaked number",
@@ -1116,15 +1118,16 @@ check("'kind of finishes' is a finishes question, not a types question",
       f"reply={r['reply'][:200]!r}")
 
 # ---------- section 30: Oct 30 type-before-style round ----------
-r = _steps("ev-s30-flow", ["hi i need boxes", "Size 4x6 inches", "Corrugated", "Mailer", "Matte", "1000 units", "1 design", "No preference"])
+r = _steps("ev-s30-flow", ["hi i need boxes", "Size 4x6 inches", "No need", "Corrugated", "Mailer", "Matte", "1000 units", "1 design", "No preference"])
 check("box flow asks type after size, before style",
-      "Which type would you like?" in r[1]["reply"]
-      and "What style of box do you need?" in r[2]["reply"]
-      and r[2]["slots"].get("type") == "corrugated"
-      and "material" not in r[2]["slots"]
-      and r[3]["slots"].get("style") == "mailer"
-      and "corrugated type, mailer style" in r[7]["reply"],
-      f"turns={[t['reply'][:120] for t in r]} slots={r[7]['slots']}")
+      "depth" in r[1]["reply"].lower()
+      and "Which type would you like?" in r[2]["reply"]
+      and "What style of box do you need?" in r[3]["reply"]
+      and r[3]["slots"].get("type") == "corrugated"
+      and "material" not in r[3]["slots"]
+      and r[4]["slots"].get("style") == "mailer"
+      and "corrugated type, mailer style" in r[8]["reply"],
+      f"turns={[t['reply'][:120] for t in r]} slots={r[8]['slots']}")
 r = run("ev-s30-vol", ["I need corrugated boxes"])
 check("volunteered box type stores type, not material",
       r["slots"].get("type") == "corrugated" and "material" not in r["slots"],
@@ -1457,6 +1460,147 @@ check("confirmation names an attached design file, never invents one",
       _design_files_note({"design_files": [{"name": "logo.png"}]})
       == " Design file attached: logo.png."
       and _design_files_note({}) == "")
+
+# ---------- section 38: Oct 30 senior-transcript global fixes ----------
+# Unlisted product order.
+r = run("ev-s38-tins", ["i need tins"])
+check("unlisted order says so and offers labels/stickers for it",
+      "don't make tins" in r["reply"].lower()
+      and "labels" in r["reply"].lower()
+      and r["slots"].get("product") is None,
+      f"reply={r['reply'][:200]!r}")
+_s = _steps("ev-s38-tinsyes", ["i need tins", "yes"])
+check("yes to the labels offer starts the labels quote",
+      "labels for tins" in _s[1]["reply"].lower()
+      and _s[1]["slots"].get("product") == "label"
+      and "What size" in _s[1]["reply"],
+      f"reply={_s[1]['reply'][:200]!r}")
+r = run("ev-s38-tinsno", ["i need tins", "something else"])
+check("no to the labels offer goes back to the product question",
+      "What product are you looking for" in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+# Box depth.
+_s = _steps("ev-s38-depth", ["I need custom boxes", "4x6 inches"])
+check("two-dimension box size asks about depth before type",
+      "depth" in _s[1]["reply"].lower()
+      and _s[1]["suggestions"] == ["Add depth", "No need"],
+      f"reply={_s[1]['reply'][:200]!r}")
+r = run("ev-s38-depthno", ["I need custom boxes", "4x6 inches", "No need"])
+check("'no need' continues with width x height to the type question",
+      "we'll go with width x height" in r["reply"]
+      and "Which type would you like?" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s38-depth4", ["I need custom boxes", "4x6 inches", "4"])
+check("a lone depth appends to the size",
+      r["slots"].get("sizes") == "4x6x4 inches"
+      and "Which type would you like?" in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+_s = _steps("ev-s38-depthadd", ["I need custom boxes", "4x6 inches",
+                                 "Add depth", "4 inches"])
+check("'add depth' asks for the number, then appends it",
+      "What depth" in _s[2]["reply"]
+      and _s[3]["slots"].get("sizes") == "4x6x4 inches",
+      f"replies={[t['reply'][:80] for t in _s[2:]]} slots={_s[3]['slots']}")
+r = run("ev-s38-depth3", ["I need custom boxes", "4x6x4 inches"])
+check("three-dimension box size never asks about depth",
+      "depth" not in r["reply"].lower()
+      and "Which type would you like?" in r["reply"],
+      f"reply={r['reply'][:160]!r}")
+# Glossary.
+_s = _steps("ev-s38-sku", ["I need mylar bags", "4x6 inches", "stand-up",
+                            "matte", "1000 units", "what is sku"])
+check("'what is sku' explains SKU and re-asks, never advances",
+      "Stock Keeping Unit" in _s[-1]["reply"]
+      and "How many total designs" in _s[-1]["reply"],
+      f"reply={_s[-1]['reply'][:200]!r}")
+r = run("ev-s38-flatb", ["what is flat-bottom?"])
+check("'what is flat-bottom?' explains it, not a style list",
+      "flat, boxy base" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s38-this", ["what is this?"])
+check("fresh 'what is this?' asks what they mean, never a random fact",
+      "which one you mean" in r["reply"].lower(),
+      f"reply={r['reply'][:200]!r}")
+# Coffee use + flat style.
+_s = _steps("ev-s38-coffee", ["I need mylar bags", "2x3", "inch",
+                               "i need coffee bag", "flat"])
+check("volunteered coffee use is suggested with reasons, product kept",
+      "coffee pouches" in _s[3]["reply"]
+      and "food-grade" in _s[3]["reply"]
+      and _s[3]["slots"].get("product") == "mylar bag"
+      and _s[4]["slots"].get("style") == "flat"
+      and "What finish" in _s[4]["reply"],
+      f"turns={[t['reply'][:100] for t in _s[3:]]} slots={_s[4]['slots']}")
+# Extra variants.
+_s = _steps("ev-s38-hh", ["I need mylar bags", "4x6 inches", "stand-up",
+                           "i also need hang hole"])
+check("hang hole without a type asks its types",
+      "Which type of hang hole" in _s[-1]["reply"]
+      and _s[-1]["suggestions"] == ["Round", "Sombrero", "Euro hole"],
+      f"reply={_s[-1]['reply'][:160]!r} chips={_s[-1]['suggestions']}")
+r = run("ev-s38-hhround", ["I need mylar bags", "4x6 inches", "stand-up",
+                            "i also need hang hole", "Round"])
+check("chosen hang-hole type attaches to the extra",
+      "Round hang hole noted" in r["reply"]
+      and r["slots"].get("extras") == "hang hole (Round)",
+      f"reply={r['reply'][:160]!r} slots={r['slots']}")
+_s = _steps("ev-s38-zip", ["I need mylar bags", "4x6 inches", "stand-up",
+                            "i need a zipper"])
+check("zipper without a type asks its types",
+      "Which type of zipper" in _s[-1]["reply"]
+      and "Child-resistant" in _s[-1]["suggestions"],
+      f"reply={_s[-1]['reply'][:160]!r}")
+# Quantity message carries the designs count.
+r = run("ev-s38-qtydes", ["I need mylar bags", "4x6 inches", "stand-up",
+                           "matte", "300 for each design i have 5"])
+check("designs count inside the quantity message is stored",
+      r["slots"].get("skus") == "5"
+      and r["slots"].get("quantity") == "300",
+      f"slots={r['slots']}")
+# Yes-prefixed material answer.
+r = run("ev-s38-ysmat", ["I need mylar bags", "4x6 inches", "stand-up",
+                          "matte", "1000 units", "1 design",
+                          "no preference", "yes metallized"])
+check("'yes metallized' stores the material (KB spelling), never re-asks",
+      r["slots"].get("material") == "metalized"
+      and "Just to confirm" in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+# Confirmation accepts ok.
+_s = _steps("ev-s38-ok", ["I need mylar bags", "4x6 inches", "stand-up",
+                           "matte", "1000 units", "1 design",
+                           "no preference", "kraft", "ok"])
+check("bare 'ok' at confirmation accepts the quote",
+      "Perfect — your quote request is ready" in _s[-1]["reply"],
+      f"reply={_s[-1]['reply'][:160]!r}")
+# Email compulsory.
+_s = _steps("ev-s38-email", ["I need mylar bags", "4x6 inches", "stand-up",
+                              "matte", "1000 units", "1 design",
+                              "no preference", "kraft", "yes",
+                              "Abdullah", "no"])
+check("email refusal insists with the reason, never retires email",
+      "I need an email to send your quote" in _s[-1]["reply"]
+      and "What is the best email" in _s[-1]["reply"],
+      f"reply={_s[-1]['reply'][:200]!r}")
+# Confusion restates, never advances.
+_s = _steps("ev-s38-conf", ["I need mylar bags", "2x3", "inch", "what a joke"])
+check("confusion restates where the quote stands and re-asks",
+      "here's where we are" in _s[-1]["reply"].lower()
+      and "What style of Mylar bag" in _s[-1]["reply"],
+      f"reply={_s[-1]['reply'][:220]!r}")
+# LLM ack on an unparsed slot turn (stubbed; no-key path is unchanged).
+import app.chat.brain as _B38
+_orig_ack = _B38._llm_ack_sentence
+try:
+    _B38._llm_ack_sentence = lambda m, q: "Noted — thanks for that detail."
+    r = run("ev-s38-llmack", ["I need mylar bags", "4x6 inches",
+                               "stand-up", "matte", "1000 units",
+                               "something for my shop"])
+    check("unparsed slot turn gets an AI acknowledgment + pending question",
+          r["reply"].startswith("Noted — thanks for that detail.")
+          and "designs or SKUs" in r["reply"],
+          f"reply={r['reply'][:200]!r}")
+finally:
+    _B38._llm_ack_sentence = _orig_ack
 
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
