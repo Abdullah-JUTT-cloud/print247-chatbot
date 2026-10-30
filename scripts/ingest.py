@@ -26,6 +26,10 @@ re-ingest put an UNAPPROVED session draft live in Qdrant):
   2. Points whose source file is gone — deleted, or now a draft —
      are DELETED from Qdrant. Upsert alone never removes anything,
      so without this a deleted draft's point would stay live forever.
+  3. Embeddings go in batches (Oct 31 fix): the whole KB in one
+     call is ~334k tokens, over OpenAI's 300k-per-request limit,
+     and fails with nothing upserted. Batches stay under ~100k
+     estimated tokens, and each batch is upserted as it goes.
 """
 import argparse
 import glob
@@ -70,6 +74,34 @@ def chunks_for(body: str):
 def point_id(source: str, index: int) -> str:
     # Stable id: editing a file re-embeds over the same point, no duplicates.
     return hashlib.md5(f"{source}#{index}".encode()).hexdigest()
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate, deliberately pessimistic: ~3 chars per
+    token for English/markdown (real ratio is closer to 4). Used only
+    to size batches, never for billing or limits."""
+    return len(text) // 3 + 20
+
+
+def batch_texts(texts: list, max_tokens: int = 100_000, max_texts: int = 100):
+    """Split texts into batches that stay well under OpenAI's
+    300,000-token-per-request limit. A single call with the whole KB
+    (1,224 chunks, ~334,000 tokens) fails with BadRequestError 400,
+    and nothing is upserted at all — that was the Oct 31 ingest
+    failure. Batches are capped at 100,000 estimated tokens AND
+    100 texts, so even if the estimate is 2-3x low, a batch stays
+    under the limit. Order is preserved, so batch embeddings line
+    up with batch rows."""
+    batch, batch_tokens = [], 0
+    for text in texts:
+        est = estimate_tokens(text)
+        if batch and (batch_tokens + est > max_tokens or len(batch) >= max_texts):
+            yield batch
+            batch, batch_tokens = [], 0
+        batch.append(text)
+        batch_tokens += est
+    if batch:
+        yield batch
 
 
 def main() -> int:
@@ -123,12 +155,28 @@ def main() -> int:
     if not qdrant.collection_exists(COLLECTION):
         qdrant.create_collection(COLLECTION, vectors_config=VectorParams(size=dim, distance=Distance.COSINE))
 
-    texts = [c for _, _, _, c in rows]
-    embeddings = [e.embedding for e in
-                  client.embeddings.create(input=texts, model=model).data]
-    qdrant.upsert(COLLECTION, [PointStruct(id=pid, vector=vec, payload={"source": path, "meta": meta, "text": chunk})
-                               for (pid, path, meta, chunk), vec in zip(rows, embeddings)])
-    print(f"Upserted {len(rows)} points into {COLLECTION}.")
+    # Batched embeddings + batched upserts (Oct 31 fix): one call
+    # for the whole KB exceeds OpenAI's 300k-token request limit
+    # (334k tokens) and upserts NOTHING. Batches upsert as they go,
+    # so a failure mid-run leaves earlier batches saved, and a
+    # re-run is idempotent (same point ids overwrite).
+    total = 0
+    offset = 0
+    batches = list(batch_texts([c for _, _, _, c in rows]))
+    for bi, batch in enumerate(batches, 1):
+        batch_rows = rows[offset:offset + len(batch)]
+        offset += len(batch)
+        print(f"Embedding batch {bi}/{len(batches)} "
+              f"({len(batch)} texts, ~{sum(estimate_tokens(t) for t in batch)} tokens est)")
+        embeddings = [e.embedding for e in
+                      client.embeddings.create(input=batch, model=model).data]
+        assert len(embeddings) == len(batch_rows), \
+            f"embedding count {len(embeddings)} != batch size {len(batch_rows)}"
+        qdrant.upsert(COLLECTION, [PointStruct(id=pid, vector=vec, payload={"source": path, "meta": meta, "text": chunk})
+                                   for (pid, path, meta, chunk), vec in zip(batch_rows, embeddings)])
+        total += len(batch_rows)
+        print(f"  Upserted batch {bi}/{len(batches)} ({total}/{len(rows)} points so far).")
+    print(f"Upserted {total} points into {COLLECTION}.")
 
     # Stale-point cleanup: upsert never deletes, so a removed file
     # or a file turned back into a draft would otherwise stay live.
