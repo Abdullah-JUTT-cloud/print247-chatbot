@@ -833,6 +833,21 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
     return "Thanks — I have your details. A team member will confirm the quote shortly."
 
 
+def _trusted_reply_to(reply_to: str | None, bot_replies: list | None) -> str | None:
+    """Client-supplied reply_to is untrusted: it lands in the system
+    prompt (Oct 30 audit). Accept it ONLY when it appears inside a
+    bot message the server actually sent this session — substring,
+    because the UI may send the displayed (truncated) text. An
+    injected instruction never appears inside a real bot reply, so
+    it is dropped. None when absent or untrusted."""
+    if not reply_to:
+        return None
+    for b in (bot_replies or []):
+        if reply_to in (b or ""):
+            return reply_to
+    return None
+
+
 def _llm_reply(message: str, language: str, slots: dict, facts: list[dict],
                reply_to: str | None = None) -> str | None:
     """gpt-5-mini answer, or None if no key / call fails.
@@ -2868,7 +2883,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _searched = web_search(message)
             if _searched:
                 facts = [{"source": "web-search", "text": _searched["answer"]}]
-        reply = _llm_reply(message, language, slots, facts, reply_to=reply_to)
+        reply = _llm_reply(message, language, slots, facts,
+                           reply_to=_trusted_reply_to(reply_to, meta.get("bot_replies")))
         llm_used = reply is not None
         if not llm_used:
             reply = _deterministic_reply(message, slots, facts, missing, language, _gave_up,

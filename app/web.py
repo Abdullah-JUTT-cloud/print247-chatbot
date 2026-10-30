@@ -38,6 +38,7 @@ improvement code se hoti hai. Re-ingest ke liye terminal me
 <code>docker compose exec api python scripts/ingest.py</code> chalao.</p>
 
 <div id="monitoring">{{MONITORING}}</div>
+<div id="learned">{{LEARNED}}</div>
 <p><a href="/admin/logout">Logout</a></p>
 <h2>Chats — har session ek hi chat hai</h2>
 <p class="help">Har row poori baat-cheet hai, har message alag row nahi.

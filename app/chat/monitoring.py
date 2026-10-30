@@ -15,7 +15,34 @@ plus the newest 20 flagged turns. No new infrastructure: the
 logs already exist (chat_logs), this only reads them.
 """
 
+import glob as _glob
 import html as _html
+import os as _os
+import re as _re
+
+
+def learned_facts_html(paths=None) -> str:
+    """Review queue for auto-learned facts (Oct 30 audit): learned
+    facts ARE retrievable (the web-search cache design), so the
+    admin page lists them for human review. A wrong one is removed
+    by deleting its file + re-ingest. Empty when none exist."""
+    if paths is None:
+        paths = sorted(_glob.glob("kb/learned/*.md"))
+    rows = []
+    for p in paths:
+        try:
+            text = open(p, encoding="utf-8").read()
+        except OSError:
+            continue
+        t = _re.search(r"(?m)^title:\s*(.+?)\s*$", text)
+        d = _re.search(r"(?m)^(?:date|learned_on):\s*(\S+)\s*$", text)
+        rows.append(f"<li>{_html.escape(t.group(1)) if t else _html.escape(_os.path.basename(p))}"
+                    f" ({_html.escape(d.group(1)) if d else '?'})</li>")
+    if not rows:
+        return ""
+    return ("<h2>Learned facts — review queue</h2>"
+            "<p class='help'>Web search se auto-seekhe facts. Ghalat lage to file delete karo + re-ingest.</p>"
+            "<ul>" + "".join(rows) + "</ul>")
 
 
 def turn_flags(result: dict | None) -> list[str]:

@@ -71,7 +71,7 @@ check("monitoring html renders counts + links",
 rows1 = R._read_kb_files()
 rows2 = R._read_kb_files()
 check("cache hit returns same rows", rows1 is rows2 and len(rows1) > 30)
-open("kb/zz-cache-probe.md", "w").write("Probe file for cache test.\n")
+open("kb/zz-cache-probe.md", "w").write("---\nstatus: verified\n---\nProbe file for cache test.\n")
 try:
     rows3 = R._read_kb_files()
     check("new file invalidates cache",

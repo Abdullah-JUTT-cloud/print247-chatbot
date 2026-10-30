@@ -93,6 +93,27 @@ _COLLECTION = "print247_kb"
 _KB_CACHE: dict = {"sig": None, "rows": []}
 
 
+def allowed_kb_status(status: str) -> bool:
+    """Knowledge governance (Oct 30 audit): only reviewed or
+    learned facts are retrievable. Drafts — and files with no
+    recognised status — are never served, from any path. Learned
+    facts stay retrievable by design (the web-search cache); the
+    admin page lists them for human review."""
+    return (status or "").strip().lower() in ("verified", "learned")
+
+
+def _frontmatter_status(text: str) -> str:
+    """Status value from the OKF frontmatter block, or ''."""
+    head = text or ""
+    if head.startswith("---"):
+        end = head.find("\n---", 3)
+        head = head[:end] if end != -1 else head[:800]
+    else:
+        head = head[:800]
+    m = re.search(r"(?m)^status:\s*(\S+)\s*$", head)
+    return m.group(1).lower() if m else ""
+
+
 def _read_kb_files() -> list[dict]:
     paths = [p for p in sorted(glob.glob("kb/**/*.md", recursive=True))
              if not p.endswith("/README.md")]
@@ -107,6 +128,8 @@ def _read_kb_files() -> list[dict]:
         try:
             text = open(path, encoding="utf-8").read()
         except OSError:
+            continue
+        if not allowed_kb_status(_frontmatter_status(text)):
             continue
         rows.append({"source": path, "text": text})
     if sig is not None:
@@ -190,6 +213,12 @@ def retrieve(text: str, top_k: int = 3) -> list[dict]:
                 out = []
                 for h in hits:
                     p = h.payload or {}
+                    # Vector points carry their file's frontmatter in
+                    # payload["meta"]: same allowlist as the file
+                    # path, so a draft point could never be served
+                    # even if one were written by mistake.
+                    if not allowed_kb_status(_frontmatter_status(p.get("meta", ""))):
+                        continue
                     out.append({"source": p.get("source", "qdrant"), "text": p.get("text", "")[:1500]})
                 if out:
                     # Hybrid: vector hits first, keyword hits fill gaps

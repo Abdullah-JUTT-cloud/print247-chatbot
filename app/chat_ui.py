@@ -1385,9 +1385,15 @@ const themeToggle = document.getElementById('themeToggle');
 const themeMeta = document.getElementById('themeColor');
 const toastEl = document.getElementById('toast');
 
+// Session ids must be unique per visitor from the FIRST load: the
+// old 'web-ui' fallback gave every first-time visitor (and every
+// localStorage-blocked browser) the SAME id, so their Mongo slots
+// and history collided. A stored 'web-ui' from the old code is
+// migrated to a fresh id on sight (Oct 30 audit, Priority 0).
+function createSessionId() { return crypto.randomUUID ? crypto.randomUUID() : ('p247-' + Date.now() + '-' + Math.random().toString(36).slice(2)); }
 let sessionId;
-try { sessionId = localStorage.getItem('p247_session') || 'web-ui'; localStorage.setItem('p247_session', sessionId); }
-catch (e) { sessionId = 'web-ui'; }
+try { sessionId = localStorage.getItem('p247_session'); if (!sessionId || sessionId === 'web-ui') { sessionId = createSessionId(); localStorage.setItem('p247_session', sessionId); } }
+catch (e) { sessionId = createSessionId(); }
 // Sales-rep persona: the exact 10 human rep names from the old-chats
 // JSON (repName field, 32,469 chats). 'Support Ecommerce' (1 chat)
 // is a generic account, not a person, so it is excluded. The rep is
@@ -1793,7 +1799,7 @@ function greet() {
   scrollBtn.classList.remove('show');
 }
 function newChat() {
-  sessionId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+  sessionId = createSessionId();
   try { localStorage.setItem('p247_session', sessionId); } catch (e) {}
   requestToken += 1;
   busy = false;

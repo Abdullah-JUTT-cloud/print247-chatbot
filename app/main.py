@@ -38,14 +38,15 @@ import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
 
 from .admin_auth import (COOKIE, admin_config, check_credentials,
                          make_token, verify_token)
 from .chat.brain import handle_message
-from .chat.monitoring import monitoring_html, summarize_turns, turn_flags
+from .chat.monitoring import (learned_facts_html, monitoring_html,
+                              summarize_turns, turn_flags)
 from .chat.store import get_store
 from .web import ADMIN_HTML, CHAT_HTML
 
@@ -217,9 +218,12 @@ async def admin_login(request: Request):
                          str(form.get("password", "")),
                          user, password):
         resp = RedirectResponse("/admin", status_code=303)
+        # Secure is opt-in: it breaks plain-http localhost logins,
+        # so it is enabled only when deployed over HTTPS.
         resp.set_cookie(COOKIE, make_token(user, secret),
                         httponly=True, samesite="lax", path="/admin",
-                        max_age=43200)
+                        max_age=43200,
+                        secure=os.environ.get("ADMIN_COOKIE_SECURE") == "1")
         return resp
     return _login_html("Ghalat username ya password.")
 
@@ -244,6 +248,7 @@ def admin_ui(request: Request):
         monitoring = "<p class='warn'>Monitoring nahi ban saka (Mongo down ho sakta hai).</p>"
     html = ADMIN_HTML.replace("{{MONITORING}}", monitoring)
     html = html.replace("{{SESSION_ROWS}}", _session_rows_html())
+    html = html.replace("{{LEARNED}}", learned_facts_html())
     try:
         mongo, qdrant = _mongo_ok(), _qdrant_ok()
         health = (f"Server: {'OK' if mongo and qdrant else 'MASLA'} "
@@ -283,7 +288,9 @@ def health():
 
 
 class ChatIn(BaseModel):
-    message: str
+    # Oct 30 audit: an unbounded message lets one caller burn
+    # tokens at will. 4000 chars covers any real typed spec.
+    message: str = Field(max_length=4000)
     session_id: str | None = None
     reply_to: str | None = None
 

@@ -18,7 +18,9 @@ edited OKF file replaces (never duplicates) its old embedding.
 
 Two guards that did not exist before Oct 29, 2026 (found when a
 re-ingest put an UNAPPROVED session draft live in Qdrant):
-  1. Files whose frontmatter says `status: draft` are NEVER indexed.
+  1. ONLY files whose frontmatter says `status: verified` or
+     `status: learned` are indexed (Oct 30 audit allowlist). Drafts
+     — and files with no recognised status — are NEVER indexed.
      A draft goes live only after the admin writes the verified fact
      and approves it (status: verified).
   2. Points whose source file is gone — deleted, or now a draft —
@@ -67,14 +69,15 @@ def main() -> int:
     args = ap.parse_args()
 
     # kb/README.md is the rulebook, not a fact — never index it.
-    # Draft files are never indexed either: a session draft goes
-    # live only after the admin writes the fact and approves it.
+    # Allowlist (Oct 30 audit): only verified or learned files are
+    # indexed. A draft goes live only after approval flips its
+    # status to verified — never by landing in kb/ unreviewed.
     all_files = sorted(p for p in glob.glob("kb/**/*.md", recursive=True)
                        if not p.endswith("/README.md"))
     files, skipped = [], []
     for path in all_files:
         meta, _body = parse_okf(path)
-        if file_status(meta) == "draft":
+        if file_status(meta) not in ("verified", "learned"):
             skipped.append(path)
         else:
             files.append(path)
