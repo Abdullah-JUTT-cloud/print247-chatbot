@@ -11,11 +11,12 @@ draft/approve code was removed; its history stays in git if it is
 ever needed again. Re-ingest runs from the terminal:
 docker compose exec api python scripts/ingest.py
 
-SECURITY NOTE (read before production): /admin has NO login in
-this dev version and it shows visitor chats. It is for
-local/staging use only. Before any public deployment, put it
-behind a login (see README) — otherwise anyone could read
-visitor conversations.
+SECURITY NOTE: since Oct 30, 2026 /admin IS behind a login
+(ADMIN_USER + ADMIN_PASSWORD from .env; no password set = admin
+closed, never open). It is still read-only: no drafts, no
+approve flow, no KB editing. /api/chat/history stays open on
+purpose — the visitor chat UI needs it to restore a conversation
+on refresh, and session ids are client-side randomUUIDs.
 """
 
 from .chat_ui import CHAT_HTML
@@ -36,6 +37,8 @@ Yahan se koi draft, approve, KB edit ya re-ingest nahi hota;
 improvement code se hoti hai. Re-ingest ke liye terminal me
 <code>docker compose exec api python scripts/ingest.py</code> chalao.</p>
 
+<div id="monitoring">{{MONITORING}}</div>
+<p><a href="/admin/logout">Logout</a></p>
 <h2>Chats — har session ek hi chat hai</h2>
 <p class="help">Har row poori baat-cheet hai, har message alag row nahi.
 <b>Chat dekho</b> par poori conversation khulti hai.</p>

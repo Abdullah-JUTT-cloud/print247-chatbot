@@ -1166,6 +1166,91 @@ check("pouch styles question lists pouch styles",
       "Stand-up" in r["reply"] and "Flat-bottom" in r["reply"],
       f"reply={r['reply'][:200]!r}")
 
+# ---------- section 32: Oct 30 eval growth (real old-chat phrasings)
+# + admin/monitoring/perf round ----------
+# Real visitor questions from old-chat-candidates.md (359 scrubbed
+# candidates) that exposed 7 gaps: location phrasing, hours
+# sentence, time-intent routing, bare "mylar", lb/valve and
+# gusset quantity leaks, first-person "can i get" orders.
+r = run("ev-s32-loc1", ["where is your company based out of"])
+check("location 'based out of' gives Rosenberg, never terms text",
+      "Rosenberg" in r["reply"] and "subject to acceptance" not in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s32-loc2", ["where you from?"])
+check("location 'where you from' gives Rosenberg, never campaign line",
+      "Rosenberg" in r["reply"] and "campaign" not in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s32-loc3", ["where are you loctad"])
+check("location typo still gives Rosenberg (regression)",
+      "Rosenberg" in r["reply"], f"reply={r['reply'][:200]!r}")
+for _hq in ["What are your support hours?", "are you guys open",
+            "what time do you close?", "are you open today?"]:
+    r = run(f"ev-s32-hours-{_hq[:12]}", [_hq])
+    check(f"hours question {_hq!r} gives timings, never frontmatter",
+          "Monday to Friday, 09:00" in r["reply"] and "---" not in r["reply"],
+          f"reply={r['reply'][:200]!r}")
+r = run("ev-s32-time1", ["how quick can i have labels shipped to me"])
+check("shipping-speed question gives turnaround, never label list",
+      "12 to 15 business days" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s32-time2", ["what is the delivery time for boxes?"])
+check("delivery time for boxes gives turnaround, never SBS sentence",
+      "12 to 15 business days" in r["reply"] and "SBS" not in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s32-time3", ["how long are your labels"])
+check("dimension 'how long' is not a time question",
+      "12 to 15 business days" not in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s32-mylar", ["i only need 300 mylar packs with my own design in 2 colors"])
+check("bare 'mylar packs' stores mylar bag + below-min note",
+      r["slots"].get("product") == "mylar bag"
+      and r["slots"].get("quantity") == "300"
+      and "We can look at 300" in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-lb", ["1lb flat bottom coffee bags with a 1 way degasing valve"])
+check("1lb + 1-way valve leak no quantity",
+      r["slots"].get("product") == "bag"
+      and r["slots"].get("style") == "flat-bottom"
+      and r["slots"].get("quantity") is None,
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-gusset", ["6\" × 9\" + 3\" gusset stand up pouches"])
+check("gusset joins size, never leaks as quantity",
+      r["slots"].get("sizes") == "6x9+3 inches"
+      and r["slots"].get("style") == "stand-up"
+      and r["slots"].get("quantity") is None,
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-gusset2", ["5x8+3 pouch"])
+check("shop format 5x8+3 parses as one size, no quantity leak",
+      r["slots"].get("sizes") == "5x8+3"
+      and r["slots"].get("quantity") is None,
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-get", ["can i get just 1 single customized box"])
+check("'can i get' is an order: box + quantity 1 + below-min note",
+      r["slots"].get("product") == "box"
+      and r["slots"].get("quantity") == "1"
+      and "We can look at 1" in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-oz", ["i need 8 oz coffee bags 100"])
+check("8 oz stripped, real quantity 100 kept (regression)",
+      r["slots"].get("quantity") == "100",
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-sub", ["i need 500 custom boxes for candles"])
+check("sub-1000 boxes accepted with note + size question",
+      "We can look at 500" in r["reply"] and "What size" in r["reply"],
+      f"reply={r['reply'][:200]!r}")
+r = run("ev-s32-soap", ["soap box 4” x 3.5” x 1.5”"])
+check("curly-quote each-unit size parses",
+      r["slots"].get("sizes") == "4x3.5x1.5 inches",
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-choc", ["do you make chocolate boxes"])
+check("chocolate boxes: Yes + box stored",
+      r["reply"].startswith("Yes") and r["slots"].get("product") == "box",
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+r = run("ev-s32-burger", ["burger boxes"])
+check("burger boxes are boxes, never deflected",
+      r["slots"].get("product") == "box" and "What size" in r["reply"],
+      f"reply={r['reply'][:200]!r} slots={r['slots']}")
+
 print(f"EVAL: {PASSES[0]} passed, {len(FAILURES)} failed")
 for f in FAILURES:
     print("FAIL " + f)

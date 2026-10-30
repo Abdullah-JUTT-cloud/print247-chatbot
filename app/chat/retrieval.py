@@ -76,16 +76,34 @@ _EXACT_TOPICS = {
 _COLLECTION = "print247_kb"
 
 
+# Keyword retrieval used to re-read every KB file on every turn
+# (40+ files per retrieve() call, and a turn can retrieve more
+# than once). Cache keyed by (path, mtime): KB edits still go
+# live without re-ingest — a changed mtime invalidates that file
+# — but unchanged files are not re-read. Callers slice text into
+# new dicts, so cached rows are never mutated.
+_KB_CACHE: dict = {"sig": None, "rows": []}
+
+
 def _read_kb_files() -> list[dict]:
+    paths = [p for p in sorted(glob.glob("kb/**/*.md", recursive=True))
+             if not p.endswith("/README.md")]
+    try:
+        sig = tuple((p, os.path.getmtime(p)) for p in paths)
+    except OSError:
+        sig = None
+    if sig is not None and sig == _KB_CACHE["sig"]:
+        return _KB_CACHE["rows"]
     rows = []
-    for path in sorted(glob.glob("kb/**/*.md", recursive=True)):
-        if path.endswith("/README.md"):
-            continue
+    for path in paths:
         try:
             text = open(path, encoding="utf-8").read()
         except OSError:
             continue
         rows.append({"source": path, "text": text})
+    if sig is not None:
+        _KB_CACHE["sig"] = sig
+        _KB_CACHE["rows"] = rows
     return rows
 
 
@@ -101,9 +119,36 @@ def _keyword_search(text: str, rows: list[dict]) -> list[dict]:
     return [{"source": r["source"], "text": r["text"][:1500]} for _, r in scored[:3]]
 
 
+def _topic_file(rows: list[dict], topic: str) -> list[dict]:
+    for row in rows:
+        if row["source"].split("/")[-1] == f"{topic}.md":
+            return [{"source": row["source"], "text": row["text"][:1500]}]
+    for row in rows:
+        if topic in row["source"]:
+            return [{"source": row["source"], "text": row["text"][:1500]}]
+    return []
+
+
 def retrieve(text: str, top_k: int = 3) -> list[dict]:
     low = (text or "").lower()
     rows = _read_kb_files()
+
+    # Step 0: time-intent pre-check. A speed/delivery question about
+    # a product ("delivery time for boxes", "how quick can labels
+    # ship") must reach turnaround.md — the product topics in step 1
+    # otherwise win on the product word and _direct_answer can only
+    # pick a product sentence (the SBS paperboard bug, Oct 30).
+    # Samples first (existing rule: "how long do samples take" is a
+    # samples question). Bare "how long" stays out: "how long are
+    # your labels" is a dimension question, not a time question.
+    for _pre_topic, _pre_keys in (
+            ("samples", ("sample",)),
+            ("turnaround", ("turnaround", "how quick", "how fast",
+                            "how soon", "delivery time", "lead time"))):
+        if any(k in low for k in _pre_keys):
+            _hit = _topic_file(rows, _pre_topic)
+            if _hit:
+                return _hit
 
     # Step 1: exact topic — the file whose name IS the topic wins.
     # Exact basename first, substring second: with campaign files

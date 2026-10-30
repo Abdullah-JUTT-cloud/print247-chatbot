@@ -129,7 +129,8 @@ _NAMED_SIZE = re.compile(r"\b(?:a\d|b\d|letter|legal|tabloid)\b", re.IGNORECASE)
 # an order of 12 (old UNIT_WORD capacity note, same idea).
 _CAPACITY = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:oz|ounces?|ml|millilit(?:er|re)s?|l|ltr|"
-    r"lit(?:er|re)s?|g|gm|grams?|grammes?|kg|kilos?|kilograms?)\b",
+    r"lit(?:er|re)s?|g|gm|grams?|grammes?|kg|kilos?|kilograms?|"
+    r"lbs?|pounds?)\b",
     re.IGNORECASE)
 
 
@@ -305,6 +306,14 @@ def _quantity_in(text: str) -> str | None:
     cleaned = _SIZE.sub(" ", cleaned)
     cleaned = _NAMED_SIZE.sub(" ", cleaned)
     cleaned = _CAPACITY.sub(" ", cleaned)
+    # Gusset/third-dimension spans ("5x8+3", "6x9 + 3\" gusset")
+    # are sizes, never quantities — the shop's own "5x8+3" pouch
+    # format used to leak its 3 into quantity.
+    cleaned = re.sub(r"\+\s*\d+(?:\.\d+)?", " ", cleaned)
+    # One-way/two-way valve spans ("1 way degasing valve") are a
+    # feature, never a quantity.
+    cleaned = re.sub(r"\b(?:\d+|one|two|three)[- ]way\b[^.]{0,25}?valve\b",
+                     " ", cleaned, flags=re.IGNORECASE)
     m = _NUMBER.search(cleaned)
     if m:
         n = float(m.group(1).replace(",", ""))
@@ -383,6 +392,10 @@ def extract_from_message(text: str) -> dict:
     product = _find(low, _PRODUCTS) or fuzzy_product(low)
     if product == "bag" and mylar_like(low):
         product = "mylar bag"
+    if not product and mylar_like(low):
+        # Bare "mylar" ("mylar packs") means mylar bags in this
+        # shop — without this, "mylar" alone stored no product.
+        product = "mylar bag"
     if product:
         out["product"] = product
     for mat in _MATERIALS:
@@ -406,6 +419,26 @@ def extract_from_message(text: str) -> dict:
                 paper = _PAPER_SIZE.search(low)
                 if paper:
                     out["sizes"] = paper.group(0).upper()
+    # Pouch gusset: "5x8+3" and "6x9 + 3\" gusset" are ONE size in
+    # this shop's own format (width x height + gusset). The "+N"
+    # is stripped from quantity above; here it joins the size.
+    # Only pouch-family products: boxes have no gussets. The "+N"
+    # must follow a dimension (or the word gusset) — "2+1 designs"
+    # must never become a size.
+    _prod = out.get("product") or ""
+    if out.get("sizes") and "+" not in out["sizes"] and \
+            (_prod in ("pouch", "mylar bag", "stand-up pouch", "bag")
+             or _prod.endswith("pouch")):
+        _gus = re.search(
+            r"\d+\s*(?:\"|″)?\s*[x×]\s*\d+\s*(?:\"|″)?\s*\+\s*(\d+(?:\.\d+)?)"
+            r"|\+\s*(\d+(?:\.\d+)?)\s*(?:\"|″|inches|inch)?\s*gusset", low)
+        _gus_n = (_gus.group(1) or _gus.group(2)) if _gus else None
+        if _gus_n:
+            _sz = out["sizes"]
+            if _sz.endswith(" inches"):
+                out["sizes"] = _sz[:-len(" inches")] + f"+{_gus_n} inches"
+            else:
+                out["sizes"] = _sz + f"+{_gus_n}"
     finish = _find(low, _FINISHES)
     if finish:
         out["finishes"] = normalise_finish(finish)

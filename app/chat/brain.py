@@ -73,7 +73,7 @@ from .price_questions import PRICING_COMES_WITH_THE_QUOTE, asks_about_price
 from .quantity_parse import minimum_already_stated, wants_smaller_run
 from .quote_value import is_our_own_menu, without_template_blanks
 from .repeated import SENTENCE_BREAK, repeats_the_question
-from .retrieval import retrieve
+from .retrieval import _read_kb_files, retrieve
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
 from .size_unit import apply_unit_answer, size_missing_unit, unit_answer
@@ -972,7 +972,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # become product=box, and a job enquiry must never become a quote.
     _is_order = any(ph in low for ph in ("i need", "i want", "i'd like",
                                           "i would like", "order", "get a quote",
-                                          "quote for", "buy",
+                                          "quote for", "buy", "can i get",
+                                          "can i have", "could i get",
+                                          "could i have",
                                           # Spanish order phrases: "Necesito
                                           # cajas" is an order, not a
                                           # confirmation answer.
@@ -2293,6 +2295,38 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _sq = _next_question_text(slots, _smiss, language)
         return _final_return(_slist + (f" {_sq}" if _sq else ""), srcs=[])
 
+    # Hours question ("what are your support hours?", "are you
+    # guys open", "what time do you close"): _direct_answer scores
+    # the file's header sentence ("This is the header on every
+    # page...") above the timings sentence, because "hours" appears
+    # in the header but the timings sentence says "Timings".
+    # Answer with the Timings sentence itself, then the pending
+    # question. Phrases only, never bare "open" ("open a box" is
+    # not a hours question).
+    _hours_q = any(ph in low for ph in
+                   ("support hours", "office hours", "working hours",
+                    "business hours", "what are your hours",
+                    "are you open", "are you guys open", "are u open",
+                    "open today", "open now", "when do you open",
+                    "when do you close", "what time do you open",
+                    "what time do you close", "what time are you open"))
+    if _hours_q:
+        # The Timings sentence directly: splitting on sentence
+        # breaks keeps the YAML frontmatter glued to it (no ". "
+        # inside frontmatter), so match the sentence itself.
+        _htext = ""
+        for _row in _read_kb_files():
+            if _row["source"].endswith("support-hours.md"):
+                _hm = re.search(r"Office Timings[^.]*\.", _row["text"])
+                if _hm:
+                    _htext = _hm.group(0).strip()
+                break
+        if _htext:
+            _hmiss = script_missing(slots, meta)
+            _hq = _next_question_text(slots, _hmiss, language)
+            return _final_return(_htext + (f" {_hq}" if _hq else ""),
+                                 srcs=["kb/facts/support-hours.md"])
+
     # Multi-design quantity scope (old quantity_split_question):
     # "5000 units, 3 designs" does not say whether 5000 is the total
     # or per design — and a quantity given before the designs were
@@ -2460,6 +2494,30 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _lm = script_missing(slots, meta)
         _lq = _next_question_text(slots, _lm, language)
         _ltext = "Yes — we're based in Rosenberg, Texas, USA."
+        meta["last_asked"] = _lm[0] if _lm else None
+        meta["last_bot_question"] = (_ltext + " " + _lq) if _lq else _ltext
+        return _final_return((_ltext + " " + _lq) if _lq else _ltext,
+                             srcs=["kb/facts/contact.md"])
+
+    # Plain location question, no country mentioned ("where is your
+    # company based out of", "where you from"): the branches above
+    # did not fire, and retrieval used to answer with whatever
+    # sentence matched ("based" in terms.md, a campaign shipping
+    # line) instead of the address. The "where"/"?" guard keeps
+    # statements ("my shipping address is...") out of this branch.
+    _loc_plain = any(w in low for w in
+                     ("located", "location", "office in", "branch in",
+                      "facility in", "based in", "based out of",
+                      "where you from", "where are you from",
+                      "where are you based", "where are you", "address"))
+    # "email address" is not a physical address — it must reach the
+    # email direct answer, not this branch.
+    if _loc_plain and "email" not in low \
+            and ("where" in low or message.strip().endswith("?")):
+        _lm = script_missing(slots, meta)
+        _lq = _next_question_text(slots, _lm, language)
+        _ltext = ("Print247 is based at 1631 Cottonwood School Rd, "
+                  "Rosenberg, TX 77471, USA.")
         meta["last_asked"] = _lm[0] if _lm else None
         meta["last_bot_question"] = (_ltext + " " + _lq) if _lq else _ltext
         return _final_return((_ltext + " " + _lq) if _lq else _ltext,

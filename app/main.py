@@ -2,20 +2,31 @@
 
 Endpoints:
   GET  /            -> chat UI (browser page, talks to POST /chat).
-  GET  /admin       -> sessions-only admin page, READ-ONLY
-                       (DEV ONLY, no login yet — see app/web.py
-                       security note before public use). No drafts,
-                       no approve flow, no KB editing: improvement
+  GET  /admin       -> sessions-only admin page, READ-ONLY, behind
+                       the admin login (Oct 30: ADMIN_USER +
+                       ADMIN_PASSWORD from .env; no password set =
+                       admin closed, never open). No drafts, no
+                       approve flow, no KB editing: improvement
                        happens in code (user's call, Oct 29, 2026).
-  GET  /admin/session/{id} -> full transcript of one session.
+  GET  /admin/login -> login form (no JS). GET /admin/logout clears
+                       the session cookie.
+  GET  /admin/session/{id} -> full transcript of one session
+                       (also behind the login).
   GET  /health      -> proves API + Mongo + Qdrant are reachable.
   POST /chat        -> the brain: language detect, slot extraction,
                        code guards, RAG retrieval, then a gpt-5-mini
                        answer when OPENAI_API_KEY is set, otherwise a
                        deterministic reply that never invents a fact.
+  GET  /api/chat/history -> one session's saved chat, oldest first.
+                       Stays open on purpose: the visitor chat UI
+                       calls it to restore a conversation on
+                       refresh, and session ids are client-side
+                       randomUUIDs (unguessable). The admin LISTING
+                       is the exposure, and that is behind login.
 
 Every chat is logged to Mongo (chat_logs collection, fail-soft)
-so the admin can see past conversations session by session.
+so the admin can see past conversations session by session,
+plus monitoring (latency + flags: handoff, team_confirm, llm).
 Logging never breaks a chat: if Mongo is down, the chat still
 answers. Re-ingest runs from the terminal
 (docker compose exec api python scripts/ingest.py), not from
@@ -23,14 +34,18 @@ the admin page.
 """
 import datetime
 import os
+import time
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
 
+from .admin_auth import (COOKIE, admin_config, check_credentials,
+                         make_token, verify_token)
 from .chat.brain import handle_message
+from .chat.monitoring import monitoring_html, summarize_turns, turn_flags
 from .chat.store import get_store
 from .web import ADMIN_HTML, CHAT_HTML
 
@@ -55,23 +70,81 @@ def _qdrant_ok() -> bool:
         return False
 
 
+_MONGO_CLIENT = None
+
+
+def _mongo_client():
+    """One shared client (pooling) instead of a new TCP + handshake
+    per logged turn. Creation is lazy in pymongo, so a down Mongo
+    at import time is fine — operations still fail soft below."""
+    global _MONGO_CLIENT
+    if _MONGO_CLIENT is None:
+        _MONGO_CLIENT = MongoClient(
+            os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
+            serverSelectionTimeoutMS=2000)
+    return _MONGO_CLIENT
+
+
 def _log_chat(payload_message: str, session_id: str | None, result: dict,
-              reply_to: str | None = None) -> None:
+              reply_to: str | None = None, latency_ms: int | None = None) -> None:
     """Fail-soft: a logging failure must never break the chat."""
     try:
-        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
-                             serverSelectionTimeoutMS=2000)
-        client.get_default_database()["chat_logs"].insert_one({
+        _mongo_client().get_default_database()["chat_logs"].insert_one({
             "session_id": session_id, "message": payload_message,
             "reply": result.get("reply"), "sources": result.get("sources", []),
             "suggestions": result.get("suggestions", []),
             "reply_to": reply_to,
             "handoff": result.get("handoff"), "llm_used": result.get("llm_used"),
             "language": result.get("language"),
+            "latency_ms": latency_ms, "flags": turn_flags(result),
             "created_at": datetime.datetime.now(datetime.timezone.utc),
         })
     except Exception:
         pass
+
+
+def _admin_check(request: Request) -> str | None:
+    """Logged-in admin username, or None. No configured password
+    means closed: _admin_guard turns that into the setup page."""
+    _user, _password, _secret = admin_config()
+    if not _password:
+        return None
+    name = verify_token(request.cookies.get(COOKIE), _secret)
+    return name if name == _user else None
+
+
+def _admin_guard(request: Request):
+    """None when access is allowed, else the response to return:
+    the setup page when no password is configured (fail closed),
+    else a redirect to the login form."""
+    _user, password, _secret = admin_config()
+    if not password:
+        return _admin_shell(
+            "Admin band hai",
+            "<p class=\"warn\">ADMIN_PASSWORD .env me set nahi hai. "
+            ".env me <code>ADMIN_PASSWORD=...</code> likho, phir "
+            "<code>docker compose up --build -d</code> chalao — tab "
+            "tak admin kisi ko nahi khulega.</p>")
+    if not _admin_check(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    return None
+
+
+def _login_html(error: str | None = None) -> str:
+    err = f"<p class=\"warn\">{error}</p>" if error else ""
+    return (f"<!doctype html><html><head><meta charset=\"utf-8\">"
+            f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            f"<title>Admin Login</title><style>body{{font-family:system-ui,sans-serif;"
+            f"max-width:480px;margin:60px auto;padding:0 16px;background:#0a0a0a;"
+            f"color:#e5e7eb}}input{{width:100%;padding:10px;margin:6px 0;background:#1f2937;"
+            f"border:1px solid #374151;color:#e5e7eb;border-radius:8px}}"
+            f"button{{padding:10px 18px;background:#f97316;color:#111827;border:none;"
+            f"border-radius:8px;font-weight:700;cursor:pointer}}"
+            f".warn{{color:#fbbf24}}</style></head><body><h1>Admin Login</h1>{err}"
+            f"<form method=\"post\" action=\"/admin/login\">"
+            f"<label>Username<br><input name=\"username\" value=\"admin\"></label>"
+            f"<label>Password<br><input type=\"password\" name=\"password\"></label>"
+            f"<button type=\"submit\">Login karo</button></form></body></html>")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -85,9 +158,7 @@ def _session_rows_html() -> str:
     or KB actions anywhere on this page anymore."""
     import html as _html
     try:
-        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
-                             serverSelectionTimeoutMS=2000)
-        col = client.get_default_database()["chat_logs"]
+        col = _mongo_client().get_default_database()["chat_logs"]
         docs = list(col.find().sort("created_at", -1).limit(500))
         sessions = _group_sessions(docs)[:25]
     except Exception:
@@ -125,18 +196,54 @@ def _admin_shell(title: str, body: str) -> str:
 
 
 def _mongo_docs(session_id: str | None = None) -> list:
-    client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
-                         serverSelectionTimeoutMS=2000)
-    col = client.get_default_database()["chat_logs"]
+    col = _mongo_client().get_default_database()["chat_logs"]
     if session_id:
         return list(col.find({"session_id": session_id}).sort("created_at", 1))
     return list(col.find().sort("created_at", -1).limit(500))
 
 
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(request: Request):
+    if _admin_check(request):
+        return RedirectResponse("/admin", status_code=303)
+    return _login_html()
+
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    form = await request.form()
+    user, password, secret = admin_config()
+    if check_credentials(str(form.get("username", "")),
+                         str(form.get("password", "")),
+                         user, password):
+        resp = RedirectResponse("/admin", status_code=303)
+        resp.set_cookie(COOKIE, make_token(user, secret),
+                        httponly=True, samesite="lax", path="/admin",
+                        max_age=43200)
+        return resp
+    return _login_html("Ghalat username ya password.")
+
+
+@app.get("/admin/logout")
+def admin_logout():
+    resp = RedirectResponse("/admin/login", status_code=303)
+    resp.delete_cookie(COOKIE, path="/admin")
+    return resp
+
+
 @app.get("/admin", response_class=HTMLResponse)
-def admin_ui():
+def admin_ui(request: Request):
+    guard = _admin_guard(request)
+    if guard is not None:
+        return guard
     import re as _re
-    html = ADMIN_HTML.replace("{{SESSION_ROWS}}", _session_rows_html())
+    try:
+        docs = _mongo_docs()
+        monitoring = monitoring_html(summarize_turns(docs))
+    except Exception:
+        monitoring = "<p class='warn'>Monitoring nahi ban saka (Mongo down ho sakta hai).</p>"
+    html = ADMIN_HTML.replace("{{MONITORING}}", monitoring)
+    html = html.replace("{{SESSION_ROWS}}", _session_rows_html())
     try:
         mongo, qdrant = _mongo_ok(), _qdrant_ok()
         health = (f"Server: {'OK' if mongo and qdrant else 'MASLA'} "
@@ -150,7 +257,10 @@ def admin_ui():
 
 
 @app.get("/admin/session/{session_id}", response_class=HTMLResponse)
-def admin_session_page(session_id: str):
+def admin_session_page(request: Request, session_id: str):
+    guard = _admin_guard(request)
+    if guard is not None:
+        return guard
     import html as _html
     try:
         docs = _mongo_docs(session_id)
@@ -180,9 +290,12 @@ class ChatIn(BaseModel):
 
 @app.post("/chat")
 def chat(payload: ChatIn):
+    started = time.monotonic()
     result = handle_message(payload.message, payload.session_id, _store,
                             reply_to=payload.reply_to)
-    _log_chat(payload.message, payload.session_id, result, payload.reply_to)
+    latency_ms = round((time.monotonic() - started) * 1000)
+    _log_chat(payload.message, payload.session_id, result, payload.reply_to,
+              latency_ms=latency_ms)
     return result
 
 
@@ -193,9 +306,7 @@ def chat_history(session_id: str):
     instead of starting from an empty screen. A New chat uses a
     new session_id, so its history starts empty on purpose."""
     try:
-        client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
-                             serverSelectionTimeoutMS=2000)
-        col = client.get_default_database()["chat_logs"]
+        col = _mongo_client().get_default_database()["chat_logs"]
         docs = list(col.find({"session_id": session_id}).sort("created_at", 1).limit(200))
         return [{"message": d.get("message"), "reply": d.get("reply", ""),
                  "sources": d.get("sources", []),
