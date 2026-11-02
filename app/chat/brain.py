@@ -1212,6 +1212,14 @@ def _conversation_summary(meta: dict, slots: dict, limit: int = 4) -> str:
     _lbq = meta.get("last_bot_question")
     if _lbq:
         parts.append(f"Last bot question: {_lbq[:200]}")
+    # Nov 3 ("give the AI all the context"): the summary used to
+    # carry only the last bot QUESTION, never what the bot actually
+    # said — so when a visitor asked "you said X, elaborate", the
+    # model could not see X and guessed instead. The last bot
+    # replies now ride along too.
+    _br = [b for b in (meta.get("bot_replies") or []) if b][-3:]
+    if _br:
+        parts.append("Earlier bot replies: " + " | ".join(b[:200] for b in _br) + ".")
     return " ".join(parts)
 
 
@@ -1344,6 +1352,26 @@ def _looks_like_bad_email(message: str, extracted: dict) -> bool:
     # Oct 30 brain2 case) or a spec word (extraction caught those).
     if len(text.split()) == 1 and not any(c.isdigit() for c in text) \
             and not extracted and asks_bare_fact_topic(text) is None:
+        return True
+    return False
+
+
+def _is_meta_reference(low: str) -> bool:
+    """The visitor is talking about the bot's own previous message
+    (Nov 3 live transcript): "you said (tell me what will go
+    inside the pack), elaborate it", "how can anything go in the
+    labels?". These are questions about the conversation itself,
+    not slot answers — they must reach the answer path, never the
+    ack + next-question dodge that answered neither turn. Narrow
+    on purpose: "you said" + a verb, "what do you mean", an
+    elaborate/explain request, or a "how can ... go in" challenge.
+    """
+    if re.search(r"\byou (said|told|asked|mentioned|wrote)\b", low):
+        return True
+    if re.search(r"\b(what do you mean|what does that mean|elaborate|explain (that|this|it|me|to me))\b", low):
+        return True
+    if "how can" in low and ("go in" in low or "inside" in low
+                             or "pack" in low):
         return True
     return False
 
@@ -2858,27 +2886,48 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     "suggestions": _suggestions(
                         slots, script_missing(slots, meta),
                         language=language)}
-    # Confirmation chips must actually work: "Change quantity" clears
-    # that slot and re-asks it, instead of the bot treating the tap
-    # as a new message and repeating the confirmation.
-    if "change quantity" in low:
-        slots.pop("quantity", None)
-        _save_session(store, session_id, slots)
-        return {
-            "reply": _question("quantity", slots, language), "language": language, "slots": slots,
-            "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
-            "handoff": None, "llm_used": False,
-            "suggestions": _suggestions(slots, ["quantity"], language=language),
-        }
-    if "change size" in low:
-        slots.pop("sizes", None)
-        _save_session(store, session_id, slots)
-        return {
-            "reply": _question("sizes", slots, language), "language": language, "slots": slots,
-            "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
-            "handoff": None, "llm_used": False,
-            "suggestions": _suggestions(slots, ["sizes"], language=language),
-        }
+    # "Change quantity" (incl. the confirmation chip) is handled by
+    # the general change-<field> branch below — the old branch here
+    # used bare _question, which handle_message shadows with an
+    # unpacking above, so it crashed whenever that branch skipped
+    # (Nov 3: UnboundLocalError on "i want to change quantity").
+    # "Change <field>" without a new value (Nov 3 live transcript,
+    # global across fields): "i want to change finish.." was
+    # ignored on VM and, on live, the LLM ack invented a "hanging
+    # finish" and moved on. A change request re-asks that field —
+    # never invents a value, never acks-and-continues. A new value
+    # in the same message ("change finish to matte") keeps the
+    # normal correction flow instead, and a question ("can I
+    # change the finish later?") is not a change request at all.
+    _CHANGE_FIELDS = {"finish": "finishes", "finishes": "finishes",
+                      "size": "sizes", "sizes": "sizes",
+                      "quantity": "quantity", "material": "material",
+                      "style": "style", "type": "type",
+                      "design": "skus", "designs": "skus",
+                      "extra": "extras", "extras": "extras"}
+    _cm = re.search(r"\bchange\s+(?:the\s+|my\s+)?(finish|finishes|size|sizes|quantity|material|style|type|design|designs|extra|extras)\b", low)
+    if _cm and "?" not in message and not visitor_is_asking(message):
+        _cfield = _CHANGE_FIELDS[_cm.group(1)]
+        if _cfield not in extracted:
+            slots.pop(_cfield, None)
+            meta["answered_fields"] = [a for a in (meta.get("answered_fields") or [])
+                                       if a != _cfield]
+            meta["gave_up"] = [g for g in (meta.get("gave_up") or [])
+                               if g != _cfield]
+            meta["last_asked"] = _cfield
+            _save_session(store, session_id, slots)
+            _save_meta(store, session_id, meta)
+            return {
+                # _next_question_text, not bare _question: handle_message
+                # shadows _question with an unpacking above, so the
+                # bare name is unbound whenever that branch skips.
+                "reply": _next_question_text(slots, [_cfield], language),
+                "language": language,
+                "slots": slots,
+                "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
+                "handoff": None, "llm_used": False,
+                "suggestions": _suggestions(slots, [_cfield], language=language),
+            }
     if (low in ("yes", "yes, that's correct", "yes thats correct",
                 "yes, that's right", "confirm", "confirmed", "correct",
                 "ok", "okay", "yeah", "yep")
@@ -3018,8 +3067,28 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _use_words = {k for _keys, _ in _SUGGEST_USES for k in _keys}
                 _use_words |= {"food", "candles", "candle"}
                 _sing = _tgt[:-1] if _tgt.endswith("s") and len(_tgt) > 3 else _tgt
+                # Nov 3, global: an attribute word is never an
+                # unknown product. "what type of finish do you
+                # provide?" used to deflect ("Finish isn't a listed
+                # product..."). Finishes get the script's own
+                # offer; materials/styles fall through to normal
+                # fact handling instead of the fake-product reply.
+                if _tgt in ("finish", "finishes"):
+                    _amiss = script_missing(slots, meta)
+                    _aq = _next_question_text(slots, _amiss, language) if _amiss else ""
+                    _areply = ("We offer matte, gloss, and soft touch finishes."
+                               + (f" {_aq}" if _aq else ""))
+                    _save_session(store, session_id, slots)
+                    _save_meta(store, session_id, meta)
+                    return {"reply": _areply, "language": language, "slots": slots,
+                            "missing": _amiss, "sources": [],
+                            "handoff": None, "llm_used": False,
+                            "suggestions": _suggestions(
+                                slots, _amiss, language=language)}
                 if _tgt not in _tgt_stop and _tgt not in _use_words \
                         and _sing not in _use_words \
+                        and _tgt not in ("material", "materials",
+                                         "style", "styles") \
                         and not any(_sing == a or _tgt == a
                                     for _, _aliases in _PRODUCTS for a in _aliases):
                     _plural = _tgt.endswith("s")
@@ -3675,6 +3744,36 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if ("not sure" in low or says_they_do_not_know(message)) and missing:
         _first = missing[0]
         if _first == "sizes":
+            # Nov 3 live test: "what will go inside the pack??" —
+            # a label never has anything inside it, so the pack
+            # question is nonsense for flat families. Containers
+            # (box/bag/pouch) keep it; labels, stickers, cards and
+            # banners get a leave-it-to-the-team wording instead.
+            # And a second "not sure" gives the size up instead of
+            # repeating this reply forever (the size chips include
+            # a "Not sure" chip, inviting a second tap).
+            _prod = (slots.get("product") or "").lower()
+            _flat = not ("box" in _prod or "bag" in _prod
+                         or "pouch" in _prod)
+            _n = meta.get("not_sure_sizes_count", 0) + 1
+            meta["not_sure_sizes_count"] = _n
+            if _n >= 2:
+                meta.setdefault("gave_up", [])
+                if "sizes" not in meta["gave_up"]:
+                    meta["gave_up"].append("sizes")
+                _gave_up = list(meta["gave_up"])
+                _missing2 = script_missing(slots, meta)
+                if not _missing2:
+                    return _final_return(_confirmation_text())
+                return _final_return(
+                    "No problem — we'll leave the size for the team to confirm. "
+                    + _next_question_text(slots, _missing2, language))
+            if _flat:
+                return _final_return(
+                    _tr("not_sure_sizes_flat", language,
+                        "No problem — we can leave the size for the team "
+                        "to confirm. Or pick a common size to start with."),
+                    srcs=_slot_sources(slots) or sources)
             return _final_return(
                 _tr("not_sure_sizes", language,
                     "No problem — tell me what will go inside the pack, "
@@ -3683,6 +3782,21 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         if _first == "quantity":
             # User rule (Oct 30): never volunteer the minimum, even
             # as a starting point for a "not sure" visitor.
+            # Nov 3: same second-tap loop as sizes — a second
+            # "not sure" gives the quantity up instead of repeating.
+            _n = meta.get("not_sure_quantity_count", 0) + 1
+            meta["not_sure_quantity_count"] = _n
+            if _n >= 2:
+                meta.setdefault("gave_up", [])
+                if "quantity" not in meta["gave_up"]:
+                    meta["gave_up"].append("quantity")
+                _gave_up = list(meta["gave_up"])
+                _missing2 = script_missing(slots, meta)
+                if not _missing2:
+                    return _final_return(_confirmation_text())
+                return _final_return(
+                    "No problem — we'll leave the quantity for the team to confirm. "
+                    + _next_question_text(slots, _missing2, language))
             return _final_return(
                 _tr("not_sure_quantity", language,
                     "No problem — tell me a rough range and we will work from that."),
@@ -3770,7 +3884,46 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     #   with the OKF leash, then the composer validator fixes it in
     #   code (or falls back to deterministic when unsalvageable).
     is_fact_question = ("?" in message or any(w in low for w in _FACT_WORDS)
-                        or bool(fact_topics_asked(message)))
+                        or bool(fact_topics_asked(message))
+                        # Nov 3: a meta-reference ("you said X,
+                        # elaborate") is a question about the chat
+                        # itself — route it to the LLM answer path
+                        # (with the enriched summary) instead of the
+                        # ack + script-question dodge.
+                        or _is_meta_reference(low))
+    # Meta-reference about the pack confusion, answered in code
+    # (Nov 3 live transcript): the visitor quoted the bot's own
+    # "inside the pack" line back at it and asked to elaborate —
+    # and got an ack + size question, never an answer. For flat
+    # products the bot's line was simply wrong, so own it plainly
+    # and correct it, then continue with the pending question.
+    # No key needed, no SRAG guess: this is the bot correcting
+    # its own words, not a KB fact.
+    if _is_meta_reference(low) and slots.get("product") \
+            and not ("box" in (slots.get("product") or "").lower()
+                     or "bag" in (slots.get("product") or "").lower()
+                     or "pouch" in (slots.get("product") or "").lower()) \
+            and re.search(r"\b(pack|inside|go in|goes in)\b", low):
+        _prod = slots["product"]
+        _mmiss = script_missing(slots, meta)
+        _corr = (f"You're right — that was my mistake. Nothing goes "
+                 f"inside a {_prod}. That question was meant for bags "
+                 f"and boxes, not for {_prod}s.")
+        _q = _next_question_text(slots, _mmiss, language) if _mmiss else ""
+        if _mmiss:
+            meta["last_asked"] = _mmiss[0]
+        _creply = _corr + (" " + _q if _q else "")
+        meta["last_bot_question"] = _creply
+        meta.setdefault("bot_replies", []).append(_creply)
+        meta["bot_replies"] = meta["bot_replies"][-20:]
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {"reply": _creply, "language": language, "slots": slots,
+                "missing": _mmiss,
+                "sources": _slot_sources(slots), "handoff": None,
+                "llm_used": False,
+                "suggestions": _suggestions(slots, _mmiss, _creply,
+                                            language=language)}
     # A vague size word ("i need large box") with no purpose stated:
     # the bot cannot recommend a type without knowing the use, so
     # it asks what the product is for FIRST, then size — once per
@@ -4099,11 +4252,15 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             # likely mean; the deterministic pending question still
             # follows, and without a key nothing changes. Declines,
             # questions and one-word answers are excluded — those
-            # already have their own handling.
+            # already have their own handling. Change requests are
+            # excluded too (Nov 3): the ack once invented a
+            # "hanging finish" for "i want to change finish" —
+            # change requests have their own branch above.
             if not extracted and _last in missing \
                     and not visitor_is_asking(message) \
                     and "?" not in message \
                     and not _DECLINE.match(message.strip()) \
+                    and not re.search(r"\bchange\b", low) \
                     and len(low.split()) >= 3:
                 _aack = _llm_ack_sentence(message, reply)
                 if _aack:

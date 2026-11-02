@@ -130,6 +130,10 @@ _STRINGS = {
         "es": "No hay problema: dime qué va dentro del paquete, o elige un tamaño común para empezar.",
         "ur-roman": "Koi baat nahi — batao andar kya hoga, ya ek common size choose kar lo shuru ke liye.",
     },
+    "not_sure_sizes_flat": {
+        "es": "No hay problema — podemos dejar el tamaño para que el equipo lo confirme. O elige un tamaño común para empezar.",
+        "ur-roman": "Koi baat nahi — size team confirm kar legi. Ya ek common size choose kar lo shuru ke liye.",
+    },
     "not_sure_quantity": {
         "es": "No hay problema: dime un rango aproximado y trabajaremos con eso.",
         "ur-roman": "Koi baat nahi — koi andaza de dein, usi se kaam kar lenge.",

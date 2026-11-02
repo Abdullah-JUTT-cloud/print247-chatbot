@@ -72,6 +72,15 @@ VOCAB = {
     # the typo sailed past the decline check and the question was
     # asked twice (live label transcript).
     "preference",
+    # Nov 3: "ellaborate" (live transcript typo) must correct so
+    # the meta-reference detector sees the elaborate request.
+    "elaborate",
+    # Nov 3: "change" and "same" are valid words that the 0.8
+    # cutoff mangled ("change" -> "hang" made the live bot invent
+    # a "hanging finish"; "same" -> "sample"). Raising the cutoff
+    # is NOT the fix — a real typo ("myalr" -> "mylar") also sits
+    # at exactly 0.8. Valid words belong in the vocabulary.
+    "change", "same",
 }
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z\-]*")
