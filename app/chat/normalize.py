@@ -67,6 +67,11 @@ VOCAB = {
     "delivery", "shipping", "payment", "paypal", "zelle", "quantity",
     "design", "designs", "artwork", "sample", "samples", "quote",
     "turnaround", "refund", "packaging", "business",
+    # Nov 2: "no prefrence" at a field question must correct to
+    # "no preference" so the decline matches — without this word
+    # the typo sailed past the decline check and the question was
+    # asked twice (live label transcript).
+    "preference",
 }
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z\-]*")

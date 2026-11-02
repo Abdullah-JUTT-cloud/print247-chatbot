@@ -93,6 +93,17 @@ _DECLINE = re.compile(
     r"^\s*(?:no|none|nope|nah|not needed|no preference|doesn'?t matter|don'?t need (?:it|one|any)?|no thanks?)\s*[.!]*\s*$",
     re.IGNORECASE)
 _YES = re.compile(r"^\s*(?:yes|yeah|yep|ya|sure|please|ok(?:ay)?)\s*[.!]*\s*$", re.IGNORECASE)
+# Soft acceptances at confirmation (Nov 2): a visitor shown the
+# summary does not always say "yes" — "no preference" means
+# "nothing to change", "go ahead"/"looks good" mean yes. Without
+# these, every one of them re-showed the confirmation verbatim,
+# and "go ahead" even tripped the gibberish guard. Bare "no" is
+# deliberately NOT here: it means rejection, handled separately.
+_CONFIRM_ACCEPT = ("no preference", "no pref", "doesn't matter",
+                   "dont matter", "don't mind", "go ahead",
+                   "go ahead please", "proceed", "looks good",
+                   "looks fine", "sounds good", "nothing to change",
+                   "nothing", "perfect", "good")
 _BARE_NUMBER = re.compile(r"^\s*(\d+)\s*$")
 _BARE_SPELLED = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
                  "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"}
@@ -1080,6 +1091,18 @@ def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None 
     return text
 
 
+def _gave_up_sentence(gave_up: list | None) -> str:
+    """The team-confirms sentence as its own statement, for
+    confirmations that end in a question mark (Nov 2): the old
+    assembly put the "?" after this sentence, so the quote read
+    "...directly? Note: ..." — a question mark in the middle of
+    the message. The question mark now closes the order spec,
+    and this sentence follows it."""
+    if not gave_up:
+        return ""
+    return f" For {', '.join(gave_up)}, the team will confirm it with you directly."
+
+
 def _below_min_note(slots: dict, language: str) -> str:
     """Below-minimum note for confirmations (old composer rule:
     never hand the rep a number nobody has answered)."""
@@ -1146,7 +1169,8 @@ def _deterministic_reply(message: str, slots: dict, facts: list[dict], missing: 
     # in the live transcript's no-LLM path.)
     if not missing:
         intro = _tr("confirm_intro", language, "Just to confirm — do you want")
-        return (f"{intro} {_spec_parts(slots, gave_up, qty_split)}?"
+        return (f"{intro} {_spec_parts(slots, [], qty_split)}?"
+                f"{_gave_up_sentence(gave_up)}"
                 f"{_below_min_note(slots, language)}")
     if facts:
         return _direct_answer(message, facts[0]["text"]) or \
@@ -2120,6 +2144,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             and not meta.get("awaiting_contact") \
             and not (meta.get("awaiting_early_email")
                      and _looks_like_bad_email(message, {})) \
+            and low not in _CONFIRM_ACCEPT \
             and not meta.get("complete"):
         return _intent_result(
             "Sorry, I didn't quite catch that — could you say a bit "
@@ -2718,8 +2743,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _creply = (_tr("switch_done", language, "Got it — switching to {new}.",
                                new=_corr)
                            + " Just to confirm — do you want "
-                           + _spec_parts(slots, meta.get("gave_up") or [],
+                           + _spec_parts(slots, [],
                                          meta.get("qty_split")) + "?"
+                           + _gave_up_sentence(meta.get("gave_up"))
                            + _design_files_note(meta))
             else:
                 _cq2 = _next_question_text(slots, _cmiss, language)
@@ -2853,9 +2879,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "handoff": None, "llm_used": False,
             "suggestions": _suggestions(slots, ["sizes"], language=language),
         }
-    if low in ("yes", "yes, that's correct", "yes thats correct",
-               "yes, that's right", "confirm", "confirmed", "correct",
-               "ok", "okay", "yeah", "yep") \
+    if (low in ("yes", "yes, that's correct", "yes thats correct",
+                "yes, that's right", "confirm", "confirmed", "correct",
+                "ok", "okay", "yeah", "yep")
+            or low in _CONFIRM_ACCEPT) \
             and script_complete(slots, meta):
         # Whole-chat not-a-customer check: a job seeker who later
         # typed an order word is still not a lead if the chat as a
@@ -2898,6 +2925,22 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "missing": script_missing(slots, meta), "sources": _slot_sources(slots),
             "handoff": None, "llm_used": False, "suggestions": [],
             "contact": _contact,
+        }
+    # Bare rejection at confirmation (Nov 2): "no" used to fall
+    # through and re-show the confirmation verbatim, leaving the
+    # visitor no way to say the summary is wrong. Ask what to
+    # change; the correction branches above handle the next turn.
+    if low in ("no", "none", "nope", "nah", "not correct", "wrong",
+               "that's wrong", "thats wrong") \
+            and script_complete(slots, meta):
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {
+            "reply": "No problem — what would you like to change?",
+            "language": language, "slots": slots,
+            "missing": script_missing(slots, meta),
+            "sources": _slot_sources(slots), "handoff": None,
+            "llm_used": False, "suggestions": [],
         }
     reason = guards.handoff_reason(message, slots)
     facts: list[dict] = []
@@ -3170,7 +3213,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
 
     def _confirmation_text() -> str:
         intro = _tr("confirm_intro", language, "Just to confirm — do you want")
-        return (f"{intro} {_spec_parts(slots, _gave_up, meta.get('qty_split'))}?"
+        return (f"{intro} {_spec_parts(slots, [], meta.get('qty_split'))}?"
+                f"{_gave_up_sentence(_gave_up)}"
                 f"{_below_min_note(slots, language)}"
                 f"{_design_files_note(meta)}")
 
@@ -3675,7 +3719,13 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _last = meta.get("last_asked")
     if _last in ("finishes", "extras", "material", "style", "skus") \
             and not visitor_is_asking(message):
-        if _DECLINE.match(message.strip()):
+        # Nov 2: a bare "ok" after the material question is an
+        # acknowledgment, not an answer — the old code re-asked the
+        # same question. Treat it as no preference, exactly like a
+        # decline. (Only ok/okay: "yeah" to "do you have a material
+        # in mind?" means yes, and is rightly re-asked for which.)
+        if _DECLINE.match(message.strip()) \
+                or message.strip().lower().strip(".,! ") in ("ok", "okay"):
             slots[_last] = "1" if _last == "skus" else "none"
             meta.setdefault("answered_fields", [])
             if _last not in meta["answered_fields"]:
@@ -3797,6 +3847,34 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "missing": _zmiss,
                 "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
                 "suggestions": _suggestions(slots, _zmiss, _zq, language)}
+    # An arithmetic-looking size attempt ("2+2", "2/2") at the size
+    # question is not a quantity: Nov 2 live transcript stored
+    # "2+2" as 2 units (below-min note and all) and asked the size
+    # anyway. "+" and "/" are not size separators (x, *, by are),
+    # so no size parses — clear the grabbed quantity the same way
+    # the zero branch un-answers a refused size, and re-ask the
+    # size with the format spelled out.
+    if meta.get("last_asked") == "sizes" and not slots.get("sizes") \
+            and "quantity" in extracted and "sizes" not in extracted \
+            and re.search(r"\d\s*[+/]\s*\d", message):
+        slots.pop("quantity", None)
+        meta["answered_fields"] = [a for a in (meta.get("answered_fields") or [])
+                                   if a != "quantity"]
+        meta["last_asked"] = "sizes"
+        _amiss = script_missing(slots, meta)
+        _aq = ("That doesn't look like a size — could you share it as "
+               "width x height, like 2x2 inches?")
+        if _amiss:
+            _aq += " " + _next_question_text(slots, _amiss, language)
+        meta["last_bot_question"] = _aq
+        meta.setdefault("bot_replies", []).append(_aq)
+        meta["bot_replies"] = meta["bot_replies"][-20:]
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        return {"reply": _aq, "language": language, "slots": slots,
+                "missing": _amiss,
+                "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
+                "suggestions": _suggestions(slots, _amiss, _aq, language)}
     # A size span without a unit ("3x4") is not a usable size yet:
     # ask inches, cm or mm — once per size value, never a trap. A
     # bare unit answer is applied by the extraction above, so
