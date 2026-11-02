@@ -7,7 +7,7 @@ status: verified
 last_reviewed: 2026-10-29
 ---
 
-Yes — we print beverage and bottle labels, including wine labels.
+Yes — we print beverage and bottle labels, including wine labels and spirit labels.
 Whiskey bottle labels are made the same way: a custom bottle label
 in your size, material and finish, so yes, we can print whiskey
 bottle labels like wine labels. Tell us your bottle size and the

@@ -31,7 +31,13 @@ _DECLINES = re.compile(
     r"|\b(?:email|mail|phone)\s+(?:only|please|is fine|is enough|instead)\b",
     re.IGNORECASE)
 _SPEC_WORDS = re.compile(
-    r"\b(matte|gloss|soft\s*touch|finish|cheaper|cheapest|economical|cost[-\s]?effective|lowest\s*cost|inches|cm|mm|size|dimension|depth|height|width|x\s*\d|\d+\s*x|qty|quantity|pcs|pieces|units|boxes|bags|pouches|labels|stickers|cardboard|corrugated|rigid|kraft|foil|mylar|material|paper|coating|laminate|laminated)\b",
+    r"\b(matte|gloss|soft\s*touch|spot\s*uv|foil|embossing|debossing|finish|finishes|"
+    r"cheaper|cheapest|economical|cost[-\s]?effective|lowest\s*cost|"
+    r"inches|cm|mm|size|sizes|dimension|dimensions|depth|height|width|x\s*\d|\d+\s*x|"
+    r"stand-?up|flat-?bottom|flat|mailer|folding\s*carton|gable|"
+    r"zipper|window|tear\s*notch|valve|hang\s*hole|"
+    r"qty|quantity|pcs|pieces|units|boxes|bags|pouches|labels|stickers|"
+    r"cardboard|corrugated|rigid|kraft|mylar|material|paper|coating|laminate|laminated)\b",
     re.IGNORECASE)
 # "Stop everything", not "skip this field": a visitor who says they
 # do not want this now is ending the contact flow, not declining one
@@ -99,14 +105,14 @@ def ask_outcome(last_asked: str, text: str, have_it_now: bool) -> str:
     if have_it_now:
         return "free"
     if is_contact_key(last_asked):
+        if _SPEC_WORDS.search(text or ""):
+            return "free"
         if _DECLINES.search(text or ""):
             return "declined"
-        if _WONT_SHARE.search(text or "") and not _SPEC_WORDS.search(text or ""):
+        if _WONT_SHARE.search(text or ""):
             return "declined"
         if last_asked != "email" and _PREFERS_EMAIL.search(text or ""):
             return "declined"
-        if _SPEC_WORDS.search(text or ""):
-            return "free"
     if _IS_A_QUESTION.search(text or "") or visitor_is_asking(text):
         return "free"
     return "spent"

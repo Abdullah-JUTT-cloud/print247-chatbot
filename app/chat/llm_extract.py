@@ -46,11 +46,24 @@ _STYLE_WORDS = [
 ]
 
 
-def _validate(raw: dict) -> dict:
+_FIELD_WORDS = {
+    "product", "products",
+    "size", "sizes", "dimension", "dimensions",
+    "finish", "finishes", "finishing",
+    "quantity", "qty", "quantities",
+    "sku", "skus", "design", "designs",
+    "extra", "extras",
+    "material", "materials",
+    "style", "styles",
+    "type", "types",
+}
+
+
+def _validate(raw: dict, message: str | None = None) -> dict:
     """Code validation for every model-returned value."""
     from .finishes_norm import finish_in, normalise_finish
     from .quantity_parse import quantity_in
-    from .slots import _MATERIALS, _PRODUCTS, _skus_in, _EXTRAS
+    from .slots import _MATERIALS, _PRODUCTS, _FINISHES, _skus_in, _EXTRAS, _negated_labels
 
     out: dict = {}
     product = str(raw.get("product") or "").lower()
@@ -82,13 +95,32 @@ def _validate(raw: dict) -> dict:
             out["sizes"] = size.strip()
     finish = str(raw.get("finishes") or "")
     if finish:
-        f = normalise_finish(finish)
-        if f and f != "none":
-            out["finishes"] = f
-        else:
-            slip = finish_in(finish.lower())
-            if slip:
-                out["finishes"] = slip
+        f_low = finish.lower()
+        candidates = []
+        for label, keys in _FINISHES:
+            if any(re.search(rf"\b{re.escape(k)}\b", f_low) for k in keys):
+                candidates.append(label)
+        if not candidates and re.search(r"\bmate\b", f_low):
+            candidates.append("matte")
+        if not candidates:
+            if not re.search(r"\b(?:not|no|without|never|dont|don't|do not)\b", f_low):
+                f = normalise_finish(finish)
+                if f and f != "none":
+                    candidates.append(f)
+                else:
+                    slip = finish_in(f_low)
+                    if slip:
+                        candidates.append(slip)
+        if candidates:
+            neg = set()
+            neg.update(_negated_labels(finish, candidates))
+            if message:
+                neg.update(_negated_labels(message, candidates))
+            if re.search(r"\b(?:not|no|without|never|dont|don't|do not)\b", f_low):
+                neg.update(candidates)
+            pos = [c for c in candidates if c not in neg]
+            if pos:
+                out["finishes"] = normalise_finish(pos[0])
     qty = raw.get("quantity")
     if qty is not None:
         q = quantity_in(str(qty))
@@ -104,7 +136,8 @@ def _validate(raw: dict) -> dict:
     found = [label for label, keys in _EXTRAS if any(k in extras for k in keys)]
     if found:
         out["extras"] = ", ".join(found)
-    material = str(raw.get("material") or "").lower()
+    raw_mat = str(raw.get("material") or "")
+    material = raw_mat.lower()
     for mat in _MATERIALS:
         if re.search(rf"\b{re.escape(mat)}\b", material):
             out["material"] = mat
@@ -114,6 +147,20 @@ def _validate(raw: dict) -> dict:
         if word in style:
             out["style"] = label
             break
+
+    # Drop any field whose cleaned value is simply a field name
+    out = {k: v for k, v in out.items() if str(v).lower().strip() not in _FIELD_WORDS}
+
+    # Negations check for finishes and material
+    if out.get("finishes"):
+        if re.search(r"\b(?:not|no|without|never|dont|don't|do not)\b", str(out["finishes"]).lower()):
+            out.pop("finishes")
+    if out.get("material"):
+        if re.search(r"\b(?:not|no|without|never|dont|don't|do not)\b", raw_mat.lower()):
+            out.pop("material")
+        elif message and out["material"] in _negated_labels(message, [out["material"]]):
+            out.pop("material")
+
     return out
 
 
@@ -153,6 +200,6 @@ def llm_extract(message: str, asked: str | None = None,
             timeout=10,
         )
         raw = json.loads(resp.choices[0].message.content.strip())
-        return _validate(raw if isinstance(raw, dict) else {})
+        return _validate(raw if isinstance(raw, dict) else {}, message=message)
     except Exception:
         return {}

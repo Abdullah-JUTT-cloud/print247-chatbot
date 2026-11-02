@@ -23,7 +23,7 @@ import re
 # auxiliary must lead the message, after only a greeting or 'ok'.
 _AUX = re.compile(
     r"^\s*(?:(?:ok|hi|hello|hey|please)[,.\s]*)?"
-    r"(?:do|does|can|could|will|would)\s+(?:you|u)\s+(\w+)",
+    r"(?:do|does|can|could|will|would)\s+(?:you|u|i|we)\s+(\w+)",
     re.IGNORECASE)
 # Qualifiers with their own dedicated file (wine/whiskey labels,
 # beef jerky bags) must reach that file, not the generic product
@@ -32,7 +32,7 @@ _AUX = re.compile(
 _VARIANT_QUALIFIERS = ("wine", "whiskey", "whisky", "spirit", "beverage",
                        "jerky")
 _VERBS = {"make", "print", "offer", "do", "produce", "provide", "sell",
-          "create", "manufacture", "handle", "supply", "have"}
+          "create", "manufacture", "handle", "supply", "have", "get", "order"}
 
 
 def _is_make_like(token: str) -> bool:

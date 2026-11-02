@@ -867,10 +867,13 @@ r = run("ev-s24-esswitch", ["I need pouches", "4x6 inches", "Necesito cajas", "s
 check("spanish switch answer (sí) switches to the new product",
       r["slots"].get("product") == "box",
       f"reply={r['reply'][:160]!r} slots={r['slots']}")
+import os
+from unittest import mock
 from app.chat.llm_extract import llm_extract as _llm_extract
-check("llm_extract accepts the new context kwargs (no key in VM -> {})",
-      _llm_extract("22", asked="How many designs?", product="pouch") == {},
-      "llm_extract with context kwargs did not return {}")
+with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+    check("llm_extract accepts the new context kwargs (no key in VM -> {})",
+          _llm_extract("22", asked="How many designs?", product="pouch") == {},
+          "llm_extract with context kwargs did not return {}")
 
 # ---------- section 25: Oct 30 types-question round ----------
 r = run("ev-s25-boxtypes", ["what box types do you offer?"])

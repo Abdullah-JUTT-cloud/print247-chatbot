@@ -19,7 +19,7 @@ _FINISHES = [
     ("soft touch", re.compile(r"^(soft ?-? ?touch|softtouch|soft tuch|soft touche|softouch)$"),
      re.compile(r"\b(soft ?touch|softtouch|softouch|soft tuch)\b")),
 ]
-_BARE_NOISE = re.compile(r"\b(finish|finishing|lamination|laminate|laminated|please|prefer|i|want|the|a)\b")
+_BARE_NOISE = re.compile(r"\b(finish|finishes|finishing|lamination|laminate|laminated|please|prefer|i|want|the|a)\b")
 
 
 def finish_in(text: str | None) -> str | None:
@@ -38,8 +38,14 @@ def normalise_finish(value: str | None) -> str:
     answer = (value or "").strip()
     if not answer:
         return answer
+    if answer.lower() in ("none", "no finish", "without finish"):
+        return "none"
+    if re.search(r"\b(?:not|no|without|never|dont|don't|do not)\b", answer.lower()):
+        return ""
     bare = re.sub(r"[.,!?]", " ", _BARE_NOISE.sub(" ", answer.lower()))
     bare = re.sub(r"\s+", " ", bare).strip()
+    if not bare:
+        return ""
     for canonical, exact, _slip in _FINISHES:
         if exact.match(bare):
             return canonical

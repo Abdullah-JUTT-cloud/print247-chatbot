@@ -22,8 +22,8 @@ from app.chat.brain import handle_message
 
 cases = json.load(open("eval/golden.json", encoding="utf-8"))["cases"]
 failed = 0
-for case in cases:
-    r = handle_message(case["question"], store=None)
+for i, case in enumerate(cases):
+    r = handle_message(case["question"], session_id=f"golden-{i}", store=None)
     ok_source = any(case["expected_source"] in s for s in r["sources"])
     ok_phrase = case["expected_phrase"].lower() in r["reply"].lower()
     ok = ok_source and ok_phrase

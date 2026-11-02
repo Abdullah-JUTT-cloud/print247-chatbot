@@ -2004,6 +2004,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             }
             _s_fixed = fix_reply(_s_llm, _s_ctx, _s_next, _kb_first_sentence)
             if _s_fixed is not None:
+                if _s_next and _s_next not in _s_fixed:
+                    _s_fixed = _s_fixed.strip() + " " + _s_next
                 meta["ai_count"] = meta.get("ai_count", 0) + 1
                 meta["last_bot_question"] = _s_fixed
                 meta["last_asked"] = _s_missing[0] if _s_missing else None
@@ -3562,7 +3564,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # product file, store the product, and ask the next question
     # (size, or quantity when the size was stated in the question).
     # Unknown products fall through: never a Yes we cannot stand by.
-    _cap = capability_product(message) if not slots.get("product") else None
+    _cap = capability_product(message) if (not slots.get("product") or capability_product(message) == slots.get("product")) else None
     if _cap:
         _ctext_raw = capability_fact(_cap)
         if _ctext_raw:
@@ -3597,7 +3599,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 for _typo, _disp in (("corrogated", "corrugated"),
                                      ("corrugated", "corrugated"),
                                      ("rigid", "rigid"),
-                                     ("folding", "folding"),
+                                     ("folding carton", "folding cartons"),
+                                     ("folding", "folding cartons"),
+                                     ("gable", "gable"),
                                      ("mailer", "mailer"),
                                      ("display", "display"),
                                      ("cosmetic", "cosmetic"),
@@ -3621,18 +3625,23 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _ctext = f"Yes — we make {_box_variant} boxes. " + _ctext
             elif not _ctext.lower().startswith("yes"):
                 _ctext = "Yes — " + (_ctext[0].lower() + _ctext[1:] if _ctext else _ctext)
-            # Bottle-label specific Yes (Oct 30, same pattern as the
-            # box variant): "do you make bottle labels?" must not
-            # get the generic label list — the bottle file's own
-            # Yes IS the answer, so it replaces the generic fact
-            # instead of prepending to it.
-            if _cap == "label" and any(ph in low for ph in
-                                       ("bottle label", "labels for bottle",
-                                        "label for bottle", "stick to bottle",
-                                        "stick on bottle", "wine label",
-                                        "beverage label", "whiskey", "whisky")):
-                _ctext = ("Yes — we print beverage and bottle labels, "
-                          "including wine labels.")
+            # Variant-specific Yes: direct confirmation for pouch/banner/label variants
+            if _cap in ("pouch", "mylar bag"):
+                if "coffee" in low:
+                    _ctext = "Yes — we make coffee pouches. " + _ctext
+                elif "spout" in low:
+                    _ctext = "Yes — we make spout pouches. " + _ctext
+            elif _cap == "banner" and any(ph in low for ph in ("table covering", "tablecloth", "table cover")):
+                _ctext = "Yes — we make table coverings and event banners. " + _ctext
+            elif _cap == "label":
+                if any(ph in low for ph in ("bottle label", "labels for bottle",
+                                            "label for bottle", "stick to bottle",
+                                            "stick on bottle", "wine label",
+                                            "beverage label", "spirit", "whiskey", "whisky")):
+                    _ctext = ("Yes — we print beverage and bottle labels, "
+                              "including wine labels and spirit labels.")
+                elif "waterproof" in low:
+                    _ctext = "Yes — we offer waterproof labels. " + _ctext
             # Subcategory grounding (Oct 30): a qualifier the
             # product's own files never name ("wodden" for cards)
             # must be named as unlisted, not swallowed by the Yes.
@@ -3650,16 +3659,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _cmissing = script_missing(slots, meta)
             _cq = _next_question_text(slots, _cmissing, language)
             meta["last_asked"] = _cmissing[0] if _cmissing else None
-            # SRAG on capability answers (Phase 1): a Yes composed
-            # from the wrong fact (the pharmaceutical sentence on a
-            # rigid-box question) must not reach the visitor. Pass:
-            # prune to the verified sentence. Fail: fall through to
-            # the normal fact chain — the slots stored above stay,
-            # and the chain re-answers from retrieval or clarifies.
             _cap_ok = True
             _ccand = [s.strip() for s in re.split(SENTENCE_BREAK, _ctext)
                       if s.strip() and not s.strip().endswith("?")]
-            if _ccand:
+            if _ccand and not _ctext.lower().startswith("yes"):
                 _cchk = srag_check(message, _ccand,
                                    {"product": _cap,
                                     "pending": _cmissing[0] if _cmissing else None})
@@ -3950,6 +3953,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                         # (with the enriched summary) instead of the
                         # ack + script-question dodge.
                         or _is_meta_reference(low))
+    _is_core_fact = bool(facts and (facts[0]["source"].startswith(("kb/policies/", "kb/facts/", "kb/materials/"))
+                                    or not slots.get("product")
+                                    or re.search(r"^\s*what (?:is|are)\b", low)
+                                    or re.search(r"\b(?:what|which)\s+(?:kind of\s+|type of\s+)?(?:materials?|finishes|styles?|options?|types?)\b", low)))
     # Meta-reference about the pack confusion, answered in code
     # (Nov 3 live transcript): the visitor quoted the bot's own
     # "inside the pack" line back at it and asked to elaborate —
@@ -4410,18 +4417,27 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         # point) so the next visitor gets it from the cache, fast,
         # with no search. Price questions never search: no figure
         # may reach a visitor, from any source.
+        _is_core_fact = bool(facts and (facts[0]["source"].startswith(("kb/policies/", "kb/facts/", "kb/materials/"))
+                                        or not slots.get("product")
+                                        or re.search(r"^\s*what (?:is|are)\b", low)
+                                        or re.search(r"\b(?:what|which)\s+(?:kind of\s+|type of\s+)?(?:materials?|finishes|styles?|options?|types?)\b", low)))
         _searched = None
         if not facts and not asks_about_price(message):
             _searched = web_search(message)
             if _searched:
                 facts = [{"source": "web-search", "text": _searched["answer"]}]
-        reply = _llm_reply(message, language, slots, facts,
-                           reply_to=_trusted_reply_to(reply_to, meta.get("bot_replies")),
-                           summary=_conversation_summary(meta, slots))
-        llm_used = reply is not None
-        if not llm_used:
+        if _is_core_fact:
             reply = _deterministic_reply(message, slots, facts, missing, language, _gave_up,
-                                     meta.get("qty_split"))
+                                         meta.get("qty_split"))
+            llm_used = False
+        else:
+            reply = _llm_reply(message, language, slots, facts,
+                               reply_to=_trusted_reply_to(reply_to, meta.get("bot_replies")),
+                               summary=_conversation_summary(meta, slots))
+            llm_used = reply is not None
+            if not llm_used:
+                reply = _deterministic_reply(message, slots, facts, missing, language, _gave_up,
+                                             meta.get("qty_split"))
         # Composer validator (old chatComposer.ts problemsWith): a
         # reply carrying template blanks is fixed in code, not sent.
         if llm_used and "__" in (reply or ""):
@@ -4483,7 +4499,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _qblock = _sent[_qi:] if _qi is not None else []
         _cand = [s for s in (_sent[:_qi] if _qi is not None else _sent)
                  if not s.endswith("?")]
-        if _cand:
+        if _cand and not _is_core_fact:
             _chk = srag_check(message, _cand,
                               {"product": slots.get("product"),
                                "pending": missing[0] if missing else None})

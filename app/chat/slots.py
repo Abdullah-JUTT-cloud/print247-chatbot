@@ -35,6 +35,8 @@ _PLACEHOLDERS = {
 # know, or we asked twice) — deliberately NOT in _PLACEHOLDERS.
 
 _PRODUCTS = [
+    ("label", ["label", "labels", "etiqueta", "etiquetas"]),
+    ("sticker", ["sticker", "stickers"]),
     ("stand-up pouch", ["stand-up pouch", "stand up pouch", "standup pouch"]),
     ("flat pouch", ["flat pouch"]),
     ("flat-bottom pouch", ["flat-bottom pouch", "flat bottom pouch"]),
@@ -42,10 +44,8 @@ _PRODUCTS = [
     ("pouch", ["pouch", "pouches"]),
     ("bag", ["bag", "bags", "bolsa", "bolsas"]),
     ("box", ["box", "boxes", "carton", "cartons", "caja", "cajas"]),
-    ("label", ["label", "labels", "etiqueta", "etiquetas"]),
-    ("sticker", ["sticker", "stickers"]),
     ("business card", ["business card", "business cards"]),
-    ("banner", ["banner", "banners"]),
+    ("banner", ["banner", "banners", "table coverings", "table covering", "tablecloth", "table cloths"]),
 ]
 
 _MATERIALS = [
@@ -495,21 +495,18 @@ def extract_from_message(text: str) -> dict:
     # product, for sizes given alone in a later turn.
     if out.get("sizes"):
         out["sizes"] = attach_gusset(out["sizes"], low, out.get("product"))
-    finish = _find(low, _FINISHES)
-    if finish:
-        out["finishes"] = normalise_finish(finish)
-    elif re.search(r"\bmate\b", low):
-        # Spanish "mate" = matte. Word-boundary only: "material"
-        # contains "mate" and must never become a finish.
-        out["finishes"] = "matte"
-    else:
+    finish_cands = [label for label, keys in _FINISHES if any(k in low for k in keys)]
+    if not finish_cands and re.search(r"\bmate\b", low):
+        finish_cands.append("matte")
+    if not finish_cands:
         slip = finish_in(low)
         if slip:
-            out["finishes"] = slip
-    if out.get("finishes") and out["finishes"] in _negated_labels(text, [out["finishes"]]):
-        # "not matte" is a rejection, not a choice — leave the finish
-        # open so the bot asks again instead of recording matte.
-        out.pop("finishes")
+            finish_cands.append(slip)
+    if finish_cands:
+        neg = _negated_labels(text, finish_cands)
+        pos = [c for c in finish_cands if c not in neg]
+        if pos:
+            out["finishes"] = normalise_finish(pos[0])
     qty = _quantity_in(text)
     if qty:
         out["quantity"] = qty
