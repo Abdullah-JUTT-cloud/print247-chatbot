@@ -1632,6 +1632,65 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             meta["last_bot_question"] = _dreply
             return _intent_result(_dreply)
 
+    # Gusset answer (Nov 3 mylar transcript): the pouch gusset
+    # question is pending. A lone dimension appends as +gusset
+    # (4x6+2), a no continues with width x height, "add gusset"
+    # asks for the number — anything else pops the state and
+    # flows normally. Mirrors the box depth handler; pouches join
+    # with +, never x.
+    _gus_val = meta.pop("awaiting_gusset_value", None)
+    _gus = meta.pop("awaiting_gusset", None)
+    if _gus_val:
+        _gd = _parse_single_dimension(message)
+        if _gd:
+            _gbase = re.sub(r"\s*(inches?|inch|in|mm|cm|feet|ft|\"|″)\s*$",
+                            "", prior.get("sizes", ""))
+            _gunit = _size_unit(prior.get("sizes"))
+            prior["sizes"] = f"{_gbase}+{_gd} {_gunit}"
+            _gmiss = script_missing(prior, meta)
+            _greply = f"Got it — gusset {_gd} {_gunit} added."
+            if _gmiss:
+                _greply += " " + _next_question_text(prior, _gmiss, language)
+            meta["last_bot_question"] = _greply
+            return _intent_result(
+                _greply,
+                suggestions=_suggestions(prior, _gmiss, _greply, language))
+    elif _gus:
+        if _is_depth_no(low) or "no gusset" in low:
+            # An explicit decline: a later depth question gets the
+            # general answer, not a second gusset offer. Merely
+            # bypassing the question (answering something else)
+            # does NOT decline it — the offer stays open.
+            meta["gusset_declined"] = True
+            _gmiss = script_missing(prior, meta)
+            _greply = "Got it — we'll go with width x height."
+            if _gmiss:
+                _greply += " " + _next_question_text(prior, _gmiss, language)
+            meta["last_bot_question"] = _greply
+            return _intent_result(
+                _greply,
+                suggestions=_suggestions(prior, _gmiss, _greply, language))
+        _gd = _parse_single_dimension(message)
+        if _gd:
+            _gbase = re.sub(r"\s*(inches?|inch|in|mm|cm|feet|ft|\"|″)\s*$",
+                            "", prior.get("sizes", ""))
+            _gunit = _size_unit(prior.get("sizes"))
+            prior["sizes"] = f"{_gbase}+{_gd} {_gunit}"
+            _gmiss = script_missing(prior, meta)
+            _greply = f"Got it — gusset {_gd} {_gunit} added."
+            if _gmiss:
+                _greply += " " + _next_question_text(prior, _gmiss, language)
+            meta["last_bot_question"] = _greply
+            return _intent_result(
+                _greply,
+                suggestions=_suggestions(prior, _gmiss, _greply, language))
+        if _is_short_yes(low) or "add gusset" in low:
+            meta["awaiting_gusset_value"] = True
+            _greply = (f"What gusset do you need, "
+                       f"in {_size_unit(prior.get('sizes'))}?")
+            meta["last_bot_question"] = _greply
+            return _intent_result(_greply)
+
     # Extra-variant answer (Oct 30 senior transcript): a hang-hole
     # or zipper type was asked. A named variant attaches to the
     # extra ("hang hole (Round)"); anything else pops the state
@@ -3924,6 +3983,47 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "llm_used": False,
                 "suggestions": _suggestions(slots, _mmiss, _creply,
                                             language=language)}
+    # Pouch depth question (Nov 3 mylar transcript): "they have
+    # depth isnt it?" at the finish turn was answered with a
+    # banners MOQ sentence — retrieval has no depth concept for
+    # pouches. For pouch products a depth question IS a gusset
+    # question: answer it from the glossary truth, and offer the
+    # gusset when it applies (stand-up style, 2-dim size).
+    _dprod = (slots.get("product") or "").lower()
+    if (_dprod in ("pouch", "mylar bag", "stand-up pouch", "bag")
+            or _dprod.endswith("pouch")) \
+            and "depth" in low and ("?" in message or "isnt" in low
+                                    or "isn't" in low or "right" in low
+                                    or "dont" in low or "don't" in low):
+        _dstyle = (slots.get("style") or "").lower()
+        _dmiss = script_missing(slots, meta)
+        _dq = _next_question_text(slots, _dmiss, language) if _dmiss else ""
+        if "stand" in _dstyle and slots.get("sizes") \
+                and _size_dim_count(slots.get("sizes")) == 2 \
+                and "+" not in (slots.get("sizes") or "") \
+                and not meta.get("gusset_declined"):
+            meta["gusset_asked"] = True
+            meta["awaiting_gusset"] = True
+            _dreply = (
+                "Yes — stand-up pouches have a bottom gusset, "
+                "which is what gives them their depth, so they "
+                "stand up on their own. Do you want to add a "
+                f"gusset to your {slots.get('sizes')} size, or is "
+                "width x height enough?")
+            meta["last_bot_question"] = _dreply
+            return _final_return(
+                _dreply, suggestions=["Add gusset", "No need"])
+        if _dstyle == "flat":
+            _dreply = ("Flat pouches have no gusset, so they don't "
+                       "have depth — they lie flat when empty.")
+        else:
+            _dreply = ("It depends on the style — stand-up pouches "
+                       "have a bottom gusset, which is their depth, "
+                       "while flat pouches have no gusset.")
+        if _dq:
+            _dreply += " " + _dq
+        meta["last_bot_question"] = _dreply
+        return _final_return(_dreply)
     # A vague size word ("i need large box") with no purpose stated:
     # the bot cannot recommend a type without knowing the use, so
     # it asks what the product is for FIRST, then size — once per
@@ -4084,6 +4184,36 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 f"need a depth for the box as well, or is width x height "
                 f"enough?",
                 suggestions=["Add depth", "No need"])
+        # Pouch gusset (Nov 3 mylar transcript): a stand-up pouch
+        # stands up because of its bottom gusset, so a 2-number
+        # size is incomplete — but nothing ever asked about it
+        # (the size question is width x height only, and the box
+        # depth trigger above is box-only), so the visitor had to
+        # challenge it ("they have depth isnt it?"). Ask once,
+        # right after the stand-up style lands, before finishes.
+        # Flat pouches have no gusset, so they never get this
+        # question; a size already carrying +gusset skips it too.
+        _gprod = (slots.get("product") or "").lower()
+        _gstyle = (slots.get("style") or "").lower()
+        if (_gprod in ("pouch", "mylar bag", "stand-up pouch", "bag")
+                or _gprod.endswith("pouch")) \
+                and "stand" in _gstyle and slots.get("sizes") \
+                and not meta.get("gusset_asked") and not is_fact_question \
+                and _size_dim_count(slots.get("sizes")) == 2 \
+                and "+" not in (slots.get("sizes") or "") \
+                and re.search(r"(inches?|inch|mm|cm|feet|ft|\"|″)\b",
+                              (slots.get("sizes") or "").lower()):
+            meta["gusset_asked"] = True
+            meta["awaiting_gusset"] = True
+            _greply = (
+                f"You gave width x height ({slots.get('sizes')}). "
+                f"Stand-up pouches stand up because of the bottom "
+                f"gusset — do you want to add a gusset as well, "
+                f"or is width x height enough?")
+            meta["last_bot_question"] = _greply
+            return _final_return(
+                _greply,
+                suggestions=["Add gusset", "No need"])
         # Extra variants (Oct 30 senior transcript): an extra named
         # without its type is unclear — "hang hole" has round /
         # sombrero / Euro types. A variant word in this same message
