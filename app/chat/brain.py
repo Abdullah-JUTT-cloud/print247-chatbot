@@ -356,7 +356,7 @@ def _own_data_answer(message: str, slots: dict, contact: dict,
     if _c.get("phone") and is_contact_value_usable("phone", _c.get("phone")):
         _have.append(f"phone {_c['phone']}")
     _spec = _spec_parts(slots, None, None) if slots.get("product") else ""
-    if _spec:+
+    if _spec:
         _have.append(f"order: {_spec}")
     if design_files:
         _names = ", ".join(f.get("name", "design file") if isinstance(f, dict) else str(f)

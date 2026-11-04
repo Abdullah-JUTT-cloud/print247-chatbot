@@ -149,7 +149,7 @@ def main() -> int:
 
     load_dotenv()
     client = OpenAI()
-    qdrant = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"), api_key=os.environ.get("QDRANT_API_KEY"))
+    qdrant = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"), api_key=os.environ.get("QDRANT_API_KEY"), timeout=120)
     model = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
     dim = 1536  # text-embedding-3-small default; change only with the model.
     if not qdrant.collection_exists(COLLECTION):
@@ -172,10 +172,14 @@ def main() -> int:
                       client.embeddings.create(input=batch, model=model).data]
         assert len(embeddings) == len(batch_rows), \
             f"embedding count {len(embeddings)} != batch size {len(batch_rows)}"
-        qdrant.upsert(COLLECTION, [PointStruct(id=pid, vector=vec, payload={"source": path, "meta": meta, "text": chunk})
-                                   for (pid, path, meta, chunk), vec in zip(batch_rows, embeddings)])
-        total += len(batch_rows)
-        print(f"  Upserted batch {bi}/{len(batches)} ({total}/{len(rows)} points so far).")
+        points = [PointStruct(id=pid, vector=vec, payload={"source": path, "meta": meta, "text": chunk})
+                  for (pid, path, meta, chunk), vec in zip(batch_rows, embeddings)]
+        sub_batches = [points[i:i + 25] for i in range(0, len(points), 25)]
+        for si, sub_batch in enumerate(sub_batches, 1):
+            qdrant.upsert(COLLECTION, sub_batch)
+            total += len(sub_batch)
+            print(f"  Upserted sub-batch {si}/{len(sub_batches)} of batch "
+                  f"{bi}/{len(batches)} ({total}/{len(rows)} points so far).")
     print(f"Upserted {total} points into {COLLECTION}.")
 
     # Stale-point cleanup: upsert never deletes, so a removed file
