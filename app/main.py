@@ -95,7 +95,7 @@ def _log_chat(payload_message: str, session_id: str | None, result: dict,
               reply_to: str | None = None, latency_ms: int | None = None) -> None:
     """Fail-soft: a logging failure must never break the chat."""
     try:
-        _mongo_client().get_default_database()["chat_logs"].insert_one({
+        _mongo_client()["print247_chatbot"]["chat_logs"].insert_one({
             "session_id": session_id, "message": payload_message,
             "reply": result.get("reply"), "sources": result.get("sources", []),
             "suggestions": result.get("suggestions", []),
@@ -164,11 +164,12 @@ def _session_rows_html() -> str:
     or KB actions anywhere on this page anymore."""
     import html as _html
     try:
-        col = _mongo_client().get_default_database()["chat_logs"]
+        col = _mongo_client()["print247_chatbot"]["chat_logs"]
         docs = list(col.find().sort("created_at", -1).limit(500))
         sessions = _group_sessions(docs)[:25]
-    except Exception:
-        return "<p class='warn'>Chats server par nahi ban sake (Mongo down ho sakta hai).</p>"
+    except Exception as exc:
+        return (f"<p class='warn'>Chats server par nahi ban sake "
+                f"({type(exc).__name__}: {exc}).</p>")
     if not sessions:
         return "<p>No chats yet — send a chat from the chat page first.</p>"
     btn = ("style=\"background:#f97316;color:#111827;padding:7px 14px;border-radius:8px;"
@@ -202,7 +203,7 @@ def _admin_shell(title: str, body: str) -> str:
 
 
 def _mongo_docs(session_id: str | None = None) -> list:
-    col = _mongo_client().get_default_database()["chat_logs"]
+    col = _mongo_client()["print247_chatbot"]["chat_logs"]
     if session_id:
         return list(col.find({"session_id": session_id}).sort("created_at", 1))
     return list(col.find().sort("created_at", -1).limit(500))
@@ -249,8 +250,9 @@ def admin_ui(request: Request):
     try:
         docs = _mongo_docs()
         monitoring = monitoring_html(summarize_turns(docs))
-    except Exception:
-        monitoring = "<p class='warn'>Monitoring nahi ban saka (Mongo down ho sakta hai).</p>"
+    except Exception as exc:
+        monitoring = (f"<p class='warn'>Monitoring nahi ban saka "
+                      f"({type(exc).__name__}: {exc}).</p>")
     html = ADMIN_HTML.replace("{{MONITORING}}", monitoring)
     html = html.replace("{{SESSION_ROWS}}", _session_rows_html())
     html = html.replace("{{LEARNED}}", learned_facts_html())

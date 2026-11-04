@@ -3344,6 +3344,20 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                     meta["answered_fields"].append("product")
     if not facts:
         facts = retrieve(message)
+    # Contact facts are scoped facts, not a generic fallback. A vague
+    # question such as "what is best?" can keyword-match "based" or
+    # "best" in unrelated KB files, but it must never expose the
+    # address unless the visitor actually asks for contact/location
+    # information.
+    _asks_contact_fact = any(
+        re.search(rf"\b{re.escape(_word)}\b", low)
+        for _word in ("contact", "address", "phone", "location", "located",
+                      "headquarters", "office")
+    ) or any(ph in low for ph in
+             ("where are you", "where is print247", "based in", "based out of"))
+    if not _asks_contact_fact:
+        facts = [f for f in facts
+                 if not f["source"].endswith("/contact.md")]
     # Product family of the chosen product, for the two guards
     # below. _named_families = families the message itself names:
     # naming another family ("what about box materials?" mid-bag-
@@ -3505,6 +3519,21 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 f"{_gave_up_sentence(_gave_up)}"
                 f"{_below_min_note(slots, language)}"
                 f"{_design_files_note(meta)}")
+
+    # A vague recommendation while a script field is pending is still
+    # a question about that field, not a new KB search. Keep extras
+    # pending and answer the two options in their pouch context.
+    if (missing and missing[0] == "extras"
+            and visitor_is_asking(message)
+            and re.search(r"\b(best|recommend(?:ed)?|suggest(?:ion)?|usual|standard|typical)\b",
+                          low)):
+        _extras_reply = (
+            "For mylar bags, a zipper is for resealing and a tear notch "
+            "is for easy opening. Both are standard options. "
+            + _next_question_text(slots, missing, language))
+        return _final_return(
+            _extras_reply,
+            srcs=["kb/materials/extras.md"])
 
     # Types question ("what box types do you offer?", "what type of
     # boxes do you have?"): answer with the product's type LIST

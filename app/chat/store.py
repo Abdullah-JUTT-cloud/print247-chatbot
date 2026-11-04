@@ -15,7 +15,7 @@ class SlotStore:
         self._client = MongoClient(
             os.environ.get("MONGO_URI", "mongodb://localhost:27017/print247_chatbot"),
             serverSelectionTimeoutMS=2000)
-        self._col = self._client.get_default_database()["sessions"]
+        self._col = self._client["print247_chatbot"]["sessions"]
 
     def load(self, session_id: str) -> dict:
         doc = self._col.find_one({"_id": session_id})
