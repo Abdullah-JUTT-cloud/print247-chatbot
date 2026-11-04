@@ -80,6 +80,6 @@ def _upsert_point(source: str, meta: str, text: str) -> None:
         model=os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small"),
         input=text).data[0].embedding
     pid = hashlib.md5(f"{source}#0".encode()).hexdigest()
-    QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333")).upsert(
+    QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"), api_key=os.environ.get("QDRANT_API_KEY")).upsert(
         COLLECTION, [PointStruct(id=pid, vector=vec,
                                  payload={"source": source, "meta": meta, "text": text})])

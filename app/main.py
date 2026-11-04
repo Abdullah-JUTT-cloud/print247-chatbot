@@ -70,7 +70,7 @@ def _mongo_ok() -> bool:
 
 def _qdrant_ok() -> bool:
     try:
-        QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333")).get_collections()
+        QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"), api_key=os.environ.get("QDRANT_API_KEY")).get_collections()
         return True
     except Exception:
         return False
@@ -447,6 +447,5 @@ def _group_sessions(docs: list) -> list[dict]:
                     "started_at": s["started_at"], "sources": s["sources"],
                     "has_handoff": s["has_handoff"], "messages": msgs})
     return out
-
 
 

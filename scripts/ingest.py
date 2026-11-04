@@ -149,7 +149,7 @@ def main() -> int:
 
     load_dotenv()
     client = OpenAI()
-    qdrant = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"))
+    qdrant = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"), api_key=os.environ.get("QDRANT_API_KEY"))
     model = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
     dim = 1536  # text-embedding-3-small default; change only with the model.
     if not qdrant.collection_exists(COLLECTION):

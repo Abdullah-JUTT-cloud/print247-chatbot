@@ -346,7 +346,7 @@ def retrieve(text: str, top_k: int = 3, rerank_fn=None, curated_only: bool = Fal
             from qdrant_client import QdrantClient
 
             client = OpenAI()
-            qdrant = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"))
+            qdrant = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"), api_key=os.environ.get("QDRANT_API_KEY"))
             if qdrant.collection_exists(_COLLECTION):
                 vec = client.embeddings.create(
                     input=[text],
