@@ -46,6 +46,9 @@ def normalise_finish(value: str | None) -> str:
     bare = re.sub(r"\s+", " ", bare).strip()
     if not bare:
         return ""
+    _tokens = set(re.findall(r"[a-z]+", bare))
+    if _tokens.issubset({"change", "update", "switch", "modify", "want", "to", "the", "a", "an", "my", "our", "new", "different", "instead", "of", "and", "or"}):
+        return ""
     for canonical, exact, _slip in _FINISHES:
         if exact.match(bare):
             return canonical

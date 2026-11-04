@@ -94,6 +94,13 @@ def quantity_in(value: str | None) -> int | None:
     if (re.search(r"\b(one|single|two|\d+)\s*(?:designs?|skus?|artworks?|variants?)\b", text)
             and not re.search(r"\b(boxes?|bags?|labels?|pouches?|units?|pcs?|pieces?)\b", text)):
         return None
+    # Dimension spans are not quantities (e.g. "14 inch", "14mm") unless count units present.
+    _DIM_UNITS = (
+        r"(?:feet|foot|ft\b|inches|inch|in\b(?!\s+(?:total|stock|advance|bulk|all|case|order|a\b|an\b|the\b|my\b|our\b|this\b|that\b|red|blue|black|white|color|colour|days?|hours?|weeks?|months?))|"
+        r"mm\b|cm\b|['’\"”″])"
+    )
+    text = re.sub(r"\b\d+(?:\.\d+)?\s*-?\s*" + _DIM_UNITS, " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(?:inches|inch|mm\b|cm\b|feet|foot|ft\b)\s*[:=]?\s*\d+(?:\.\d+)?\b", " ", text, flags=re.IGNORECASE)
     m = re.search(r"\b(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|million)?\b", text)
     if m:
         n = float(m.group(1).replace(",", ""))

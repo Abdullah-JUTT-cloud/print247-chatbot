@@ -17,6 +17,8 @@ from app.chat.brain import handle_message
 
 FAILURES = []
 PASSES = [0]
+CASE_COUNT = [0]
+TOTAL_CASES = 709
 
 
 def run(sid, msgs):
@@ -27,10 +29,14 @@ def run(sid, msgs):
 
 
 def check(name, ok, detail=""):
+    CASE_COUNT[0] += 1
+    n = CASE_COUNT[0]
     if ok:
         PASSES[0] += 1
+        print(f"case {n}/{TOTAL_CASES} OK :: {name}", flush=True)
     else:
         FAILURES.append(f"{name} :: {detail}")
+        print(f"case {n}/{TOTAL_CASES} FAIL :: {name} :: {detail}", flush=True)
 
 
 # --- 1. finishes: every form, bare and in a sentence ---

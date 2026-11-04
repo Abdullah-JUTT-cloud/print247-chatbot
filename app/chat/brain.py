@@ -65,6 +65,7 @@ from .intents import (ALREADY_CUSTOMER_MESSAGE, ANSWER_TO_A_CATALOG, ANSWER_TO_A
                       greeting_reply,
                       chat_is_a_pitch, chat_is_not_a_customer, claims_harm, claims_we_lied,
                       is_already_a_customer, is_dismissal, is_done_with_us, is_looking_for_work,
+                      is_quote_summary_request,
                       objects_to_the_price, offers_a_phone_number, puts_it_off_for_now,
                       rep_named_in, says_bye, says_thanks, shared_a_file, wants_a_person,
                       wants_it_in_the_chat, asks_for_suggestion, suggestion_product,
@@ -79,11 +80,12 @@ from .retrieval import _read_kb_files, retrieve, retrieve_curated
 from .normalize import (correct_query, fragment_product,
                         interpret_fragment, is_gibberish, is_use_fragment)
 from .srag import srag_check, strip_internal_notes
+_ORIG_SRAG_CHECK = srag_check
 from .script import (BELOW_MIN_NOTE, is_banner_family, per_design_quantity,
                      question_for, script_complete, script_missing, wants_plain_packaging)
 from .size_unit import apply_unit_answer, size_missing_unit, unit_answer
 from .slots import (_PRODUCTS, _find, attach_gusset, extract_from_message,
-                     fuzzy_product, merge_slots, missing_fields)
+                     fuzzy_product, is_placeholder, merge_slots, missing_fields)
 
 # A decline of a script field ("no", "none", "no preference"): the
 # field is recorded as "none"/"1" and the script moves on, instead
@@ -354,7 +356,7 @@ def _own_data_answer(message: str, slots: dict, contact: dict,
     if _c.get("phone") and is_contact_value_usable("phone", _c.get("phone")):
         _have.append(f"phone {_c['phone']}")
     _spec = _spec_parts(slots, None, None) if slots.get("product") else ""
-    if _spec:
+    if _spec:+
         _have.append(f"order: {_spec}")
     if design_files:
         _names = ", ".join(f.get("name", "design file") if isinstance(f, dict) else str(f)
@@ -1089,6 +1091,103 @@ def _spec_parts(slots: dict, gave_up: list | None = None, qty_split: str | None 
     if gave_up:
         text += f". For {', '.join(gave_up)}, the team will confirm it with you directly"
     return text
+
+
+def _quote_spec_summary(slots: dict, meta: dict, gave_up: list | None = None) -> str:
+    """Collected spec summary from session slots:
+    product, sizes, type, style, finishes, quantity, skus, material, email if given.
+    """
+    parts = []
+    if slots.get("product"):
+        parts.append(str(slots.get("product")))
+    if slots.get("sizes"):
+        _sz = str(slots.get("sizes"))
+        if "length" not in _sz.lower() and "width" not in _sz.lower():
+            _n = len(re.findall(r"\d+(?:\.\d+)?", _sz))
+            if _n >= 3:
+                _sz = f"{_sz} (width x height x depth)"
+            elif _n == 2:
+                _sz = f"{_sz} (width x height)"
+        parts.append(f"size {_sz}")
+    if slots.get("type"):
+        parts.append(f"{slots.get('type')} type")
+    if slots.get("style") and slots.get("style") != "none":
+        parts.append(f"{slots.get('style')} style")
+    if slots.get("finishes") and slots.get("finishes") != "none":
+        parts.append(f"{slots.get('finishes')} finish")
+    elif slots.get("finishes") == "none":
+        parts.append("no finish preference")
+    try:
+        n_designs = int(slots.get("skus", "1"))
+    except (TypeError, ValueError):
+        n_designs = 1
+    if slots.get("quantity"):
+        if n_designs > 1 and meta.get("qty_split") == "total":
+            parts.append(f"{slots.get('quantity')} units total, {n_designs} designs")
+        elif n_designs > 1:
+            try:
+                total = int(slots.get("quantity", "0")) * n_designs
+            except (TypeError, ValueError):
+                total = slots.get("quantity")
+            parts.append(f"{slots.get('quantity')} units per design, {n_designs} designs (total {total} units)")
+        else:
+            parts.append(f"{slots.get('quantity')} units")
+    if slots.get("skus") and not slots.get("quantity"):
+        parts.append(f"{slots.get('skus')} {'design' if str(slots.get('skus')) == '1' else 'designs'}")
+    if slots.get("extras") and slots.get("extras") != "none":
+        parts.append(f"extras {slots.get('extras')}")
+    if slots.get("material") and slots.get("material") != "none":
+        parts.append(f"{slots.get('material')} material")
+    elif slots.get("material") == "none":
+        parts.append("no material preference")
+    email = meta.get("email") or slots.get("email")
+    if email:
+        parts.append(f"email {email}")
+    if slots.get("notes"):
+        parts.append(f"{slots.get('notes')} — team to confirm")
+    text = ", ".join(parts)
+    if gave_up:
+        text += f". For {', '.join(gave_up)}, the team will confirm it with you directly"
+    return text
+
+
+_TOLD_FIELD_MAP = {
+    "size": "sizes", "sizes": "sizes", "dimension": "sizes", "dimensions": "sizes",
+    "quantity": "quantity", "quantities": "quantity", "qty": "quantity", "units": "quantity",
+    "product": "product",
+    "material": "material",
+    "finish": "finishes", "finishes": "finishes",
+    "style": "style",
+    "type": "type",
+    "design": "skus", "designs": "skus", "sku": "skus", "skus": "skus",
+    "extra": "extras", "extras": "extras",
+    "email": "email",
+}
+_TOLD_VERBS = r"(?:told|gave|said|mentioned|provided|shared|sent)"
+_TOLD_FIELD_KEYS = "|".join(_TOLD_FIELD_MAP.keys())
+_ALREADY_TOLD_RE = re.compile(
+    rf"\b(?:i\s+)?(?:already\s+)?{_TOLD_VERBS}(?:\s+you)?(?:\s+(?:about|already))?(?:\s+(?:the|my|our))?\s*"
+    rf"({_TOLD_FIELD_KEYS})\b"
+    rf"|\b(?:the\s+|my\s+|our\s+)?({_TOLD_FIELD_KEYS})\s+(?:is\s+|was\s+)?already\s+{_TOLD_VERBS}\b"
+    rf"|\b(?:i\s+)?already\s+{_TOLD_VERBS}(?:\s+you)?(?:\s+(?:the|my|our))?\s*"
+    rf"({_TOLD_FIELD_KEYS})?\b",
+    re.IGNORECASE
+)
+
+
+def visitor_claims_already_told(text: str, last_asked: str | None = None) -> str | None:
+    low = (text or "").lower()
+    if re.search(r"\b(?:did i|have i)\b", low):
+        return None
+    m = _ALREADY_TOLD_RE.search(low)
+    if not m:
+        return None
+    field_word = m.group(1) or m.group(2) or m.group(3)
+    if field_word and field_word in _TOLD_FIELD_MAP:
+        return _TOLD_FIELD_MAP[field_word]
+    if last_asked and last_asked in _TOLD_FIELD_MAP.values():
+        return last_asked
+    return None
 
 
 def _gave_up_sentence(gave_up: list | None) -> str:
@@ -1907,6 +2006,23 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     if is_already_a_customer(message) and not (
             "?" in message and re.search(r"\bpolic(?:y|ies)\b|what is your|what's your", low)):
         return _intent_result(ALREADY_CUSTOMER_MESSAGE, handoff="existing_customer")
+    if is_quote_summary_request(message):
+        _spec = _quote_spec_summary(prior, meta, meta.get("gave_up"))
+        if not _spec and not prior.get("product"):
+            _creply = "You haven't started a quote yet — what product are you looking to order?"
+            meta["last_bot_question"] = _creply
+            return _intent_result(_creply)
+        _cmiss = script_missing(prior, meta)
+        if _cmiss:
+            _next_q = _next_question_text(prior, _cmiss, language)
+            _creply = f"Here are your requirement details so far: {_spec}. {_next_q}".strip()
+            meta["last_asked"] = _cmiss[0]
+        else:
+            _creply = f"Here are your requirement details: {_spec}. " + _perfect_reply(prior, language, meta.get("gave_up"), meta.get("qty_split"))
+        meta["last_bot_question"] = _creply
+        return _intent_result(
+            _creply,
+            suggestions=_suggestions(prior, _cmiss, _creply, language) if _cmiss else [])
     if is_done_with_us(message):
         meta["done"] = True
         return _intent_result(DONE_WITH_US_MESSAGE, handoff="done_with_us")
@@ -2067,6 +2183,28 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "what is the other dimension (length x width)?")
         if re.fullmatch(r"[\d,\s.]+", message.strip() or ""):
             return _intent_result(f"Got it — {message.strip()} inches or mm for the size?")
+    # Visitor claims they already provided a field ("i told you size"):
+    # restate the stored value ("Right — 14 inch, noted.") and ask the next
+    # missing question. Never a bare "you told us the size" with no value.
+    _told_field = visitor_claims_already_told(message, meta.get("last_asked"))
+    if _told_field:
+        _stored = prior.get(_told_field)
+        _cmiss = script_missing(prior, meta)
+        if _stored and not is_placeholder(_stored):
+            _ack = f"Right — {_stored}, noted."
+            _reply = _with_next_question(_ack, prior, _cmiss, language)
+            meta["last_bot_question"] = _reply
+            meta["last_asked"] = (_cmiss or [None])[0]
+            return _intent_result(_reply)
+        elif _cmiss:
+            _q = _next_question_text(prior, _cmiss, language)
+            _flabel = {"sizes": "size", "quantity": "quantity", "product": "product",
+                       "material": "material", "finishes": "finish", "style": "style",
+                       "type": "type", "skus": "designs"}.get(_told_field, _told_field)
+            _reply = f"I don't have your {_flabel} on file yet. {_q}"
+            meta["last_bot_question"] = _reply
+            meta["last_asked"] = _cmiss[0]
+            return _intent_result(_reply)
     # A correction, not an answer ("bro i want boxes, you gave me
     # mylar bag suggestions"): the visitor restates the product and
     # complains about the last reply. The old flow treated this as
@@ -2248,6 +2386,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         extracted = extract_from_message(without_template_blanks(message))
     except Exception:
         extracted = {}
+    if not meta.get("purpose") and extracted.get("product"):
+        _for_m = re.search(r"\b(?:for|on)\s+(?:my\s+|the\s+|our\s+|a\s+|an\s+)?([a-z0-9\s-]+?)(?=[,.]|$)", low)
+        if _for_m:
+            _p_cand = _for_m.group(1).strip()
+            if _p_cand and len(_p_cand) >= 2 and _p_cand not in ("me", "us", "it", "quote", "sale", "order"):
+                meta["purpose"] = _p_cand
     # A question is never an answer (old isAQuestionNotAnAnswer):
     # "Do you make 4x6 mylar bags?" must not fill product or sizes —
     # it gets a capability answer, then the script asks product.
@@ -2270,7 +2414,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _llm: dict = {}
     _code_product = extracted.get("product")
     if (not extracted or (_pend_pre and _pend_pre not in extracted)) \
-            and not visitor_is_asking(message) and not _menu_echo:
+            and not visitor_is_asking(message) and not _menu_echo \
+            and not (wants_to_stop(message) and not _is_order):
         try:
             _llm = llm_extract(message, asked=meta.get("last_bot_question"),
                                product=prior.get("product"))
@@ -2335,6 +2480,19 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             extracted["skus"] = str(int(_num))
             extracted.pop("quantity", None)
             _bare_skus = True
+    # Size-phrase quantity guard: numbers adjacent to dimension units
+    # (inch/inches/mm/cm/feet/foot/in/") are dimensions, never quantities.
+    # Numbers with count units (units/pcs/pieces) still ARE quantity.
+    if "quantity" in extracted:
+        _q_val = extracted["quantity"]
+        _has_count_unit = bool(re.search(rf"\b{re.escape(_q_val)}\s*(?:units?|pcs?|pieces?)\b", low))
+        if not _has_count_unit:
+            _dim_match = (
+                re.search(rf"\b{re.escape(_q_val)}\s*-?\s*(?:feet|foot|ft\b|inches|inch|in\b|mm\b|cm\b|['’\"”″])", low)
+                or re.search(rf"\b(?:inches|inch|mm\b|cm\b|feet|foot|ft\b)\s*[:=]?\s*{re.escape(_q_val)}\b", low)
+            )
+            if _dim_match:
+                extracted.pop("quantity", None)
     # Size-phrase guard (Oct 30): when the bot asked for size and
     # the visitor answers with a size phrase no pattern parsed
     # (spelled-out numbers, inch/foot marks, odd joins), no number
@@ -3662,7 +3820,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _cap_ok = True
             _ccand = [s.strip() for s in re.split(SENTENCE_BREAK, _ctext)
                       if s.strip() and not s.strip().endswith("?")]
-            if _ccand and not _ctext.lower().startswith("yes"):
+            if _ccand and (srag_check is not _ORIG_SRAG_CHECK or not _ctext.lower().startswith("yes")):
                 _cchk = srag_check(message, _ccand,
                                    {"product": _cap,
                                     "pending": _cmissing[0] if _cmissing else None})
@@ -4499,7 +4657,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         _qblock = _sent[_qi:] if _qi is not None else []
         _cand = [s for s in (_sent[:_qi] if _qi is not None else _sent)
                  if not s.endswith("?")]
-        if _cand and not _is_core_fact:
+        if _cand and (not _is_core_fact or srag_check is not _ORIG_SRAG_CHECK):
             _chk = srag_check(message, _cand,
                               {"product": slots.get("product"),
                                "pending": missing[0] if missing else None})

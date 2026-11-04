@@ -28,7 +28,8 @@ for i, case in enumerate(cases):
     ok_phrase = case["expected_phrase"].lower() in r["reply"].lower()
     ok = ok_source and ok_phrase
     print(("PASS " if ok else "FAIL ") + case["question"]
-          + f" | sources={r['sources']} | phrase_ok={ok_phrase}")
+          + f" | sources={r['sources']} | phrase_ok={ok_phrase}"
+          + ("" if ok else f" | reply={r['reply'][:120]!r}"))
     if not ok:
         failed += 1
 print(f"{len(cases) - failed}/{len(cases)} golden cases passed.")

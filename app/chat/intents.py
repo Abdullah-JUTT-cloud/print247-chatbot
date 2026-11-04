@@ -378,10 +378,37 @@ _PAST_ORDER_CUE = re.compile(
     re.IGNORECASE)
 
 
+def is_quote_summary_request(text: str) -> bool:
+    """True when the visitor asks for a summary of their quote/requirements mid-quote.
+
+    Phrases: 'what was my order', 'my order details', 'my requirements',
+    'requirement details', 'what did I order', 'show my requirements/quote'.
+    Never matches genuine past-order status questions like 'where is my order' or 'track my order',
+    nor timeline/process questions like 'when will I get my quote'.
+    """
+    low = (text or "").lower()
+    # Turnaround/timeline/how-to questions are not quote summary requests
+    if re.search(r"\b(?:when|how long|how do|how can|how to|where|why)\b", low):
+        return False
+    clean = re.sub(r"[()?,.!/]", " ", low).strip()
+    return bool(re.search(
+        r"\b(?:what\s+(?:was|is|did|are|were|have)\s+(?:i\s+|my\s+)?(?:order(?:ed)?|requirements?|quote)\b(?!\s*status)|"
+        r"what\s+did\s+i\s+order\b|"
+        r"(?:my\s+|the\s+)?(?:order|requirement|quote)\s+details\b|"
+        r"requirement\s+details\b|"
+        r"(?:show|view|see|check|review)\s+(?:me\s+)?(?:my\s+|the\s+)?(?:requirements?|quote|order(?: details)?|spec)\b|"
+        r"\bmy\s+requirements\b|"
+        r"(?:quote|order|spec)\s+summary\b)",
+        clean
+    ))
+
+
 def is_already_a_customer(text: str) -> bool:
     """Deliberately narrow: 'order' alone is not enough (plenty of new
     enquiries say 'I want to order'); it needs past tense, a delivery
     that has not arrived, or a complaint about an existing order."""
+    if is_quote_summary_request(text):
+        return False
     if _FUTURE_ORDER_QUESTION.search(text or "") \
             and not _PAST_ORDER_CUE.search(text or ""):
         return False

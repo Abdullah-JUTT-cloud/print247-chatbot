@@ -124,6 +124,18 @@ _EACH_CANON = {"feet": "feet", "foot": "feet", "ft": "feet",
                "mm": "mm", "cm": "cm",
                "'": "feet", "’": "feet",
                '"': "inches", "”": "inches", "″": "inches"}
+# A number followed by or adjacent to a dimension unit is a dimension,
+# never a quantity ("14 inch", "14mm", "14 feet", "14\"").
+_DIMENSION_UNITS = (
+    r"(?:feet|foot|ft\b|inches|inch|in\b(?!\s+(?:total|stock|advance|bulk|all|case|order|a\b|an\b|the\b|my\b|our\b|this\b|that\b|red|blue|black|white|color|colour|days?|hours?|weeks?|months?))|"
+    r"mm\b|cm\b|['’\"”″])"
+)
+_NUMBER_WITH_DIM_UNIT = re.compile(
+    r"\b\d+(?:\.\d+)?\s*-?\s*" + _DIMENSION_UNITS,
+    re.IGNORECASE)
+_DIM_UNIT_WITH_NUMBER = re.compile(
+    r"\b(?:inches|inch|mm\b|cm\b|feet|foot|ft\b)\s*[:=]?\s*\d+(?:\.\d+)?\b",
+    re.IGNORECASE)
 # Named paper sizes are sizes, not quantities: "A4" must never leak
 # its 4 into quantity (old NAMED_SIZE guard, same idea). Only A/B
 # sizes are stored as sizes — "letter"/"legal" also name document
@@ -273,7 +285,102 @@ def is_placeholder(value: str | None) -> bool:
     return False
 
 
+def find_product(text: str) -> str | None:
+    """Find the ordered product in text, handling '<product A> for <product B>'.
+
+    When two product words appear joined by 'for' or 'on' ('labels for pizza box',
+    'boxes for my labels'), the ordered product is the first one (A),
+    while B is the use/purpose. The product that is the object of the order
+    verb (need/want/order/looking for) or the first product in an '<A> for <B>'
+    pattern wins over raw table order. Single-product messages are unaffected.
+    """
+    if not text:
+        return None
+    low = (text or "").lower()
+
+    # Find all product occurrences with their exact spans
+    raw_matches = []
+    for label, keys in _PRODUCTS:
+        for k in keys:
+            for m in re.finditer(rf"\b{re.escape(k)}\b", low):
+                raw_matches.append((m.start(), m.end(), label, len(k)))
+
+    if not raw_matches:
+        if mylar_like(low):
+            return "mylar bag"
+        return fuzzy_product(low)
+
+    # Longer alias wins at overlapping positions (e.g. 'mylar bags' over 'bags')
+    raw_matches.sort(key=lambda x: (x[3], x[1] - x[0]), reverse=True)
+    kept = []
+    for start, end, label, length in raw_matches:
+        if not any(not (end <= k_start or start >= k_end) for k_start, k_end, _, _ in kept):
+            kept.append((start, end, label, length))
+
+    kept.sort(key=lambda x: x[0])
+
+    if not kept:
+        if mylar_like(low):
+            return "mylar bag"
+        return fuzzy_product(low)
+
+    if len(kept) == 1:
+        prod = kept[0][2]
+        if prod == "bag" and mylar_like(low):
+            return "mylar bag"
+        return prod
+
+    # Multiple distinct products found.
+    # Pattern 1: "<product A> ... for/on ... <product B>"
+    # Product A is before 'for'/'on', Product B is after 'for'/'on'.
+    for i in range(len(kept) - 1):
+        m1 = kept[i]
+        m2 = kept[i + 1]
+        inter = low[m1[1]:m2[0]]
+        if re.search(r"\b(?:for|on|onto)\b", inter):
+            prod = m1[2]
+            if prod == "bag" and mylar_like(low[:m1[1]]):
+                return "mylar bag"
+            return prod
+
+    # Pattern 1b: Compound noun adjunct ("box labels", "pouch labels", "box stickers")
+    # In English compound nouns without prepositions, the final noun is the head (product).
+    for i in range(len(kept) - 1):
+        m1 = kept[i]
+        m2 = kept[i + 1]
+        inter = low[m1[1]:m2[0]]
+        if re.fullmatch(r"[\s\-]+", inter):
+            prod = m2[2]
+            if prod == "bag" and mylar_like(low[m1[1]:m2[1]]):
+                return "mylar bag"
+            return prod
+
+    # Pattern 2: "for <B> ... I need <A>"
+    # If a product is preceded by 'for', look for a product following an order verb
+    order_verb = re.search(
+        r"\b(?:i\s+need|i\s+want|i'?d\s+like|i\s+would\s+like|order(?:ing)?|looking\s+for|quote\s+for|buy(?:ing)?|necesito|quiero)\b",
+        low)
+    if order_verb:
+        after_verb = [m for m in kept if m[0] >= order_verb.start()]
+        if after_verb:
+            for m in after_verb:
+                prefix = low[order_verb.end():m[0]]
+                if not re.search(r"\b(?:for|on)\b", prefix):
+                    prod = m[2]
+                    if prod == "bag" and mylar_like(low):
+                        return "mylar bag"
+                    return prod
+
+    # Default when multiple products: the first mentioned product in the sentence
+    prod = kept[0][2]
+    if prod == "bag" and mylar_like(low):
+        return "mylar bag"
+    return prod
+
+
 def _find(haystack: str, table) -> str | None:
+    if table is _PRODUCTS:
+        return find_product(haystack)
     for label, keys in table:
         if any(k in haystack for k in keys):
             return label
@@ -310,6 +417,8 @@ def _quantity_in(text: str) -> str | None:
     cleaned = _LW.sub(" ", cleaned)
     cleaned = _SIZE_EACH.sub(" ", cleaned)
     cleaned = _SIZE.sub(" ", cleaned)
+    cleaned = _NUMBER_WITH_DIM_UNIT.sub(" ", cleaned)
+    cleaned = _DIM_UNIT_WITH_NUMBER.sub(" ", cleaned)
     cleaned = _NAMED_SIZE.sub(" ", cleaned)
     cleaned = _CAPACITY.sub(" ", cleaned)
     # Gusset/third-dimension spans ("5x8+3", "6x9 + 3\" gusset")

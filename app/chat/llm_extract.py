@@ -58,6 +58,19 @@ _FIELD_WORDS = {
     "type", "types",
 }
 
+_FIELD_MODIFIERS = {
+    "change", "update", "switch", "modify", "want", "to", "the", "a", "an",
+    "my", "our", "new", "different", "another", "instead", "of", "and", "or",
+    "i", "need", "like", "would"
+}
+
+
+def _is_field_phrase(val: str) -> bool:
+    tokens = set(re.findall(r"[a-z]+", str(val).lower()))
+    if not tokens:
+        return True
+    return tokens.issubset(_FIELD_WORDS | _FIELD_MODIFIERS)
+
 
 def _validate(raw: dict, message: str | None = None) -> dict:
     """Code validation for every model-returned value."""
@@ -67,10 +80,11 @@ def _validate(raw: dict, message: str | None = None) -> dict:
 
     out: dict = {}
     product = str(raw.get("product") or "").lower()
-    for label, keys in _PRODUCTS:
-        if any(k in product for k in keys):
-            out["product"] = label
-            break
+    if product:
+        from .slots import find_product
+        p = find_product(product)
+        if p:
+            out["product"] = p
     size = str(raw.get("sizes") or "")
     if size:
         # The model is the understander; code is the validator, not
@@ -125,7 +139,17 @@ def _validate(raw: dict, message: str | None = None) -> dict:
     if qty is not None:
         q = quantity_in(str(qty))
         if q is not None:
-            out["quantity"] = str(q)
+            _drop_qty = False
+            if message:
+                _mlow = message.lower()
+                _has_count = bool(re.search(rf"\b{q}\s*(?:units?|pcs?|pieces?|boxes?|bags?|labels?|pouches?)\b", _mlow))
+                if not _has_count and (
+                    re.search(rf"\b{q}\s*-?\s*(?:feet|foot|ft\b|inches|inch|in\b|mm\b|cm\b|['’\"”″])", _mlow)
+                    or re.search(rf"\b(?:inches|inch|mm\b|cm\b|feet|foot|ft\b)\s*[:=]?\s*{q}\b", _mlow)
+                ):
+                    _drop_qty = True
+            if not _drop_qty:
+                out["quantity"] = str(q)
     skus = str(raw.get("skus") or "")
     s = _skus_in(skus) if skus else None
     if s:
@@ -148,8 +172,8 @@ def _validate(raw: dict, message: str | None = None) -> dict:
             out["style"] = label
             break
 
-    # Drop any field whose cleaned value is simply a field name
-    out = {k: v for k, v in out.items() if str(v).lower().strip() not in _FIELD_WORDS}
+    # Drop any field whose cleaned value is simply a field name or field command phrase
+    out = {k: v for k, v in out.items() if not _is_field_phrase(v)}
 
     # Negations check for finishes and material
     if out.get("finishes"):

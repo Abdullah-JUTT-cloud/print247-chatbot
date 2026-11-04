@@ -56,7 +56,9 @@ def capability_product(text: str) -> str | None:
 
     said = text or ""
     low = said.lower()
-    if any(re.search(rf"\b{q}\b", low) for q in _VARIANT_QUALIFIERS):
+    if any(re.search(rf"\b{q}s?\b", low) for q in _VARIANT_QUALIFIERS):
+        return None
+    if re.search(r"\bbottles?\b", low) and re.search(r"\b(?:labels?|stickers?|stick)\b", low):
         return None
     m = _AUX.search(low)
     if not m:
@@ -64,16 +66,16 @@ def capability_product(text: str) -> str | None:
     verb = m.group(1)
     if verb not in _VERBS and not _is_make_like(verb):
         return None
-    best = None
-    for canonical, aliases in _PRODUCTS:
-        for alias in aliases:
-            if re.search(rf"\b{re.escape(alias)}\b", low):
-                if best is None or len(alias) > len(best[1]):
-                    best = (canonical, alias)
-    if best:
-        if best[0] == "bag" and mylar_like(low):
-            return "mylar bag"
-        return best[0]
+    # When visitor asks "can I get / order ...", a stated quantity
+    # makes this an order ("can i get 1 customized box"), not a capability check.
+    if re.search(r"\b(?:i|we)\b", m.group(0).lower()):
+        from .slots import _quantity_in
+        if _quantity_in(said):
+            return None
+    from .slots import find_product
+    p = find_product(low)
+    if p:
+        return p
     # "do you make lables" — the exact table misses, the fuzzy one
     # must not, or the typo gets the product question again.
     return fuzzy_product(low)
