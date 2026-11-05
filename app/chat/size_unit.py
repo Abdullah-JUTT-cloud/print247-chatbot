@@ -24,6 +24,15 @@ _DIMENSIONS = re.compile(
     f"{_MEASUREMENT}{_JOIN}{_MEASUREMENT}(?:{_JOIN}{_MEASUREMENT})?(?:\\s*(?:inch(?:es)?|in\\b|mm\\b|cm\\b|[\"”″]))?",
     re.IGNORECASE)
 
+OFFERED_UNITS = ("inches", "cm", "mm")
+OFFERED_UNIT_CHIPS = ["Inches", "Cm", "Mm"]
+
+
+def unit_question_text(sizes: str) -> str:
+    """The standard unit clarification question text for a unitless size."""
+    units_joined = ", ".join(OFFERED_UNITS[:-1]) + f", or {OFFERED_UNITS[-1]}" if len(OFFERED_UNITS) > 1 else OFFERED_UNITS[0]
+    return f"Got it — {sizes}. Is that in {units_joined}?"
+
 
 def size_missing_unit(value: str | None) -> bool:
     size = (value or "").strip()
@@ -142,5 +151,5 @@ def size_is_a_capacity(value: str | None) -> bool:
 
 
 def already_asked_the_unit(bot_messages: list) -> bool:
-    return any(re.search(r"\binches, cm or mm\b|\binch, cm, or mm\b", m or "", re.IGNORECASE)
+    return any(re.search(r"\binches, cm, or mm\b|\binches, cm or mm\b|\binch, cm, or mm\b", m or "", re.IGNORECASE)
                for m in bot_messages)

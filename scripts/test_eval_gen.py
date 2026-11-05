@@ -596,8 +596,9 @@ check("purpose answer acknowledged, then size asked, no policy dump",
       and "free nationwide" not in r["reply"],
       f"reply={r['reply'][:160]!r}")
 r = run("ev-box-unit", ["i need large box", "shipping", "3x4"])
-check("bare 3x4 asks inches/cm/mm/feet, stored pending, never quantity",
-      "inches, cm, mm, or feet" in r["reply"] and r["slots"].get("sizes") == "3x4"
+check("bare 3x4 asks inches/cm/mm, stored pending, never quantity",
+      "inches, cm, or mm" in r["reply"] and "feet" not in r["reply"].lower()
+      and r["slots"].get("sizes") == "3x4"
       and not r["slots"].get("quantity"),
       f"reply={r['reply'][:140]!r} slots={r['slots']}")
 r = run("ev-box-unit-ans", ["i need large box", "shipping", "3x4", "mm",
@@ -862,8 +863,9 @@ check("feet stated with the size is stored, no unit question",
       r["slots"].get("sizes") == "4x8 feet" and "What finish" in r["reply"],
       f"reply={r['reply'][:160]!r} slots={r['slots']}")
 r = run("ev-s24-feetchip", ["I need a vinyl banner", "4x8"])
-check("unit question offers feet as a chip",
-      "feet" in r["reply"].lower() and "Feet" in r["suggestions"],
+check("unit question offers inches, cm, mm and does not offer feet as a chip",
+      "feet" not in r["reply"].lower() and "Feet" not in r["suggestions"]
+      and "Inches" in r["suggestions"] and "Cm" in r["suggestions"] and "Mm" in r["suggestions"],
       f"reply={r['reply'][:160]!r} chips={r['suggestions']}")
 r = run("ev-s24-espurpose", ["Necesito cajas grandes para ropa"])
 check("spanish vague size asks email at step 2, in spanish",

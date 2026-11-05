@@ -168,12 +168,14 @@ def question_for(field: str, slots: dict) -> str:
         return QUESTIONS["style_boxes"] if "box" in (slots.get("product") or "").lower() \
             else QUESTIONS["style_bags"]
     if field == "sizes":
-        # Depth is a box dimension only. Every other family gets
+        # The wording comes from the size-family table (size_rules):
+        # depth is a box dimension only; every other family gets
         # width x height — labels, stickers, cards, banners, and
         # bags/pouches (whose third dimension is the gusset, asked
         # about separately, never as "depth").
-        return QUESTIONS["sizes"] if "box" in (slots.get("product") or "").lower() \
-            else QUESTIONS["sizes_flat"]
+        from .size_rules import question_key
+
+        return QUESTIONS[question_key(slots.get("product"))]
     if field == "quantity":
         # User rule (Oct 30): the MOQ is NEVER volunteered — not
         # with the quantity question, not with a below-minimum

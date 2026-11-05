@@ -86,8 +86,7 @@ _PACK_COUNT = re.compile(
 # left the quantity empty. "10 ct" / "10pack" stay stripped: those
 # are pack formats inside a product description, not quantities.
 _SIZE = re.compile(
-    r"\b\d+(?:\.\d+)?\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?"
-    r"(?:\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?)?\s*(?:inches?|in\b|mm|cm|feet|ft\b)?",
+    r"\b\d+(?:\.\d+)?(?:\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?)+\s*(?:inches?|in\b|mm|cm|feet|ft\b)?",
     re.IGNORECASE)
 # Spelled-out dimensions ("10 inches length and 6 inches width",
 # "6 inches wide, 10 inches long"): _SIZE needs an x/by/* between
@@ -524,24 +523,29 @@ def attach_gusset(size: str | None, text: str, product: str | None) -> str | Non
     message's own product — the brain re-runs this after merging
     with the session product). Returns the input unchanged when
     there is nothing to join."""
-    if not size or "+" in size:
+    if not size:
         return size
-    prod = product or ""
-    if not (prod in ("pouch", "mylar bag", "stand-up pouch", "bag")
-            or prod.endswith("pouch")):
+    from .size_rules import allows_gusset, normalize_pouch_gusset
+
+    if not allows_gusset(product):
+        return size
+    if "+" not in size:
+        size = normalize_pouch_gusset(size, product)
+    if not size or "+" in size:
         return size
     low = (text or "").lower()
     gus = re.search(
-        r"\d+\s*(?:\"|″)?\s*[x×]\s*\d+\s*(?:\"|″)?\s*\+\s*(\d+(?:\.\d+)?)"
-        r"|\+\s*(\d+(?:\.\d+)?)\s*(?:\"|″|inches|inch)?\s*gusset", low)
+        r"\d+(?:\.\d+)?\s*(?:\"|″)?\s*(?:x|×|by|\*)\s*\d+(?:\.\d+)?\s*(?:\"|″)?\s*\+\s*(\d+(?:\.\d+)?)"
+        r"|\+\s*(\d+(?:\.\d+)?)\s*(?:\"|″|inches|inch|in)?\s*gusset", low)
     n = (gus.group(1) or gus.group(2)) if gus else None
     if not n:
         return size
     if size.endswith(" inches"):
         return size[:-len(" inches")] + f"+{n} inches"
-    unit = re.search(r"\+\s*\d+(?:\.\d+)?\s*(inches|inch|cm|mm|feet|ft)\b", low)
+    unit = re.search(r"\+\s*\d+(?:\.\d+)?\s*(inches|inch|in|cm|mm|feet|ft)\b", low)
     if unit:
-        return size + f"+{n} {unit.group(1)}"
+        u = "inches" if unit.group(1) in ("in", "inch") else unit.group(1)
+        return size + f"+{n} {u}"
     mark = re.search(r"\+\s*\d+(?:\.\d+)?\s*([\"″])", low)
     if mark:
         return size + f"+{n}{mark.group(1)}"

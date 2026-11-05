@@ -80,7 +80,7 @@ VOCAB = {
     # a "hanging finish"; "same" -> "sample"). Raising the cutoff
     # is NOT the fix — a real typo ("myalr" -> "mylar") also sits
     # at exactly 0.8. Valid words belong in the vocabulary.
-    "change", "same",
+    "change", "changed", "same",
 }
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z\-]*")
@@ -263,6 +263,9 @@ _COMMON_WORDS = {
     "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
     "eighty", "ninety", "hundred", "thousand", "million",
     "unit", "units", "pcs", "pieces",
+    "not", "dont", "know", "idea", "unsure", "dunno", "clue",
+    "undecided", "decided", "skip", "none", "nope", "nah", "delete",
+    "remove", "erase", "clear", "cancel", "idk",
 }
 _UNIT_WORDS = {"mm", "cm", "inches", "inch", "in", "feet", "ft", "oz",
                "ml", "kg", "g", "lb", "lbs", "pt"}

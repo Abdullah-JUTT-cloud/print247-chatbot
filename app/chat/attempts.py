@@ -92,7 +92,7 @@ _NOT_SPEC_RECOMMENDATION = re.compile(
     r"\b(someone|somebody|person|contact|rep|who|who\s+to|manager|call)\b",
     re.IGNORECASE)
 _DOES_NOT_KNOW = re.compile(
-    r"\b(?:no idea|not sure|unsure|no clue|don'?t know|do not know|dunno|not decided|haven'?t decided|undecided|not yet decided|no preference|you tell me|up to you|your call|whatever you (?:recommend|suggest|think))\b",
+    r"\b(?:no idea|not sure|unsure|no clue|don'?t know|do not know|dunno|idk|not decided|haven'?t decided|undecided|not yet decided|you tell me|up to you|your call|whatever you (?:recommend|suggest|think))\b",
     re.IGNORECASE)
 
 
