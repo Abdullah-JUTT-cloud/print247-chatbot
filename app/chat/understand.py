@@ -126,10 +126,7 @@ _SYSTEM_PROMPT = (
     "- slots: specification values collected so far\n"
     "- complete: whether the quote is already completed\n"
     "- recent_history: recent conversation turns\n\n"
-    "1. ask_field_info: The visitor asks about available options, varieties, or alternatives for the pending field, "
-    "asks what choices exist, asks if other options exist, or asks for different possibilities "
-    "(such as asking what other choices/varieties exist, what else is available, or asking for another option). "
-    "Any inquiry asking for different or other options is ask_field_info, NEVER dont_know.\n"
+    "1. ask_field_info: The visitor asks about the pending field — including asking to see other or alternative options, what choices or varieties exist, definitions of options, why the field is needed, or whether it is required (such as 'can I see other options?', 'what else can I choose from?', 'are there other options available?', asking why an email/phone/name is needed, or whether a field is required). Any inquiry asking to see options or asking about the pending field itself is ask_field_info, NEVER dont_know.\n"
     "2. dont_know: The visitor expresses uncertainty, indecision, hesitation, states they have not chosen yet, "
     "cannot decide, or asks the assistant to suggest, advise, or recommend (such as asking what the assistant recommends, "
     "asking for guidance, needing direction, or requesting input on what works well). "
@@ -288,7 +285,7 @@ def _degraded_no_key_fallback(
     text = (message or "").strip()
     low = text.lower()
     from .normalize import is_gibberish
-    if is_gibberish(text):
+    if is_gibberish(text) and pending_field not in ("name", "email", "phone") and not (slots and slots.get("_awaiting_contact")):
         return {
             "intent": "unclear",
             "target_field": "",
@@ -335,7 +332,7 @@ def _degraded_no_key_fallback(
 
     # 3. Change field
     if (
-        stems5 & {"chang", "modif", "updat", "revis"}
+        stems5 & {"chang", "chnag", "chnge", "chg", "modif", "updat", "revis"}
         or ("switch" in token_set and bool(token_set & set(_FIELD_MAP)))
     ) and any(t in _FIELD_MAP for t in tokens) and "?" not in text:
         new_val = ""
@@ -350,26 +347,7 @@ def _degraded_no_key_fallback(
             "degraded": True,
         }
 
-    # 4. Ask field info (alternatives / other options for a field)
-    if pending_field or (slots and slots.get("product")):
-        asks_alt = bool(
-            (token_set & {"other", "others", "else", "alternatives", "additional", "besides", "variations", "rest"})
-            and (
-                "?" in text
-                or bool(token_set & {"any", "what", "which", "do", "have", "offer", "options", "choices", "show"})
-                or len(tokens) <= 3
-            )
-        )
-        if asks_alt:
-            return {
-                "intent": "ask_field_info",
-                "target_field": target or (pending_field or ""),
-                "new_value": "",
-                "confidence": 0.7,
-                "degraded": True,
-            }
-
-    # 5. Don't know / indecision / asking for recommendation on a pending field
+    # 4. Don't know / indecision / asking for recommendation on a pending field
     if pending_field:
         dk_stems = {"dunno", "unsur", "undec", "confu", "sugge", "recom", "advic", "advis", "whate"}
         has_dk_stem = bool(stems5 & dk_stems)
@@ -392,6 +370,25 @@ def _degraded_no_key_fallback(
             return {
                 "intent": "dont_know",
                 "target_field": target or pending_field,
+                "new_value": "",
+                "confidence": 0.7,
+                "degraded": True,
+            }
+
+    # 5. Ask field info (alternatives / questions about pending field)
+    if pending_field or (slots and slots.get("product")):
+        asks_field_info = bool(
+            (token_set & {"other", "others", "else", "alternatives", "additional", "besides", "variations", "rest", "why", "need", "required", "require", "mandatory", "optional", "options", "choices", "offer", "available"})
+            and (
+                "?" in text
+                or bool(token_set & {"any", "what", "which", "do", "have", "offer", "options", "choices", "show", "why", "is"})
+                or len(tokens) <= 3
+            )
+        )
+        if asks_field_info:
+            return {
+                "intent": "ask_field_info",
+                "target_field": target or (pending_field or ""),
                 "new_value": "",
                 "confidence": 0.7,
                 "degraded": True,
@@ -457,7 +454,10 @@ def classify_turn(
             t_field = _FIELD_MAP.get(t_field.lower(), "")
         if parsed["intent"] == "change_field":
             low_txt = text.lower()
-            if re.search(r"\b(designs?|artworks?|skus?)\b", low_txt):
+            _change_words = ("change", "chnage", "switch", "update", "modify", "revise", "adjust", "instead", "rather", "make it", "replace", "different")
+            if not any(w in low_txt for w in _change_words):
+                parsed["intent"] = "answer"
+            elif re.search(r"\b(designs?|artworks?|skus?)\b", low_txt):
                 t_field = "skus"
             elif re.search(r"\b(quantit(?:y|ies))\b", low_txt):
                 t_field = "quantity"
@@ -478,6 +478,12 @@ def classify_turn(
         new_val = str(parsed.get("new_value") or "").strip()
         if new_val.lower() == "undefined":
             new_val = ""
+        if parsed["intent"] == "change_field" and new_val:
+            low_nv = new_val.lower().strip()
+            if low_nv in ("change", "chnage", "modify", "update", "switch", "revise") or any(low_nv.startswith(p) for p in ("change ", "chnage ", "modify ", "update ", "switch ", "revise ")):
+                new_val = ""
+            elif low_nv in _FIELD_MAP or low_nv in TARGET_FIELDS:
+                new_val = ""
         result = {
             "intent": parsed["intent"],
             "target_field": t_field,

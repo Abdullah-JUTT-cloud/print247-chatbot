@@ -509,6 +509,272 @@ for prod_key, unmatched_msg in [
         f"reply={ro['reply']!r}",
     )
 
+# ============================================================================
+# SYSTEM 4 — Universal Turn Rule: Answer first, then resume (every flow step)
+# ============================================================================
+print("\n=== SYSTEM 4: Universal Turn Rule (answer first, then resume) ===")
+
+# 4A. Parameterized interruptions across EVERY flow step:
+# (email, size, type, style, finish, quantity, skus, extras, material, confirmation, name, phone)
+# Assert TWO things every time: (a) interruption was handled, (b) SAME pending question re-asked.
+# Then answer it and assert the flow completes/advances.
+
+BOX_PRE_TURNS = {
+    "email": ["I need custom boxes"],
+    "size": ["I need custom boxes", "user@example.com"],
+    "type": ["I need custom boxes", "user@example.com", "10x8x4 inches"],
+    "style": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer"],
+    "finish": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer", "tuck-end"],
+    "quantity": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer", "tuck-end", "matte"],
+    "skus": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer", "tuck-end", "matte", "1000"],
+    "material": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer", "tuck-end", "matte", "1000", "1", "no"],
+    "confirm": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer", "tuck-end", "matte", "1000", "1", "no", "kraft"],
+    "name": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer", "tuck-end", "matte", "1000", "1", "no", "kraft", "yes"],
+    "phone": ["I need custom boxes", "user@example.com", "10x8x4 inches", "mailer", "tuck-end", "matte", "1000", "1", "no", "kraft", "yes", "Alex"],
+}
+
+POUCH_PRE_TURNS = {
+    "extras": ["I need mylar bags", "user@example.com", "4x6+2 inches", "stand up", "matte", "1000", "1", "no"],
+}
+
+INTERRUPTION_CASES = [
+    # (step, interruption_type, inter_msg, expected_handle_kw, expected_reask_kw, valid_answer)
+    ("email", "pending_q", "why do you need my email?", "quote", "email", "visitor@example.com"),
+    ("email", "offtopic_q", "where are you located?", "rosenberg", "email", "visitor@example.com"),
+    ("email", "change", "chnage product to custom boxes", "box", "email", "visitor@example.com"),
+    ("email", "confusion", "not decided yet", "email", "email", "visitor@example.com"),
+    ("size", "pending_q", "what sizes do you offer?", "custom", "size", "10x8x4 inches"),
+    ("size", "offtopic_q", "do you ship to Canada?", "canada", "size", "10x8x4 inches"),
+    ("size", "change", "chnage email to buyer@example.com", "updated", "size", "10x8x4 inches"),
+    ("size", "confusion", "I am confused", "inside", "size", "10x8x4 inches"),
+    ("type", "pending_q", "what types do you have?", "corrugated", "type", "mailer"),
+    ("type", "offtopic_q", "how long does shipping take?", "business days", "type", "mailer"),
+    ("type", "change", "change size to 12x10x4 inches", "12x10x4", "type", "mailer"),
+    ("type", "confusion", "any suggestion?", "corrugated", "type", "mailer"),
+    ("style", "pending_q", "what styles do you offer?", "mailer", "style", "tuck-end"),
+    ("style", "offtopic_q", "are you guys open today?", "timing", "style", "tuck-end"),
+    ("style", "change", "chnage size to 8x8x4 inches", "8x8x4", "style", "tuck-end"),
+    ("style", "confusion", "haven't decided yet", "mailer", "style", "tuck-end"),
+    ("finish", "pending_q", "what finish options are available?", "matte", "finish", "matte"),
+    ("finish", "offtopic_q", "where is your office?", "rosenberg", "finish", "matte"),
+    ("finish", "change", "change type to rigid", "rigid", "finish", "matte"),
+    ("finish", "confusion", "can't decide", "matte", "finish", "matte"),
+    ("quantity", "pending_q", "what is your minimum order?", "1000", "quantity", "1000"),
+    ("quantity", "offtopic_q", "what payment methods do you accept?", "paypal", "quantity", "1000"),
+    ("quantity", "change", "chnage finish to gloss", "gloss", "quantity", "1000"),
+    ("quantity", "confusion", "still not sure", "rough range", "quantity", "1000"),
+    ("skus", "pending_q", "can I do multiple designs?", "sku", "design", "1"),
+    ("skus", "offtopic_q", "do you offer free design help?", "design", "design", "1"),
+    ("skus", "change", "chnage quantity to 2000", "2000", "design", "1"),
+    ("skus", "confusion", "no clue", "artwork version", "design", "1"),
+    ("extras", "pending_q", "what extras do you offer?", "zipper", "zipper", "none"),
+    ("extras", "offtopic_q", "where are you located?", "rosenberg", "zipper", "none"),
+    ("extras", "change", "chnage quantity to 500", "500", "zipper", "none"),
+    ("extras", "confusion", "whats is best?", "zipper", "zipper", "none"),
+    ("material", "pending_q", "what materials do you have?", "kraft", "material", "kraft"),
+    ("material", "offtopic_q", "do you ship to UK?", "delivery", "material", "kraft"),
+    ("material", "change", "chnage quantity to 1500", "1500", "material", "kraft"),
+    ("material", "confusion", "any suggestion?", "kraft", "material", "kraft"),
+    ("confirm", "pending_q", "can I get a sample first?", "sample", "confirm", "yes"),
+    ("confirm", "offtopic_q", "do you ship to Canada?", "canada", "confirm", "yes"),
+    ("confirm", "change", "chnage quantity to 2500", "2500", "confirm", "yes"),
+    ("name", "pending_q", "why do you need my name?", "quote", "name", "Alex"),
+    ("name", "offtopic_q", "where are you located?", "rosenberg", "name", "Alex"),
+    ("name", "change", "chnage finish to gloss", "gloss", "name", "Alex"),
+    ("phone", "pending_q", "is phone required?", "optional", "phone", "no phone"),
+    ("phone", "offtopic_q", "do you ship to Canada?", "canada", "phone", "no phone"),
+    ("phone", "change", "change name to John", "john", "phone", "no phone"),
+    ("phone", "refusal", "dont have any phone number", "user@example.com", "user@example.com", "done"),
+]
+
+for step_name, itype, imsg, exp_hkw, exp_rkw, ans_msg in INTERRUPTION_CASES:
+    sid = f"sys4-inter-{step_name}-{itype}"
+    pre = POUCH_PRE_TURNS[step_name] if step_name in POUCH_PRE_TURNS else BOX_PRE_TURNS[step_name]
+    run_turns(sid, pre)
+    r_inter = handle_message(imsg, session_id=sid, store=None)
+    low_rep = r_inter["reply"].lower()
+    handled_ok = (exp_hkw.lower() in low_rep)
+    reasked_ok = (exp_rkw.lower() in low_rep)
+    check(
+        "SYSTEM 4",
+        f"interruption at {step_name} handled + reasked ({itype}: {imsg!r})",
+        handled_ok and reasked_ok,
+        f"reply={r_inter['reply']!r}",
+    )
+    if ans_msg != "done":
+        r_ans = handle_message(ans_msg, session_id=sid, store=None)
+        check(
+            "SYSTEM 4",
+            f"flow advances after interruption at {step_name} answered with {ans_msg!r}",
+            bool(r_ans.get("reply")),
+            f"reply={r_ans.get('reply')!r}",
+        )
+
+# 4B. Combined message: answer + question in one turn
+# Example: "gloss, and what is soft touch?" at finish step
+sid_comb = "sys4-comb-finish"
+run_turns(sid_comb, BOX_PRE_TURNS["finish"])
+r_comb = handle_message("gloss, and what is soft touch?", session_id=sid_comb, store=None)
+low_comb = r_comb["reply"].lower()
+check(
+    "SYSTEM 4",
+    "combined turn stores answer, answers question, asks NEXT question (not pending)",
+    r_comb["slots"].get("finishes") == "gloss"
+    and ("velvet" in low_comb or "soft touch" in low_comb or "luxur" in low_comb)
+    and "quantity" in low_comb
+    and "finish do you prefer" not in low_comb,
+    f"reply={r_comb['reply']!r} slots={r_comb['slots']}",
+)
+
+# 4C. Cancel / delete / new-order interruptions (flow ends / restarts, no re-ask)
+sid_c = "sys4-cancel-mid"
+run_turns(sid_c, BOX_PRE_TURNS["style"])
+r_c = handle_message("cancel this quote", session_id=sid_c, store=None)
+check(
+    "SYSTEM 4",
+    "cancel interruption mid-flow ends flow without re-asking pending question",
+    "understand" in r_c["reply"].lower()
+    and "what style" not in r_c["reply"].lower(),
+    f"reply={r_c['reply']!r}",
+)
+
+sid_d = "sys4-del-mid"
+run_turns(sid_d, BOX_PRE_TURNS["finish"])
+r_d = handle_message("delete save one", session_id=sid_d, store=None)
+check(
+    "SYSTEM 4",
+    "delete interruption mid-flow clears data without re-asking pending question",
+    "deleted" in r_d["reply"].lower()
+    and "what finish" not in r_d["reply"].lower()
+    and r_d["slots"] == {},
+    f"reply={r_d['reply']!r}",
+)
+
+sid_no = "sys4-neworder-mid"
+run_turns(sid_no, BOX_PRE_TURNS["quantity"])
+r_no = handle_message("start over", session_id=sid_no, store=None)
+check(
+    "SYSTEM 4",
+    "start over interruption mid-flow restarts from product",
+    "product" in r_no["reply"].lower()
+    and "what quantity" not in r_no["reply"].lower()
+    and r_no["slots"] == {},
+    f"reply={r_no['reply']!r}",
+)
+
+# 4D. Full replay of all 8 live transcripts as regression cases
+# 1. mylar "whats is best?"
+sid_r1 = "sys4-reg1-mylar"
+run_turns(sid_r1, ["I need mylar bags", "test@example.com", "4x6+2 inches", "stand up", "matte", "1000", "1", "not yet"])
+r_r1 = handle_message("whats is best?", session_id=sid_r1, store=None)
+check(
+    "SYSTEM 4",
+    "live transcript 1: mylar 'whats is best?' extras relevance",
+    "rosenberg" not in r_r1["reply"].lower()
+    and ("zipper" in r_r1["reply"].lower() or "extra" in r_r1["reply"].lower()),
+    f"reply={r_r1['reply']!r}",
+)
+
+# 2. label 22*2*6
+sid_r2 = "sys4-reg2-label"
+run_turns(sid_r2, ["I need labels", "test@example.com"])
+r_r2 = handle_message("22*2*6", session_id=sid_r2, store=None)
+check(
+    "SYSTEM 4",
+    "live transcript 2: label 22*2*6 3D refusal",
+    "flat" in r_r2["reply"].lower() or "width x height" in r_r2["reply"].lower() or "2 dimensions" in r_r2["reply"].lower(),
+    f"reply={r_r2['reply']!r}",
+)
+
+# 3. Hammad cancel/delete
+sid_r3 = "sys4-reg3-hammad"
+run_turns(sid_r3, ["I need boxes"])
+r_can = handle_message("i dont need it", session_id=sid_r3, store=None)
+r_del = handle_message("delete save one", session_id=sid_r3, store=None)
+check(
+    "SYSTEM 4",
+    "live transcript 3: Hammad cancel/delete mid-quote",
+    "deleted" in r_del["reply"].lower() or "cleared" in r_del["reply"].lower(),
+    f"r_can={r_can['reply']!r} r_del={r_del['reply']!r}",
+)
+
+# 4. whisky "confused"
+sid_r4 = "sys4-reg4-whisky"
+run_turns(sid_r4, ["labels for whisky bottles", "visitor@gmail.com", "4x6 inches"])
+r_w1 = handle_message("I am confused what do you suggest me", session_id=sid_r4, store=None)
+r_w2 = handle_message("I am confused what finish do I need, I can't decide between matte, gloss or soft touch", session_id=sid_r4, store=None)
+check(
+    "SYSTEM 4",
+    "live transcript 4: whisky labels finish indecision marks gave_up",
+    "for the team to confirm" in r_w2["reply"].lower()
+    and "quantity" in r_w2["reply"].lower(),
+    f"r_w1={r_w1['reply']!r} r_w2={r_w2['reply']!r}",
+)
+
+# 5. CTO pizza-box test
+sid_r5 = "sys4-reg5-cto"
+cto_turns = [
+    ("I need pizza boxes", ["email"]),
+    ("user@example.com", ["size"]),
+    ("i have not decided yet", ["tell me what will go inside", "size"]),
+    ("I already told you that I dont know", ["leave the size", "type"]),
+    ("Folding carton", ["style"]),
+    ("Mailer", ["finish"]),
+    ("any other finish you have?", ["matte", "gloss", "finish"]),
+    ("Matte", ["quantity"]),
+    ("1000", ["designs", "sku"]),
+    ("1", ["image of the design"]),
+    ("no", ["material"]),
+    ("not yet", ["kraft", "cardboard", "material"]),
+    ("any suggestion?", ["leave the material", "confirm"]),
+    ("cardboard", ["cardboard", "confirm"]),
+    ("yes", ["name"]),
+    ("John Doe", ["phone"]),
+    ("dont have any phone number", ["follow up with you at user@example.com"]),
+    ("i dont need it", ["understand", "quote stays with our team"]),
+    ("delete save one", ["deleted your saved details"]),
+]
+cto_ok = True
+for cmsg, exp_parts in cto_turns:
+    rc = handle_message(cmsg, session_id=sid_r5, store=None)
+    if not all(ep.lower() in rc["reply"].lower() for ep in exp_parts):
+        cto_ok = False
+        break
+check("SYSTEM 4", "live transcript 5: CTO pizza-box 19 turns replay", cto_ok)
+
+# 6. phone refusal
+sid_r6 = "sys4-reg6-phone"
+run_turns(sid_r6, ["I need boxes", "lead@example.com", "6x6x6 inches", "mailer", "matte", "500", "1", "none", "cardboard", "yes", "Alex"])
+r_p6 = handle_message("dont have any phone number", session_id=sid_r6, store=None)
+check(
+    "SYSTEM 4",
+    "live transcript 6: phone refusal closes cleanly with email",
+    "lead@example.com" in r_p6["reply"],
+    f"reply={r_p6['reply']!r}",
+)
+
+# 7. 'chnage size' at phone step
+sid_r7 = "sys4-reg7-chnage"
+run_turns(sid_r7, ["I need boxes", "lead@example.com", "6x6x6 inches", "mailer", "matte", "500", "1", "none", "cardboard", "yes", "Alex"])
+r_ch7 = handle_message("chnage size", session_id=sid_r7, store=None)
+check(
+    "SYSTEM 4",
+    "live transcript 7: 'chnage size' at phone step asks for size",
+    "size" in r_ch7["reply"].lower(),
+    f"reply={r_ch7['reply']!r}",
+)
+
+# 8. quote-summary duplication
+sid_r8 = "sys4-reg8-summary"
+run_turns(sid_r8, ["I need boxes", "lead@example.com", "6x6x6 inches"])
+r_qs8 = handle_message("what was my order", session_id=sid_r8, store=None)
+check(
+    "SYSTEM 4",
+    "live transcript 8: quote summary contains order info without duplicate dump",
+    "box" in r_qs8["reply"].lower() and "6x6x6" in r_qs8["reply"],
+    f"reply={r_qs8['reply']!r}",
+)
+
 print("\n=== Summary by System ===")
 for sys_name, items in _by_system.items():
     p = sum(1 for _, ok in items if ok)

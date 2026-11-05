@@ -159,7 +159,7 @@ def looks_like_person_name(value: str | None) -> bool:
     return True
 
 
-def is_contact_value_usable(key: str, value: str | None) -> bool:
+def is_contact_value_usable(key: str, value: str | None, visitor_said: list | None = None) -> bool:
     text = (value or "").strip()
     if not text:
         return False
@@ -168,8 +168,10 @@ def is_contact_value_usable(key: str, value: str | None) -> bool:
     if key == "phone":
         return looks_like_phone(text) and not is_our_phone(text)
     if key == "name":
-        return looks_like_person_name(text) and not is_our_reps_name(text)
-    return not is_placeholder_name(text) and not is_our_reps_name(text)
+        if visitor_said is not None:
+            return looks_like_person_name(text) and not is_our_reps_name(text, visitor_said)
+        return looks_like_person_name(text)
+    return not is_placeholder_name(text)
 
 
 def missing_contact_fields(collected: dict, wanted=("name", "email", "phone")) -> list:

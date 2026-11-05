@@ -469,6 +469,8 @@ def asks_about_trust(text: str) -> bool:
 
 
 def says_thanks(text: str) -> bool:
+    if re.search(r"\b(?:no|nope|not)\s+(?:thanks|thank you|thx)\b", text or "", re.IGNORECASE):
+        return False
     return bool(_SAYS_THANKS.search(text or ""))
 
 

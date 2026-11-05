@@ -275,7 +275,7 @@ def test_regression_vague_extras_relevance() -> None:
     sid = "reg-vague-extras-1"
     handle_message("I need mylar bags", session_id=sid)
     handle_message("shopper@example.com", session_id=sid)
-    handle_message("4x6 inches", session_id=sid)
+    handle_message("4x6x2.5 inches", session_id=sid)
     handle_message("stand up", session_id=sid)
     handle_message("matte", session_id=sid)
     handle_message("1000", session_id=sid)
@@ -376,6 +376,80 @@ def test_regression_phone_refusal() -> None:
     )
 
 
+def test_regression_whisky_confused() -> None:
+    print("\n--- REGRESSION: Whisky Labels Finish Indecision ---")
+    sid = "reg-whisky-confused-1"
+    handle_message("labels for whisky bottles", session_id=sid)
+    handle_message("visitor@gmail.com", session_id=sid)
+    handle_message("4x6 inches", session_id=sid)
+    handle_message("I am confused what do you suggest me", session_id=sid)
+    r5 = handle_message("I am confused what finish do I need, I can't decide between matte, gloss or soft touch", session_id=sid)
+    rep = r5.get("reply", "").lower()
+    check(
+        "Whisky labels finish indecision marks gave_up and moves to quantity",
+        "for the team to confirm" in rep and "quantity" in rep,
+        f"got: {r5.get('reply')}",
+    )
+
+
+def test_regression_chnage_size_at_phone() -> None:
+    print("\n--- REGRESSION: 'chnage size' at Phone Step ---")
+    sid = "reg-chnage-size-phone-1"
+    handle_message("I need boxes", session_id=sid)
+    handle_message("lead@example.com", session_id=sid)
+    handle_message("6x6x6 inches", session_id=sid)
+    handle_message("mailer", session_id=sid)
+    handle_message("matte", session_id=sid)
+    handle_message("500", session_id=sid)
+    handle_message("1", session_id=sid)
+    handle_message("none", session_id=sid)
+    handle_message("cardboard", session_id=sid)
+    handle_message("yes", session_id=sid)
+    handle_message("Alex", session_id=sid)
+    r = handle_message("chnage size", session_id=sid)
+    rep = r.get("reply", "").lower()
+    check(
+        "Typo 'chnage size' at phone step asks for size",
+        "size" in rep,
+        f"got: {r.get('reply')}",
+    )
+
+
+def test_regression_quote_summary() -> None:
+    print("\n--- REGRESSION: Quote Summary Request Mid-Quote ---")
+    sid = "reg-quote-summary-1"
+    handle_message("I need boxes", session_id=sid)
+    handle_message("lead@example.com", session_id=sid)
+    handle_message("6x6x6 inches", session_id=sid)
+    r = handle_message("what was my order", session_id=sid)
+    rep = r.get("reply", "").lower()
+    check(
+        "Mid-quote 'what was my order' gives requirement details without duplication",
+        "box" in rep and "6x6x6" in rep,
+        f"got: {r.get('reply')}",
+    )
+
+
+def test_regression_combined_turn() -> None:
+    print("\n--- REGRESSION: Combined Message (Answer + Question) ---")
+    sid = "reg-combined-turn-1"
+    handle_message("I need custom boxes", session_id=sid)
+    handle_message("user@example.com", session_id=sid)
+    handle_message("10x8x4 inches", session_id=sid)
+    handle_message("mailer", session_id=sid)
+    handle_message("tuck-end", session_id=sid)
+    r = handle_message("gloss, and what is soft touch?", session_id=sid)
+    rep = r.get("reply", "").lower()
+    check(
+        "Combined message stores answer, answers question, asks NEXT question",
+        r["slots"].get("finishes") == "gloss"
+        and ("soft touch" in rep or "velvet" in rep or "luxur" in rep)
+        and "quantity" in rep
+        and "finish do you prefer" not in rep,
+        f"reply={r.get('reply')!r} slots={r.get('slots')}",
+    )
+
+
 def main() -> None:
     print("=" * 60)
     print("RUNNING UNDERSTANDING & ANTI-HARDCODE TEST SUITE")
@@ -388,6 +462,10 @@ def main() -> None:
     test_regression_vague_extras_relevance()
     test_regression_post_completion_cancel_delete()
     test_regression_phone_refusal()
+    test_regression_whisky_confused()
+    test_regression_chnage_size_at_phone()
+    test_regression_quote_summary()
+    test_regression_combined_turn()
 
     print("\n" + "=" * 60)
     print(f"RESULTS: {_passed} PASSED, {_failed} FAILED")
