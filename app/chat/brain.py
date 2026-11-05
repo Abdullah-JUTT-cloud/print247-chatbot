@@ -40,7 +40,7 @@ import re
 
 from . import guards
 from .attempts import (MAX_ASKS, apply_ask_outcome, ask_outcome, asks_what_is_usual,
-                       says_they_do_not_know, visitor_is_asking, wants_to_stop)
+                       is_indecision_intent, says_they_do_not_know, visitor_is_asking, wants_to_stop)
 from .complete import get_chat_complete_message, when_the_team_replies
 from .erp_eligibility import quantity_is_per_design, quantity_is_total
 from .composer import fix_reply
@@ -1900,7 +1900,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # Confusion (Oct 30 senior transcript: "what a joke"): do not
     # advance. Restate where the quote stands and what is needed
     # next, so the visitor can see what went wrong.
-    if prior.get("product") and script_missing(prior, meta) and (
+    if prior.get("product") and script_missing(prior, meta) and not is_indecision_intent(message) and (
             re.search(r"\bwhat a joke\b|\bconfus\w*\b|\bdon'?t understand\b|"
                       r"\bmakes no sense\b|\bi'?m lost\b", low)
             or low.strip().strip("?.! ") in ("what", "huh")):
@@ -2226,7 +2226,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                                                  script_missing(prior, meta), language))
     # A suggestion request is answered with a recommendation, not
     # the next script question.
-    if asks_for_suggestion(message):
+    if asks_for_suggestion(message) and not (prior.get("product") and script_missing(prior, meta) and is_indecision_intent(message)):
         _s_use = suggestion_use(message, meta.get("visitor_messages") or [])
         _s_prod = suggestion_product(message, prior.get("product"))
         _s_ans = _SUGGESTION_ANSWERS.get(
@@ -2450,7 +2450,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _p_cand = _for_m.group(1).strip()
             if _p_cand and len(_p_cand) >= 2 and _p_cand not in ("me", "us", "it", "quote", "sale", "order"):
                 meta["purpose"] = _p_cand
-    if visitor_is_asking(message) and not _is_order:
+    if (visitor_is_asking(message) and not _is_order) or (is_indecision_intent(message) and script_missing(prior, meta)):
         extracted = {}
     _menu_echo = is_our_own_menu(message.strip())
     if _menu_echo:
@@ -2461,6 +2461,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _code_product = extracted.get("product")
     if (not extracted or (_pend_pre and _pend_pre not in extracted)) \
             and not visitor_is_asking(message) and not _menu_echo \
+            and not (is_indecision_intent(message) and script_missing(prior, meta)) \
             and not (wants_to_stop(message) and not _is_order):
         try:
             _llm = llm_extract(message, asked=meta.get("last_bot_question"),
@@ -3265,7 +3266,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # Questions only: a finish VALUE ("matte finish") or a stated
     # material ("coffee material is mylar") is an answer, not an
     # attribute question — firing here broke both (Oct 30).
-    if _attr_word and ("?" in message or visitor_is_asking(message)):
+    if _attr_word and not is_indecision_intent(message) and ("?" in message or visitor_is_asking(message)):
         # Bare "mylar" is a family word, not an alias — "mylar
         # finishes" is a pouch question, not an unknown product.
         # And a typo'd product ("buissness cards") must count as
@@ -3535,20 +3536,190 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 f"{_below_min_note(slots, language)}"
                 f"{_design_files_note(meta)}")
 
-    # A vague recommendation while a script field is pending is still
-    # a question about that field, not a new KB search. Keep extras
-    # pending and answer the two options in their pouch context.
-    if (missing and missing[0] == "extras"
-            and visitor_is_asking(message)
-            and re.search(r"\b(best|recommend(?:ed)?|suggest(?:ion)?|usual|standard|typical)\b",
-                          low)):
-        _extras_reply = (
-            "For mylar bags, a zipper is for resealing and a tear notch "
-            "is for easy opening. Both are standard options. "
-            + _next_question_text(slots, missing, language))
-        return _final_return(
-            _extras_reply,
-            srcs=["kb/materials/extras.md"])
+    # SYSTEM 2 — Unified "don't know" and indecision handler for EVERY script field
+    # (sizes, style, type, finishes, quantity, skus, extras, material):
+    # - 1st don't-know / indecision on any field: suggest that field's options
+    #   FROM THE KB with a one-line difference for each option + re-ask the field.
+    #   Never reply with only a summary + the same question.
+    # - 2nd indecision on the same field: give the field up (mark gave_up, state
+    #   that the team will confirm it) and move on.
+    _SCRIPT_FIELDS = ("sizes", "style", "type", "finishes", "quantity",
+                      "skus", "extras", "material")
+    _FIELD_LABELS = {
+        "sizes": "size", "style": "style", "type": "type",
+        "finishes": "finish", "quantity": "quantity",
+        "skus": "number of designs", "extras": "add-ons",
+        "material": "material",
+    }
+    _FIELD_INDICATORS = {
+        "finishes": [
+            "finish", "finishes", "lamination", "coating",
+            "matte", "gloss", "glossy", "soft touch", "soft-touch", "velvet",
+            "spot uv", "foil", "holographic", "embossing"
+        ],
+        "material": [
+            "material", "materials", "stock", "paper",
+            "kraft", "vinyl", "cardboard", "corrugated", "rigid",
+            "metallized", "foil", "plastic", "biodegradable", "clear", "white"
+        ],
+        "style": [
+            "style", "styles",
+            "stand up", "stand-up", "flat pouch", "flat-bottom", "flat bottom",
+            "mailer", "shipping box", "tuck", "rigid box"
+        ],
+        "type": [
+            "type", "types", "box type", "box types",
+            "corrugated", "rigid", "cardboard"
+        ],
+        "extras": [
+            "extra", "extras", "add-on", "add-ons", "feature", "features",
+            "zipper", "tear notch", "valve", "window", "hang hole"
+        ],
+        "quantity": [
+            "quantity", "quantities", "qty", "amount", "order size",
+            "run", "runs", "minimum", "moq", "units", "pcs", "pieces"
+        ],
+        "sizes": [
+            "size", "sizes", "dimension", "dimensions",
+            "width", "height", "depth", "length", "inches", "cm", "mm"
+        ],
+        "skus": [
+            "sku", "skus", "design", "designs", "artwork", "artworks",
+            "version", "versions", "variant", "variants"
+        ],
+    }
+
+    _FIELD_OPTION_KB_DIFFS = {
+        "finishes": {
+            "matte": "smooth, non-reflective finish with low glare that resists fingerprints and keeps text easy to read",
+            "gloss": "vibrant, high-shine finish that reflects light and makes colors bold and eye-catching",
+            "soft touch": "velvety, silky texture that gives a premium luxury feel with zero glare",
+            "spot uv": "targeted glossy coating to highlight specific logos or design details against a matte background",
+            "foil": "metallic foil stamping (gold, silver, copper, or holographic) for a reflective luxury accent",
+        },
+        "style": {
+            "stand-up": "bottom gusset allows the pouch to stand upright independently on retail shelves",
+            "flat": "sealed on three sides with no bottom gusset, ideal for single-use packs, samples, or flat storage",
+            "flat-bottom": "block bottom with side gussets for maximum stability and premium shelf presence",
+            "mailer": "durable self-locking box with dust flaps, ideal for shipping and subscription packaging",
+            "tuck-end": "classic folding box with top and bottom tuck flaps, standard for retail packaging",
+            "rigid": "sturdy setup box that does not fold flat, used for luxury goods and gift presentation",
+            "folding carton": "lightweight paperboard carton that ships flat, cost-effective for retail shelves",
+        },
+        "type": {
+            "corrugated": "fluted structural cardboard providing strong protection for shipping and heavier items",
+            "cardboard": "sleek, lightweight paperboard for retail packaging and folding cartons",
+            "rigid": "thick, rigid board wrapped with printed paper for luxury presentation",
+            "kraft": "natural brown, eco-friendly unbleached board for a rustic, organic look",
+        },
+        "extras": {
+            "zipper": "resealable zip closure to maintain product freshness across multiple uses",
+            "tear notch": "pre-cut notch for easy opening without scissors",
+            "hang hole": "hole punch at the top for hanging on retail display pegs",
+            "valve": "one-way degassing valve allowing gases to escape without letting air in (ideal for coffee)",
+            "window": "transparent clear section allowing customers to see the product inside",
+        },
+        "material": {
+            "vinyl": "durable, waterproof, and tear-resistant material suitable for indoor and outdoor use",
+            "kraft": "natural brown, eco-friendly paperboard or paper for an organic, sustainable look",
+            "cardboard": "classic smooth paperboard for crisp, vibrant retail packaging",
+            "corrugated": "sturdy fluted cardboard engineered for shipping protection",
+            "metallized": "multi-layer barrier film with a metallic layer for maximum moisture and light protection",
+            "foil": "high-barrier foil layer that seals in freshness and blocks light and oxygen",
+            "white": "bright white stock for high-contrast, true-color printing",
+            "clear": "transparent film where the container or surface shows through non-printed areas",
+            "holographic": "iridescent, rainbow-reflecting material that shifts color in the light",
+            "paper": "cost-effective classic paper stock for standard retail packaging and labels",
+        },
+    }
+
+    def _target_field_for_indecision(text: str, missing_fields: list[str]) -> str:
+        low_t = text.lower()
+        for fld, inds in _FIELD_INDICATORS.items():
+            if fld in missing_fields:
+                for ind in inds:
+                    if re.search(rf"\b{re.escape(ind)}\b", low_t):
+                        return fld
+        return missing_fields[0]
+
+    def _dont_know_suggestion(field: str, product: str | None) -> str:
+        opts = options_for(field, product)
+        prod_word = (product or "this product").strip()
+        plural = (prod_word + "es" if prod_word.endswith(("x", "s", "ch", "sh"))
+                  else prod_word + "s")
+        flabel = _FIELD_LABELS.get(field, field)
+        if field == "sizes":
+            if not holds_contents(product):
+                if opts:
+                    return (f"No problem — we can leave the size for the team to confirm, "
+                            f"or you can pick a common {prod_word} size from our catalog "
+                            f"such as {', '.join(opts[:4])} (or width x height in inches or mm) to start with.")
+                return _tr("not_sure_sizes_flat", language,
+                           "No problem — we can leave the size for the team "
+                           "to confirm, or pick a common width x height size in inches or mm to start with.")
+            if opts:
+                return (f"No problem — tell me what will go inside the pack or your product dimensions, "
+                        f"or pick a common size such as {', '.join(opts[:4])} to start with.")
+            return _tr("not_sure_sizes", language,
+                       "No problem — tell me what will go inside the pack or your product dimensions, "
+                       "or pick a common size to start with.")
+        if field == "quantity":
+            return ("No problem — we handle both smaller short-run orders and "
+                    "larger bulk runs, so tell me a rough range and we will work from that.")
+        if field == "skus":
+            return ("No problem — each design or SKU is a different artwork version "
+                    "in your order (for example, 1 design if every piece has the same "
+                    "print, or 2, 3, or more if you have multiple variants).")
+        diff_dict = _FIELD_OPTION_KB_DIFFS.get(field, {})
+        if opts:
+            diffs = []
+            for o in opts:
+                desc = diff_dict.get(o.lower())
+                if desc:
+                    diffs.append(f"• {o.capitalize()} — {desc}.")
+            if diffs:
+                return f"No problem — for {plural}, our {flabel} options include:\n" + "\n".join(diffs)
+            joined = (", ".join(opts[:-1]) + f", or {opts[-1]}"
+                      if len(opts) > 1 else opts[0])
+            return f"No problem — for {plural}, our {flabel} options include {joined}."
+        return f"No problem — we can help you choose the right {flabel} for your {plural}."
+
+    def _give_up_field(field: str):
+        meta.setdefault("gave_up", [])
+        if field not in meta["gave_up"]:
+            meta["gave_up"].append(field)
+        _missing2 = script_missing(slots, meta)
+        _flabel = _FIELD_LABELS.get(field, field)
+        _ack = f"No problem — we'll leave the {_flabel} for the team to confirm."
+        if not _missing2:
+            meta["last_asked"] = None
+            _creply = _ack + " " + _confirmation_text()
+            meta["last_bot_question"] = _creply
+            return _final_return(_creply)
+        meta["last_asked"] = _missing2[0]
+        _nreply = _ack + " " + _next_question_text(slots, _missing2, language)
+        meta["last_bot_question"] = _nreply
+        return _final_return(_nreply)
+
+    if missing and (is_indecision_intent(message) or "not sure" in low or says_they_do_not_know(message)):
+        _target = _target_field_for_indecision(message, missing)
+        if _target in _SCRIPT_FIELDS:
+            _dk = dict(meta.get("dont_know_counts") or {})
+            _n = _dk.get(_target, 0) + 1
+            _dk[_target] = _n
+            meta["dont_know_counts"] = _dk
+            if _n >= 2:
+                return _give_up_field(_target)
+            _sugg = _dont_know_suggestion(_target, slots.get("product"))
+            _reask = _next_question_text(slots, [_target], language)
+            _reply_dk = (f"{_sugg} {_reask}".strip()
+                         if _reask and _reask not in _sugg else _sugg)
+            meta["last_asked"] = _target
+            meta["last_bot_question"] = _reply_dk
+            return _final_return(
+                _reply_dk,
+                srcs=_slot_sources(slots) or sources,
+                suggestions=_suggestions(slots, [_target], _reply_dk, language))
 
     # Types question ("what box types do you offer?", "what type of
     # boxes do you have?"): answer with the product's type LIST
@@ -4001,93 +4172,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                      qty=slots.get("quantity"))
         return _final_return(_reply + (" " + _q if _q else ""))
 
-    # SYSTEM 2 — Unified "don't know" handler for EVERY script field
-    # (sizes, style, type, finishes, quantity, skus, extras, material):
-    # - 1st don't-know on any field: suggest KB options for the
-    #   current product (never invented options) + re-ask the field.
-    #   Never jump to confirmation on a first don't-know.
-    # - 2nd refusal on the same field (a second don't-know OR a
-    #   decline/skip after a first don't-know): mark it gave_up,
-    #   state that the team will confirm it, and move on.
-    _SCRIPT_FIELDS = ("sizes", "style", "type", "finishes", "quantity",
-                      "skus", "extras", "material")
-    _FIELD_LABELS = {
-        "sizes": "size", "style": "style", "type": "type",
-        "finishes": "finish", "quantity": "quantity",
-        "skus": "number of designs", "extras": "add-ons",
-        "material": "material",
-    }
 
-    def _dont_know_suggestion(field: str, product: str | None) -> str:
-        opts = options_for(field, product)
-        prod_word = (product or "this product").strip()
-        plural = (prod_word + "es" if prod_word.endswith(("x", "s", "ch", "sh"))
-                  else prod_word + "s")
-        flabel = _FIELD_LABELS.get(field, field)
-        if field == "sizes":
-            if not holds_contents(product):
-                if opts:
-                    return (f"No problem — we can leave the size for the team to confirm, "
-                            f"or you can pick a common {prod_word} size from our catalog "
-                            f"such as {', '.join(opts[:4])} to start with.")
-                return _tr("not_sure_sizes_flat", language,
-                           "No problem — we can leave the size for the team "
-                           "to confirm. Or pick a common size to start with.")
-            if opts:
-                return (f"No problem — tell me what will go inside the pack, "
-                        f"or pick a common size such as {', '.join(opts[:4])} to start with.")
-            return _tr("not_sure_sizes", language,
-                       "No problem — tell me what will go inside the pack, "
-                       "or pick a common size to start with.")
-        if field == "quantity":
-            return ("No problem — we handle both smaller short-run orders and "
-                    "larger bulk runs, so tell me a rough range and we will work from that.")
-        if field == "skus":
-            return ("No problem — each design or SKU is a different artwork version "
-                    "in your order (for example, 1 design if every piece has the same "
-                    "print, or 2, 3, or more if you have multiple variants).")
-        if opts:
-            joined = (", ".join(opts[:-1]) + f", or {opts[-1]}"
-                      if len(opts) > 1 else opts[0])
-            return f"No problem — for {plural}, our {flabel} options include {joined}."
-        return f"No problem — we can help you choose the right {flabel} for your {plural}."
-
-    def _give_up_field(field: str):
-        meta.setdefault("gave_up", [])
-        if field not in meta["gave_up"]:
-            meta["gave_up"].append(field)
-        _missing2 = script_missing(slots, meta)
-        _flabel = _FIELD_LABELS.get(field, field)
-        _ack = f"No problem — we'll leave the {_flabel} for the team to confirm."
-        if not _missing2:
-            meta["last_asked"] = None
-            _creply = _ack + " " + _confirmation_text()
-            meta["last_bot_question"] = _creply
-            return _final_return(_creply)
-        meta["last_asked"] = _missing2[0]
-        _nreply = _ack + " " + _next_question_text(slots, _missing2, language)
-        meta["last_bot_question"] = _nreply
-        return _final_return(_nreply)
-
-    if ("not sure" in low or says_they_do_not_know(message)) and missing:
-        _first = missing[0]
-        if _first in _SCRIPT_FIELDS:
-            _dk = dict(meta.get("dont_know_counts") or {})
-            _n = _dk.get(_first, 0) + 1
-            _dk[_first] = _n
-            meta["dont_know_counts"] = _dk
-            if _n >= 2:
-                return _give_up_field(_first)
-            _sugg = _dont_know_suggestion(_first, slots.get("product"))
-            _reask = _next_question_text(slots, [_first], language)
-            _reply_dk = (f"{_sugg} {_reask}".strip()
-                         if _reask and _reask not in _sugg else _sugg)
-            meta["last_asked"] = _first
-            meta["last_bot_question"] = _reply_dk
-            return _final_return(
-                _reply_dk,
-                srcs=_slot_sources(slots) or sources,
-                suggestions=_suggestions(slots, [_first], _reply_dk, language))
 
     # Below-minimum note (user rule Oct 30: lead with what we can
     # do, NEVER give the minimum unless asked, never a flat

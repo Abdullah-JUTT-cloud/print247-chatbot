@@ -102,8 +102,6 @@ def _kb_files_for(product: str | None, field: str) -> list[str]:
     extras_md = os.path.join(_KB_ROOT, "materials", "extras.md")
 
     if field == "finishes":
-        if fam.name == "flat":
-            return [prod_base]
         return mat_family + [finishes_md, prod_base]
     if field == "extras":
         return ([extras_md] + mat_family) if fam.gusset else []

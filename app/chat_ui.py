@@ -440,6 +440,9 @@ a { color: var(--accent-text); }
 [data-theme="light"] #themeToggle .icon-sun { display: none; }
 [data-theme="kraft"] #themeToggle .icon-moon,
 [data-theme="light"] #themeToggle .icon-moon { display: block; }
+#speakerToggle .icon-volume-x { display: none; }
+body.voice-muted #speakerToggle .icon-volume { display: none; }
+body.voice-muted #speakerToggle .icon-volume-x { display: block; }
 .widget-only { display: none; }
 body.widget-mode .widget-only { display: inline-flex; }
 @media (hover: hover) {
@@ -950,6 +953,204 @@ kbd {
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* ============================================================
+   VOICE MODE STYLES & ANIMATIONS
+   Pure CSS/SVG. Blue neon waveform with particles + pulsing concentric rings on dark background.
+   ============================================================ */
+.mic-btn {
+  position: relative;
+  transition: color .18s ease, background-color .18s ease, box-shadow .18s ease, transform .16s ease;
+}
+.mic-btn.is-listening {
+  color: #00d2ff !important;
+  background: rgba(0, 210, 255, 0.16) !important;
+  box-shadow: 0 0 12px rgba(0, 210, 255, 0.5);
+  animation: micGlowPulse 1.4s ease-in-out infinite alternate;
+}
+@keyframes micGlowPulse {
+  0% { transform: scale(1); box-shadow: 0 0 8px rgba(0, 210, 255, 0.4); }
+  100% { transform: scale(1.08); box-shadow: 0 0 16px rgba(0, 210, 255, 0.85); }
+}
+
+.voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(0, 180, 255, 0.35);
+  border-radius: 12px;
+  background: #060b14;
+  box-shadow: 0 4px 20px rgba(0, 140, 255, 0.18), inset 0 0 16px rgba(0, 80, 200, 0.12);
+  animation: voiceBarIn .2s ease-out;
+}
+@keyframes voiceBarIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.voice-anim-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 96px;
+  height: 38px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(0, 15, 35, 0.6);
+  border: 1px solid rgba(0, 180, 255, 0.2);
+}
+.voice-wave-box, .voice-rings-box {
+  width: 100%;
+  height: 100%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.voice-bar[data-mode="listening"] .voice-wave-box { display: flex; }
+.voice-bar[data-mode="speaking"] .voice-rings-box { display: flex; }
+
+.voice-wave-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.sine-line {
+  fill: none;
+  stroke: #00d2ff;
+  stroke-width: 1.8px;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 5px #00a2ff) drop-shadow(0 0 10px rgba(0, 180, 255, 0.45));
+}
+.sine-1 {
+  animation: sineTranslate 2.2s linear infinite;
+}
+.sine-2 {
+  stroke: rgba(0, 210, 255, 0.5);
+  stroke-width: 1.2px;
+  animation: sineTranslateReverse 3s linear infinite;
+}
+@keyframes sineTranslate {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-105px); }
+}
+@keyframes sineTranslateReverse {
+  0% { transform: translateX(-105px); }
+  100% { transform: translateX(0); }
+}
+.wave-particle {
+  fill: #90edff;
+  filter: drop-shadow(0 0 4px #00d2ff);
+  animation: particleGlow 1.6s ease-in-out infinite alternate;
+}
+.wave-particle.p1 { animation-delay: 0s; }
+.wave-particle.p2 { animation-delay: 0.35s; }
+.wave-particle.p3 { animation-delay: 0.7s; }
+.wave-particle.p4 { animation-delay: 1.05s; }
+.wave-particle.p5 { animation-delay: 1.4s; }
+@keyframes particleGlow {
+  0% { transform: translateY(-5px) scale(0.7); opacity: 0.4; }
+  100% { transform: translateY(5px) scale(1.3); opacity: 1; }
+}
+
+.voice-rings-svg {
+  width: 44px;
+  height: 44px;
+  flex: none;
+}
+.ring-core {
+  fill: #00d2ff;
+  filter: drop-shadow(0 0 6px #00b4ff);
+  animation: corePulse 1.2s ease-in-out infinite alternate;
+}
+.ring {
+  fill: none;
+  stroke: #00d2ff;
+  stroke-width: 1.6px;
+  filter: drop-shadow(0 0 6px #00a2ff);
+}
+.ring-1 {
+  animation: ringPulse 2.1s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  animation-delay: 0s;
+}
+.ring-2 {
+  animation: ringPulse 2.1s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  animation-delay: 0.7s;
+}
+.ring-3 {
+  animation: ringPulse 2.1s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  animation-delay: 1.4s;
+}
+@keyframes ringPulse {
+  0% { r: 5px; opacity: 0.95; stroke-width: 2px; }
+  65% { opacity: 0.5; }
+  100% { r: 34px; opacity: 0; stroke-width: 0.8px; }
+}
+@keyframes corePulse {
+  0% { transform: scale(0.85); opacity: 0.75; }
+  100% { transform: scale(1.15); opacity: 1; filter: drop-shadow(0 0 9px #00f0ff); }
+}
+
+.voice-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.voice-label {
+  color: #e0f4ff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.voice-sub {
+  color: rgba(180, 220, 255, 0.65);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border: 1px solid rgba(0, 210, 255, 0.4);
+  border-radius: 7px;
+  background: rgba(0, 210, 255, 0.12);
+  color: #70e2ff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.voice-btn:hover {
+  background: rgba(0, 210, 255, 0.24);
+  border-color: #00d2ff;
+  color: #ffffff;
+}
+.voice-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1.4;
+  animation: fadeIn .18s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sine-1, .sine-2, .wave-particle, .ring-1, .ring-2, .ring-3, .ring-core, .mic-btn.is-listening {
+    animation: none !important;
+  }
+}
+
+/* ============================================================
    11. REUSABLE RICH MESSAGE COMPONENTS
    Styled for structured payloads. The current API sends text +
    slots only, so the live thread uses the quote-card above.
@@ -1198,6 +1399,10 @@ body.widget-mode.is-minimized .launcher { display: flex; animation: rise .2s eas
           <svg class="icon" aria-hidden="true"><use href="#i-compose"></use></svg>
           <span class="new-chat-label">New chat</span>
         </button>
+        <button class="icon-btn" type="button" id="speakerToggle" onclick="toggleMute()" aria-label="Mute voice" title="Voice audio on/off" data-tip="Voice">
+          <svg class="icon icon-volume" aria-hidden="true"><use href="#i-volume"></use></svg>
+          <svg class="icon icon-volume-x" aria-hidden="true"><use href="#i-volume-x"></use></svg>
+        </button>
         <button class="icon-btn" type="button" id="themeToggle" onclick="toggleTheme()" aria-label="Switch to light mode" title="Switch to light mode" data-tip="Theme">
           <svg class="icon icon-sun" aria-hidden="true"><use href="#i-sun"></use></svg>
           <svg class="icon icon-moon" aria-hidden="true"><use href="#i-moon"></use></svg>
@@ -1229,6 +1434,39 @@ body.widget-mode.is-minimized .launcher { display: flex; animation: rise .2s eas
           </button>
         </div>
 
+        <div id="voiceBar" class="voice-bar" hidden aria-live="polite">
+          <div class="voice-anim-wrap">
+            <div class="voice-anim voice-wave-box" id="voiceWaveBox" aria-hidden="true">
+              <svg class="voice-wave-svg" viewBox="0 0 280 44" preserveAspectRatio="none">
+                <path class="sine-line sine-1" d="M-70,22 C-35,6 0,38 35,22 C70,6 105,38 140,22 C175,6 210,38 245,22 C280,6 315,38 350,22" />
+                <path class="sine-line sine-2" d="M-70,22 C-35,36 0,8 35,22 C70,36 105,8 140,22 C175,36 210,8 245,22 C280,36 315,8 350,22" />
+                <circle class="wave-particle p1" cx="35" cy="22" r="2.2" />
+                <circle class="wave-particle p2" cx="95" cy="22" r="1.8" />
+                <circle class="wave-particle p3" cx="155" cy="22" r="2.4" />
+                <circle class="wave-particle p4" cx="215" cy="22" r="1.8" />
+                <circle class="wave-particle p5" cx="265" cy="22" r="2.0" />
+              </svg>
+            </div>
+            <div class="voice-anim voice-rings-box" id="voiceRingsBox" aria-hidden="true">
+              <svg class="voice-rings-svg" viewBox="0 0 72 72">
+                <circle class="ring-core" cx="36" cy="36" r="4.5" />
+                <circle class="ring ring-1" cx="36" cy="36" r="10" />
+                <circle class="ring ring-2" cx="36" cy="36" r="18" />
+                <circle class="ring ring-3" cx="36" cy="36" r="26" />
+              </svg>
+            </div>
+          </div>
+          <div class="voice-copy">
+            <span class="voice-label" id="voiceLabel">Listening…</span>
+            <span class="voice-sub" id="voiceSub">Auto-sends 2-3s after speaking</span>
+          </div>
+          <button type="button" class="voice-btn" id="voiceActionBtn" onclick="handleVoiceBarBtn()">
+            <span>Stop</span>
+          </button>
+        </div>
+
+        <div id="voiceHint" class="voice-hint" hidden role="status"></div>
+
         <form class="composer-form" onsubmit="return send(event)" autocomplete="off">
           <button type="button" class="composer-btn attach-btn" onclick="pickDesignFile()" aria-label="Attach design file" title="Attach design file">
             <svg class="icon" aria-hidden="true"><use href="#i-clip"></use></svg>
@@ -1236,6 +1474,9 @@ body.widget-mode.is-minimized .launcher { display: flex; animation: rise .2s eas
           <input type="file" id="designFileInput" hidden accept=".png,.jpg,.jpeg,.webp,.pdf,.ai,.eps,.zip" onchange="uploadDesign(this.files[0]); this.value = '';">
           <label class="sr-only" for="q">Message Print247</label>
           <textarea id="q" name="message" rows="1" placeholder="Tell us what you're packing…" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" spellcheck="true"></textarea>
+          <button type="button" class="composer-btn mic-btn" id="micBtn" onclick="toggleVoice()" aria-label="Start voice input" title="Voice input">
+            <svg class="icon icon-mic" aria-hidden="true"><use href="#i-mic"></use></svg>
+          </button>
           <button class="send" id="sendBtn" type="submit" aria-label="Send message" disabled>
             <svg class="icon send-icon" aria-hidden="true"><use href="#i-up"></use></svg>
             <span class="send-spinner" aria-hidden="true"></span>
@@ -1332,6 +1573,19 @@ body.widget-mode.is-minimized .launcher { display: flex; animation: rise .2s eas
   <symbol id="i-retry" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 9A7 7 0 0 1 18.7 7.3L20 12M4 12l1.3 4.7A7 7 0 0 0 17.9 15"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.4 4.4L19 7"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24">
+    <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+    <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8"/>
+  </symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24">
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+    <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+  </symbol>
+  <symbol id="i-volume-x" viewBox="0 0 24 24">
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+    <line x1="22" y1="9" x2="16" y2="15"/>
+    <line x1="16" y1="9" x2="22" y2="15"/>
+  </symbol>
 </svg>
 
 <!--
@@ -1387,6 +1641,13 @@ const unreadBadge = document.getElementById('unreadBadge');
 const themeToggle = document.getElementById('themeToggle');
 const themeMeta = document.getElementById('themeColor');
 const toastEl = document.getElementById('toast');
+const micBtn = document.getElementById('micBtn');
+const speakerToggle = document.getElementById('speakerToggle');
+const voiceBar = document.getElementById('voiceBar');
+const voiceLabel = document.getElementById('voiceLabel');
+const voiceSub = document.getElementById('voiceSub');
+const voiceActionBtn = document.getElementById('voiceActionBtn');
+const voiceHint = document.getElementById('voiceHint');
 
 // Session ids must be unique per visitor from the FIRST load: the
 // old 'web-ui' fallback gave every first-time visitor (and every
@@ -1687,6 +1948,395 @@ function addError(text, quote, row) {
   insert(html, true);
 }
 
+/* ============================================================
+   VOICE MODE (Browser SpeechRecognition & SpeechSynthesis)
+   Free browser APIs only. Zero external dependencies.
+   ============================================================ */
+const hasSpeechRec = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+const hasSpeechSyn = typeof window !== 'undefined' && ('speechSynthesis' in window);
+
+// Persisted mute state in localStorage
+let voiceMuted = false;
+try {
+  voiceMuted = localStorage.getItem('p247_voice_muted') === '1';
+} catch (e) { voiceMuted = false; }
+
+function applyMuteUI() {
+  document.body.classList.toggle('voice-muted', voiceMuted);
+  if (speakerToggle) {
+    const label = voiceMuted ? 'Unmute voice' : 'Mute voice';
+    speakerToggle.setAttribute('aria-label', label);
+    speakerToggle.title = label;
+    speakerToggle.setAttribute('data-tip', voiceMuted ? 'Unmute' : 'Mute');
+  }
+}
+applyMuteUI();
+
+function toggleMute() {
+  voiceMuted = !voiceMuted;
+  try {
+    localStorage.setItem('p247_voice_muted', voiceMuted ? '1' : '0');
+  } catch (e) {}
+  applyMuteUI();
+  if (voiceMuted) stopSpeaking();
+}
+
+// Graceful hiding: hide buttons silently if API unsupported
+if (!hasSpeechRec && micBtn) {
+  micBtn.hidden = true;
+  micBtn.style.display = 'none';
+}
+if (!hasSpeechSyn && speakerToggle) {
+  speakerToggle.hidden = true;
+  speakerToggle.style.display = 'none';
+}
+
+let voiceHintTimeout = null;
+function showVoiceHint(msg) {
+  if (!voiceHint) return;
+  if (voiceHintTimeout) clearTimeout(voiceHintTimeout);
+  voiceHint.textContent = msg;
+  voiceHint.hidden = false;
+  voiceHintTimeout = setTimeout(() => {
+    voiceHint.hidden = true;
+  }, 4500);
+}
+function clearVoiceHint() {
+  if (voiceHint) voiceHint.hidden = true;
+  if (voiceHintTimeout) { clearTimeout(voiceHintTimeout); voiceHintTimeout = null; }
+}
+
+function showVoiceBar(mode) {
+  if (!voiceBar) return;
+  voiceBar.dataset.mode = mode;
+  voiceBar.hidden = false;
+  if (mode === 'listening') {
+    if (voiceLabel) voiceLabel.textContent = 'Listening…';
+    if (voiceSub) voiceSub.textContent = 'Auto-sends 2-3s after pause';
+    if (voiceActionBtn) voiceActionBtn.firstElementChild.textContent = 'Stop';
+  } else if (mode === 'speaking') {
+    if (voiceLabel) voiceLabel.textContent = 'Print247 speaking…';
+    if (voiceSub) voiceSub.textContent = 'Tap to stop or mute';
+    if (voiceActionBtn) voiceActionBtn.firstElementChild.textContent = 'Stop';
+  }
+}
+
+function hideVoiceBar() {
+  if (!voiceBar) return;
+  voiceBar.hidden = true;
+  delete voiceBar.dataset.mode;
+}
+
+function handleVoiceBarBtn() {
+  if (isListening) {
+    stopListening(false);
+  } else if (isSpeaking) {
+    stopSpeaking();
+  } else {
+    hideVoiceBar();
+  }
+}
+
+/* ---------- Text-to-Speech (SpeechSynthesis) ---------- */
+let isSpeaking = false;
+let speechHeartbeat = null;
+
+function pickFemaleVoice() {
+  if (!hasSpeechSyn) return null;
+  const list = window.speechSynthesis.getVoices() || [];
+  if (!list.length) return null;
+
+  // 1. "Google US English"
+  let match = list.find(v => v.name === 'Google US English');
+  if (match) return match;
+
+  // 2. "Samantha"
+  match = list.find(v => v.name === 'Samantha');
+  if (match) return match;
+
+  // 3. any en-US voice whose name contains "Female"/"Samantha"/"Zira"/"Aria"
+  const femalePattern = /(female|samantha|zira|aria)/i;
+  match = list.find(v => {
+    const lang = (v.lang || '').replace('_', '-').toLowerCase();
+    const isEnUS = lang === 'en-us' || lang.startsWith('en-us');
+    return isEnUS && femalePattern.test(v.name || '');
+  });
+  if (match) return match;
+
+  // Check any English voice matching female name
+  match = list.find(v => {
+    const lang = (v.lang || '').toLowerCase();
+    return lang.startsWith('en') && femalePattern.test(v.name || '');
+  });
+  if (match) return match;
+
+  // 4. Fallback to default en-US voice
+  match = list.find(v => {
+    const lang = (v.lang || '').replace('_', '-').toLowerCase();
+    return lang === 'en-us' || lang.startsWith('en-us');
+  });
+  if (match) return match;
+
+  // Fallback to any en voice
+  match = list.find(v => (v.lang || '').toLowerCase().startsWith('en'));
+  if (match) return match;
+
+  return list.find(v => v.default) || list[0];
+}
+
+if (hasSpeechSyn && window.speechSynthesis.onvoiceschanged !== undefined) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    pickFemaleVoice();
+  };
+}
+
+function cleanTextForSpeech(text) {
+  if (!text) return '';
+  let s = String(text);
+  // Remove markdown images: ![alt](url)
+  s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, '');
+  // Replace markdown links [label](url) with label
+  s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  // Remove standalone URLs
+  s = s.replace(/https?:\/\/\S+/gi, '');
+  // Remove code blocks
+  s = s.replace(/```[\s\S]*?```/g, '');
+  // Remove inline code backticks
+  s = s.replace(/`([^`]+)`/g, '$1');
+  // Remove HTML tags
+  s = s.replace(/<[^>]+>/g, '');
+  // Remove markdown headers
+  s = s.replace(/^#{1,6}\s+/gm, '');
+  // Remove blockquotes
+  s = s.replace(/^>\s+/gm, '');
+  // Remove bullet points / numbered lists markers at line beginnings
+  s = s.replace(/^\s*[-*+•]\s+/gm, '');
+  s = s.replace(/^\s*\d+\.\s+/gm, '');
+  // Remove bold / italic markers (*, _, **, __)
+  s = s.replace(/(\*\*|__)(.*?)\1/g, '$2');
+  s = s.replace(/(\*|_)(.*?)\1/g, '$2');
+  // Remove strikethrough
+  s = s.replace(/~~(.*?)~~/g, '$1');
+  // Clean special characters
+  s = s.replace(/[#*_~|`]/g, '');
+  // Replace multiple newlines or spaces with single space
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+function stopSpeaking() {
+  if (speechHeartbeat) { clearInterval(speechHeartbeat); speechHeartbeat = null; }
+  if (hasSpeechSyn) {
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+  }
+  isSpeaking = false;
+  if (voiceBar && voiceBar.dataset.mode === 'speaking') {
+    hideVoiceBar();
+  }
+}
+
+function speakBotReply(text) {
+  if (voiceMuted || !hasSpeechSyn || isListening) return;
+  stopSpeaking();
+  const clean = cleanTextForSpeech(text);
+  if (!clean) return;
+
+  const voice = pickFemaleVoice();
+  // Split into sentence chunks to prevent browser speech timeout on long replies
+  const sentences = clean.match(/[^.!?\n]+[.!?]+|[^.!?\n]+$/g) || [clean];
+  const utterances = sentences.map(s => s.trim()).filter(Boolean);
+  if (!utterances.length) return;
+
+  isSpeaking = true;
+  showVoiceBar('speaking');
+
+  utterances.forEach((sentence, idx) => {
+    const u = new SpeechSynthesisUtterance(sentence);
+    u.lang = 'en-US';
+    if (voice) u.voice = voice;
+    u.rate = 0.98; // Natural, never robotic-fast
+    u.pitch = 1.0;
+
+    if (idx === utterances.length - 1) {
+      u.onend = () => {
+        isSpeaking = false;
+        if (voiceBar && voiceBar.dataset.mode === 'speaking') hideVoiceBar();
+        if (speechHeartbeat) { clearInterval(speechHeartbeat); speechHeartbeat = null; }
+      };
+    }
+    u.onerror = () => {
+      if (idx === utterances.length - 1 || !window.speechSynthesis.speaking) {
+        isSpeaking = false;
+        if (voiceBar && voiceBar.dataset.mode === 'speaking') hideVoiceBar();
+        if (speechHeartbeat) { clearInterval(speechHeartbeat); speechHeartbeat = null; }
+      }
+    };
+    window.speechSynthesis.speak(u);
+  });
+
+  // Chromium keep-alive heartbeat
+  if (speechHeartbeat) clearInterval(speechHeartbeat);
+  speechHeartbeat = setInterval(() => {
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.resume();
+    } else {
+      clearInterval(speechHeartbeat);
+      speechHeartbeat = null;
+    }
+  }, 5000);
+}
+
+/* ---------- Speech Recognition (Speech-to-Text) ---------- */
+let recognition = null;
+let isListening = false;
+let autoSendTimer = null;
+let baseInputText = '';
+
+function clearAutoSendTimer() {
+  if (autoSendTimer) {
+    clearTimeout(autoSendTimer);
+    autoSendTimer = null;
+  }
+}
+
+function scheduleAutoSend(delayMs) {
+  clearAutoSendTimer();
+  autoSendTimer = setTimeout(() => {
+    // 2-3s silence elapsed
+    if (isListening) {
+      stopListening(false);
+      if (q.value.trim() && !busy) {
+        send(new Event('submit'));
+      }
+    }
+  }, delayMs || 2500);
+}
+
+function initSpeechRecognition() {
+  if (!hasSpeechRec) return null;
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SpeechRec();
+  rec.lang = 'en-US';
+  rec.interimResults = true;
+  rec.continuous = true;
+  rec.maxAlternatives = 1;
+
+  rec.onresult = (event) => {
+    clearVoiceHint();
+    let finalChunk = '';
+    let interimChunk = '';
+    for (let i = 0; i < event.results.length; ++i) {
+      const res = event.results[i];
+      if (res.isFinal) {
+        finalChunk += res[0].transcript;
+      } else {
+        interimChunk += res[0].transcript;
+      }
+    }
+    const combinedSpoken = (finalChunk + interimChunk).trimStart();
+    const updated = baseInputText + combinedSpoken;
+    q.value = updated;
+    grow();
+    syncSendState();
+
+    if (q.value.trim()) {
+      scheduleAutoSend(2500);
+      if (voiceSub) voiceSub.textContent = 'Pause to auto-send, or tap Send';
+    }
+  };
+
+  rec.onspeechstart = () => {
+    clearAutoSendTimer();
+    if (voiceSub) voiceSub.textContent = 'Listening…';
+  };
+
+  rec.onspeechend = () => {
+    if (q.value.trim()) {
+      scheduleAutoSend(2500);
+    }
+  };
+
+  rec.onerror = (e) => {
+    stopListening(false);
+    if (e.error === 'no-speech') {
+      showVoiceHint('No speech detected. Tap mic to try again.');
+    } else if (e.error === 'not-allowed' || e.error === 'permission-denied') {
+      showVoiceHint('Microphone access blocked. Allow mic permissions to speak.');
+    } else if (e.error === 'audio-capture') {
+      showVoiceHint('No microphone found. Please check your audio inputs.');
+    } else if (e.error === 'network') {
+      showVoiceHint('Voice recognition network issue. Please try again.');
+    } else if (e.error !== 'aborted') {
+      showVoiceHint('Voice input paused. Tap mic to try again.');
+    }
+  };
+
+  rec.onend = () => {
+    if (isListening) {
+      if (!autoSendTimer) {
+        stopListening(false);
+      }
+    }
+  };
+
+  return rec;
+}
+
+function startListening() {
+  if (!hasSpeechRec) return;
+  stopSpeaking(); // Never speak while user is speaking!
+  clearVoiceHint();
+  clearAutoSendTimer();
+
+  baseInputText = q.value ? (q.value.trimEnd() + ' ') : '';
+
+  try {
+    if (!recognition) recognition = initSpeechRecognition();
+    recognition.start();
+    isListening = true;
+    if (micBtn) {
+      micBtn.classList.add('is-listening');
+      micBtn.setAttribute('aria-label', 'Stop voice input');
+      micBtn.title = 'Stop voice input';
+    }
+    showVoiceBar('listening');
+  } catch (err) {
+    isListening = false;
+    if (micBtn) {
+      micBtn.classList.remove('is-listening');
+      micBtn.setAttribute('aria-label', 'Start voice input');
+      micBtn.title = 'Voice input';
+    }
+    hideVoiceBar();
+    showVoiceHint('Could not start microphone. Tap to try again.');
+  }
+}
+
+function stopListening(autoSend) {
+  clearAutoSendTimer();
+  isListening = false;
+  if (micBtn) {
+    micBtn.classList.remove('is-listening');
+    micBtn.setAttribute('aria-label', 'Start voice input');
+    micBtn.title = 'Voice input';
+  }
+  if (voiceBar && voiceBar.dataset.mode === 'listening') {
+    hideVoiceBar();
+  }
+  if (recognition) {
+    try { recognition.stop(); } catch (e) {}
+  }
+}
+
+function toggleVoice() {
+  if (isListening) {
+    // Tapping again stops/cancels
+    stopListening(false);
+  } else {
+    startListening();
+  }
+}
+
 /* ---------- send flow (same endpoint + payload) ---------- */
 async function deliver(text, quote, token) {
   try {
@@ -1701,6 +2351,7 @@ async function deliver(text, quote, token) {
     if (token !== requestToken) return;
     removeTyping();
     addBot(d.reply, d.suggestions || [], d.sources || [], undefined, d);
+    speakBotReply(d.reply);
   } catch (err) {
     if (token !== requestToken) return;
     removeTyping();
@@ -1715,6 +2366,9 @@ async function deliver(text, quote, token) {
 }
 async function send(e) {
   if (e && e.preventDefault) e.preventDefault();
+  clearAutoSendTimer();
+  stopListening(false);
+  stopSpeaking();
   const t = q.value.trim();
   if (!t || busy) return false;
   const quote = pendingReply;
@@ -1732,6 +2386,9 @@ async function send(e) {
 }
 async function retrySend(button, text, quote) {
   if (busy) return;
+  clearAutoSendTimer();
+  stopListening(false);
+  stopSpeaking();
   const token = ++requestToken;
   const row = button.closest('.row');
   if (row) row.remove();
@@ -1756,7 +2413,15 @@ function syncSendState() {
   btn.disabled = busy || !q.value.trim();
   btn.setAttribute('aria-busy', busy ? 'true' : 'false');
 }
-q.addEventListener('input', () => { grow(); syncSendState(); });
+q.addEventListener('input', () => {
+  grow();
+  syncSendState();
+  clearVoiceHint();
+  if (isListening) {
+    baseInputText = q.value;
+    scheduleAutoSend(3000);
+  }
+});
 q.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
@@ -1823,6 +2488,10 @@ function greet() {
   scrollBtn.classList.remove('show');
 }
 function newChat() {
+  clearAutoSendTimer();
+  stopListening(false);
+  stopSpeaking();
+  clearVoiceHint();
   sessionId = createSessionId();
   try { localStorage.setItem('p247_session', sessionId); } catch (e) {}
   requestToken += 1;

@@ -150,6 +150,39 @@ def says_they_do_not_know(text: str) -> bool:
     return bool(_DOES_NOT_KNOW.search(value))
 
 
+_INDECISION_PATTERN = re.compile(
+    r"\b(?:"
+    r"(?:can'?t|cannot|unable to|hard to|difficult to)\s+(?:decide|choose|pick)"
+    r"|(?:not|never)\s+(?:in a state|able)\s+to\s+(?:decide|choose)"
+    r"|help(?:\s+me)?\s+(?:decide|choose|pick)"
+    r"|confus\w*"
+    r"|(?:torn|stuck)\s+between"
+    r"|(?:don'?t|do not)\s+know\s+(?:which|what|how)"
+    r"|(?:not|not really)\s+sure\s+(?:which|what|how|about)"
+    r"|(?:what|which)\b[^.?!]{0,35}?\b(?:do\s+you|would\s+you|should\s+i|to)\s+(?:suggest|recommend|advise|pick|choose)"
+    r"|(?:what|which)(?:\s+[a-z-]+)?\s+(?:is|would be|'s)\s+(?:the\s+)?(?:best|better|recommended|suggested|popular|common|standard)"
+    r"|(?:any|give\s+me\s+a?|got\s+any)\s+(?:suggestion|recommendation|advice)"
+    r"|what\s+do\s+you\s+(?:think|suggest|recommend)"
+    r"|what\s+(?:should|can)\s+i\s+(?:pick|choose|go with|get)"
+    r"|which\s+(?:one\s+)?(?:is|are)\s+best"
+    r"|what(?:'s|\s+is)\s+the\s+difference|how\s+do\s+(?:they|these)\s+differ"
+    r"|no idea|not sure|unsure|no clue|don'?t know|do not know|dunno|idk|not decided|haven'?t decided|undecided|not yet decided|you tell me|up to you|your call|whatever you (?:recommend|suggest|think)"
+    r")\b",
+    re.IGNORECASE
+)
+
+
+def is_indecision_intent(text: str | None) -> bool:
+    """True when the message expresses inability to choose, confusion,
+    or asks for a suggestion/recommendation at a pending field."""
+    value = (text or "").strip()
+    if not value:
+        return False
+    if re.search(r"\b(?:maybe|perhaps|around|about)\s+\d", value, re.IGNORECASE):
+        return False
+    return bool(_INDECISION_PATTERN.search(value))
+
+
 def says_nothing_useful(text: str) -> bool:
     """Gibberish guard: >=3 words, no word >=4 letters, >=60% of words
     <=2 letters, no digits, no '@', and not a question."""

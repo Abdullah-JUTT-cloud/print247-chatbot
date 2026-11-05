@@ -96,13 +96,18 @@ _SIZE = re.compile(
 # length"). Stored WITH its labels + unit, never bare NxM: a bare
 # "10x6" never says which number is the length, and the rep (or the
 # confirmation) would have to guess (Oct 30).
+_DIM_WORDS = r"(?:length|long|width|wide|height|tall|high|depth|deep)"
+_DIM_CANON = {
+    "length": "length", "long": "length",
+    "width": "width", "wide": "width",
+    "height": "height", "tall": "height", "high": "height",
+    "depth": "depth", "deep": "depth",
+}
 _LW = re.compile(
-    r"\b(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:length|long)\b"
+    r"\b(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(" + _DIM_WORDS + r")\b"
     r"\s*(?:and|,)?\s*"
-    r"(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:width|wide)\b"
-    r"|\b(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:width|wide)\b"
-    r"\s*(?:and|,)?\s*"
-    r"(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(?:length|long)\b",
+    r"(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(" + _DIM_WORDS + r")\b"
+    r"(?:\s*(?:and|,)?\s*(\d+(?:\.\d+)?)\s*-?\s*(inches?|in\b|mm|cm)?\s*(" + _DIM_WORDS + r")\b)?",
     re.IGNORECASE)
 _UNIT_WORD = {"in": " inches", "inch": " inches", "inches": " inches",
               "mm": " mm", "cm": " cm"}
@@ -168,15 +173,16 @@ def _lw_size(low: str) -> str | None:
     m = _LW.search(low)
     if not m:
         return None
-    gs = m.groups()
-    if gs[0] is not None:
-        n1, u1, n2, u2 = gs[0], gs[1], gs[2], gs[3]
-        labels = ("length", "width")
-    else:
-        n1, u1, n2, u2 = gs[4], gs[5], gs[6], gs[7]
-        labels = ("width", "length")
-    unit = _UNIT_WORD.get((u1 or u2 or "").lower().strip(), "")
-    return f"{n1} {labels[0]} x {n2} {labels[1]}{unit}"
+    n1, u1, d1, n2, u2, d2, n3, u3, d3 = m.groups()
+    c1 = _DIM_CANON.get(d1.lower()) if d1 else None
+    c2 = _DIM_CANON.get(d2.lower()) if d2 else None
+    c3 = _DIM_CANON.get(d3.lower()) if d3 else None
+    if not c1 or not c2 or c1 == c2:
+        return None
+    unit = _UNIT_WORD.get((u1 or u2 or u3 or "").lower().strip(), "")
+    if n3 and c3 and c3 not in (c1, c2):
+        return f"{n1} {c1} x {n2} {c2} x {n3} {c3}{unit}"
+    return f"{n1} {c1} x {n2} {c2}{unit}"
 # A rejected option must never be stored as the choice: "not matte"
 # stored matte, "without zipper" stored zipper. The negation is
 # checked right before the label, so "zipper, no window" still keeps
