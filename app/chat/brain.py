@@ -37,6 +37,7 @@ persist). A missing database must never break a visitor's chat.
 """
 import os
 import re
+from typing import Any
 
 from . import guards
 from .attempts import (MAX_ASKS, apply_ask_outcome, ask_outcome, asks_what_is_usual,
