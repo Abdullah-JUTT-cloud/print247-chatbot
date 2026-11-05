@@ -19,6 +19,43 @@ IMAGE_EXTS = {"png", "jpg", "jpeg", "webp"}
 MAX_BYTES = 10 * 1024 * 1024
 
 
+def get_upload_dir() -> str:
+    """Return the base directory for uploads.
+    Uses UPLOAD_DIR env if set, /tmp/uploads on VERCEL or read-only filesystems,
+    or 'uploads' locally/Docker.
+    """
+    if "UPLOAD_DIR" in os.environ:
+        return os.environ["UPLOAD_DIR"]
+    if os.environ.get("VERCEL"):
+        return "/tmp/uploads"
+    try:
+        os.makedirs("uploads", exist_ok=True)
+        test_file = os.path.join("uploads", ".write_test")
+        with open(test_file, "w") as f:
+            f.write("ok")
+        os.remove(test_file)
+        return "uploads"
+    except Exception:
+        return "/tmp/uploads"
+
+
+def format_file_size(size_bytes: int) -> str:
+    """Format byte size into human readable string, e.g. '11MB', '10.5MB', '500KB'."""
+    mb = size_bytes / (1024 * 1024)
+    if mb >= 1:
+        r = round(mb, 1)
+        if r == int(r):
+            return f"{int(r)}MB"
+        return f"{r}MB"
+    kb = size_bytes / 1024
+    if kb >= 1:
+        r = round(kb, 1)
+        if r == int(r):
+            return f"{int(r)}KB"
+        return f"{r}KB"
+    return f"{size_bytes}B"
+
+
 def validate_upload(filename: str, size: int) -> str | None:
     """Error message, or None when the file is acceptable."""
     name = (filename or "").strip()
@@ -26,10 +63,10 @@ def validate_upload(filename: str, size: int) -> str | None:
         return "No file was attached."
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext not in ALLOWED_EXTS:
-        return ("That file type is not supported — please send a PNG, "
-                "JPG, PDF, AI, EPS or ZIP file.")
+        detected = ext.upper() if ext else "unknown"
+        return f"This file is {detected}, allowed types are PNG, JPG, PDF, AI, EPS, ZIP"
     if size > MAX_BYTES:
-        return "That file is over 10MB — please send a smaller file."
+        return f"This file is {format_file_size(size)}, the limit is 10MB"
     return None
 
 
@@ -43,12 +80,13 @@ def safe_filename(filename: str) -> str:
     return f"{uuid.uuid4().hex[:8]}-{base}"
 
 
-def save_upload(base_dir: str, session_id: str, filename: str,
-                data: bytes) -> str:
+def save_upload(base_dir: str | None = None, session_id: str = "web-ui", filename: str = "design",
+                data: bytes = b"") -> str:
     """Write the file, return the stored name (meta keeps the name,
     never a path the visitor could walk)."""
+    base = base_dir or get_upload_dir()
     sid = re.sub(r"[^A-Za-z0-9_-]+", "_", session_id or "web-ui") or "web-ui"
-    folder = os.path.join(base_dir, sid)
+    folder = os.path.join(base, sid)
     os.makedirs(folder, exist_ok=True)
     stored = safe_filename(filename)
     with open(os.path.join(folder, stored), "wb") as fh:
@@ -56,7 +94,7 @@ def save_upload(base_dir: str, session_id: str, filename: str,
     return stored
 
 
-def resolve_image(base_dir: str, session_id: str, name: str) -> str | None:
+def resolve_image(base_dir: str | None = None, session_id: str = "web-ui", name: str = "") -> str | None:
     """Disk path of a stored design IMAGE for the chat to show, or
     None. The name must be exactly a stored basename (the uuid
     prefix save_upload wrote) with an image extension, and the
@@ -68,8 +106,9 @@ def resolve_image(base_dir: str, session_id: str, name: str) -> str | None:
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext not in IMAGE_EXTS:
         return None
+    base = base_dir or get_upload_dir()
     sid = re.sub(r"[^A-Za-z0-9_-]+", "_", session_id or "web-ui") or "web-ui"
-    folder = os.path.realpath(os.path.join(base_dir, sid))
+    folder = os.path.realpath(os.path.join(base, sid))
     path = os.path.realpath(os.path.join(folder, name))
     if not path.startswith(folder + os.sep):
         return None

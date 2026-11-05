@@ -50,7 +50,7 @@ from .admin_auth import (COOKIE, admin_config, check_credentials,
 from .chat.brain import handle_message
 from .chat.monitoring import (learned_facts_html, monitoring_html,
                               summarize_turns, turn_flags)
-from .chat.uploads import resolve_image, save_upload, validate_upload
+from .chat.uploads import get_upload_dir, resolve_image, save_upload, validate_upload
 from .chat.vision import IMAGE_MIMES, describe_image, openai_vision_fn
 from .chat.store import get_store
 from .web import ADMIN_HTML, CHAT_HTML
@@ -328,53 +328,61 @@ async def chat_upload(request: Request):
     never breaks the chat; the quote continues without it. The
     upload is also logged to chat_logs so a refresh restores the
     vision message like any other bot reply."""
-    form = await request.form()
-    session_id = (form.get("session_id") or "web-ui") or "web-ui"
-    up = form.get("file")
-    if up is None or not hasattr(up, "read"):
-        return {"ok": False, "detail": "No file was attached."}
-    data = await up.read()
-    err = validate_upload(getattr(up, "filename", "") or "", len(data))
-    if err:
-        return {"ok": False, "detail": err}
-    filename = getattr(up, "filename", "") or "design"
-    mime = (getattr(up, "content_type", "") or "").lower()
-    stored = save_upload("uploads", str(session_id), filename, data)
-    desc = None
-    if mime in IMAGE_MIMES:
-        desc = describe_image(data, mime, llm_fn=openai_vision_fn)
-    _files = []
     try:
-        if _store is not None:
-            meta = _store.load_meta(str(session_id)) or {}
-            files = meta.get("design_files") or []
-            files.append({"name": filename, "mime": mime,
-                          "description": desc})
-            meta["design_files"] = files
-            _store.save_meta(str(session_id), meta)
-            _files = files
-    except Exception:
-        pass
-    if desc:
-        msg = f"Here's what I can see in your design: {desc}"
-    else:
-        msg = "Thanks — I've saved your design file with this quote."
-    # Oct 31 transcript: a second file uploaded after confirmation
-    # got only its vision description — nobody said it was added
-    # to the quote, so the visitor had to ask. From the second file
-    # on, name the whole attached set out loud.
-    if len(_files) >= 2:
-        _names = ", ".join(f.get("name", "design file") for f in _files)
-        msg += (f" Your quote now has {len(_files)} design files "
-                f"attached: {_names}.")
-    # The log row carries the STORED name (uuid prefix), not the
-    # original: history restore rebuilds the image URL from it, and
-    # the original name stays in meta for the confirmation note.
-    _log_chat(f"[design file uploaded: {stored}]", str(session_id),
-              {"reply": msg, "sources": [], "suggestions": [],
-               "handoff": None, "llm_used": bool(desc), "language": "en"})
-    return {"ok": True, "file": filename, "stored": stored,
-            "description": desc, "reply": msg}
+        form = await request.form()
+        session_id = (form.get("session_id") or "web-ui") or "web-ui"
+        up = form.get("file")
+        if up is None or not hasattr(up, "read"):
+            return {"ok": False, "detail": "No file was attached."}
+        data = await up.read()
+        filename = getattr(up, "filename", "") or "design"
+        err = validate_upload(filename, len(data))
+        if err:
+            return {"ok": False, "detail": err}
+        mime = (getattr(up, "content_type", "") or "").lower()
+        upload_dir = get_upload_dir()
+        stored = save_upload(upload_dir, str(session_id), filename, data)
+        desc = None
+        if mime in IMAGE_MIMES:
+            desc = describe_image(data, mime, llm_fn=openai_vision_fn)
+        _files = []
+        try:
+            if _store is not None:
+                meta = _store.load_meta(str(session_id)) or {}
+                files = meta.get("design_files") or []
+                # Dedupe: same file attached twice in a row is not duplicated in meta
+                if not (files and files[-1].get("name") == filename):
+                    files.append({"name": filename, "mime": mime,
+                                  "description": desc})
+                    meta["design_files"] = files
+                    _store.save_meta(str(session_id), meta)
+                _files = files
+        except Exception:
+            pass
+        if desc:
+            msg = f"Here's what I can see in your design: {desc}"
+        else:
+            msg = "Thanks — I've saved your design file with this quote."
+        # Oct 31 transcript: a second file uploaded after confirmation
+        # got only its vision description — nobody said it was added
+        # to the quote, so the visitor had to ask. From the second file
+        # on, name the whole attached set out loud.
+        if len(_files) >= 2:
+            _names = ", ".join(f.get("name", "design file") for f in _files)
+            msg += (f" Your quote now has {len(_files)} design files "
+                    f"attached: {_names}.")
+        # The log row carries the STORED name (uuid prefix), not the
+        # original: history restore rebuilds the image URL from it, and
+        # the original name stays in meta for the confirmation note.
+        _log_chat(f"[design file uploaded: {stored}]", str(session_id),
+                  {"reply": msg, "sources": [], "suggestions": [],
+                   "handoff": None, "llm_used": bool(desc), "language": "en"})
+        return {"ok": True, "file": filename, "stored": stored,
+                "description": desc, "reply": msg}
+    except Exception as exc:
+        import logging
+        logging.getLogger("chat_upload").exception("Upload failed: %s", exc)
+        return {"ok": False, "detail": "Upload failed, please try again"}
 
 
 @app.get("/api/chat/file")
@@ -383,7 +391,7 @@ def chat_file(session_id: str, name: str):
     visitor sees the picture they sent instead of only its name.
     Images only (never AI/EPS/ZIP), and only inside the session's
     own folder — resolve_image refuses traversal names outright."""
-    path = resolve_image("uploads", session_id or "web-ui", name or "")
+    path = resolve_image(get_upload_dir(), session_id or "web-ui", name or "")
     if path is None:
         return {"ok": False, "detail": "File not found."}
     media = {"png": "image/png", "jpg": "image/jpeg",

@@ -1901,6 +1901,7 @@ function addMe(t, quote, stamp) {
     `<div class="bubble">${quoted}${esc(t)}</div>` +
     `<div class="msg-meta">${stampHTML(stamp)}</div></div></div>`;
   insert(html, true);
+  return log.lastElementChild;
 }
 function isDesignImageName(name) {
   return /\.(png|jpe?g|webp)$/i.test(name || '');
@@ -2542,37 +2543,99 @@ function pickDesignFile() {
   const inp = document.getElementById('designFileInput');
   if (inp) inp.click();
 }
+function formatFileSize(bytes) {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) {
+    const r = Math.round(mb * 10) / 10;
+    return (r === Math.floor(r) ? Math.floor(r) : r) + 'MB';
+  }
+  const kb = bytes / 1024;
+  if (kb >= 1) {
+    const r = Math.round(kb * 10) / 10;
+    return (r === Math.floor(r) ? Math.floor(r) : r) + 'KB';
+  }
+  return bytes + 'B';
+}
+
+const ALLOWED_UPLOAD_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'pdf', 'ai', 'eps', 'zip']);
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+function validateUploadClient(file) {
+  if (!file) return 'No file was attached.';
+  const name = (file.name || '').trim();
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  if (!ALLOWED_UPLOAD_EXTS.has(ext)) {
+    const detected = ext ? ext.toUpperCase() : 'unknown';
+    return `This file is ${detected}, allowed types are PNG, JPG, PDF, AI, EPS, ZIP`;
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return `This file is ${formatFileSize(file.size)}, the limit is 10MB`;
+  }
+  return null;
+}
+
+let lastAttachedFileKey = null;
+
 async function uploadDesign(file) {
   if (!file) return;
+
+  // Dedupe: the same file attached twice in a row shows ONE bubble, not two.
+  const fileKey = file.name + ':' + file.size + ':' + (file.lastModified || 0);
+  if (fileKey === lastAttachedFileKey) {
+    return;
+  }
+
+  // Client-side validation: specific error messages for size and unsupported types
+  const clientErr = validateUploadClient(file);
+  if (clientErr) {
+    addMe('Design file: ' + file.name);
+    addBot(clientErr, [], [], undefined, { error: true });
+    showToast(clientErr);
+    lastAttachedFileKey = fileKey;
+    return;
+  }
+
+  lastAttachedFileKey = fileKey;
+
   const isImg = (file.type || '').startsWith('image/') || isDesignImageName(file.name);
   const fd = new FormData();
   fd.append('session_id', sessionId);
   fd.append('file', file);
-  // Images show at once (local preview), then the src swaps to the
-  // saved server copy once the upload lands — so the picture is
-  // visible while vision is still reading it, and survives a
-  // refresh through /api/chat/file. Other files keep the text row.
+
   let row = null;
   let previewURL = null;
   if (isImg) {
     previewURL = URL.createObjectURL(file);
     row = addMeImage(file.name, previewURL);
   } else {
-    addMe('Design file: ' + file.name);
+    row = addMe('Design file: ' + file.name);
   }
+
   try {
     const r = await fetch('/api/chat/upload', { method: 'POST', body: fd });
-    const d = await r.json();
-    if (!r.ok || !d.ok) throw new Error(d.detail || 'upload failed');
+    let d = null;
+    try {
+      d = await r.json();
+    } catch (_) {}
+
+    if (!r.ok || !d || !d.ok) {
+      const errMsg = (d && d.detail) ? d.detail : 'Upload failed, please try again';
+      throw new Error(errMsg);
+    }
     if (row && d.stored) {
       const img = row.querySelector('img.design-img');
       if (img) img.src = designFileURL(d.stored);
     }
     addBot(d.reply, [], [], undefined, d);
   } catch (err) {
-    if (row) row.remove();
-    if (isImg) addMe('Design file: ' + file.name);
-    showToast('Could not upload that file — please try a PNG, JPG, PDF, AI, EPS or ZIP file under 10MB.');
+    if (isImg && row) {
+      row.remove();
+      addMe('Design file: ' + file.name);
+    }
+    const msg = (err && err.message) ? err.message : 'Upload failed, please try again';
+    addBot(msg, [], [], undefined, { error: true });
+    showToast(msg);
+    lastAttachedFileKey = null;
   } finally {
     if (previewURL) URL.revokeObjectURL(previewURL);
   }
