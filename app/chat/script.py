@@ -55,7 +55,7 @@ QUESTIONS = {
     "sizes": "What size do you need? Width x height x depth, in inches or mm.",
     # Flat products never have a depth: labels, stickers, cards,
     # banners, bags (gusset, not depth). Nov 1: the depth wording
-    # in the size question confused label visitors before any
+    # in the size question misled label visitors before any
     # depth follow-up was even possible (the follow-up itself is
     # already box-only).
     "sizes_flat": "What size do you need? Width x height, in inches or mm.",

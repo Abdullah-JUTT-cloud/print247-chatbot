@@ -426,9 +426,9 @@ def _quantity_in(text: str) -> str | None:
     cleaned = _DIM_UNIT_WITH_NUMBER.sub(" ", cleaned)
     cleaned = _NAMED_SIZE.sub(" ", cleaned)
     cleaned = _CAPACITY.sub(" ", cleaned)
-    # Gusset/third-dimension spans ("5x8+3", "6x9 + 3\" gusset")
-    # are sizes, never quantities — the shop's own "5x8+3" pouch
-    # format used to leak its 3 into quantity.
+    # Gusset/third-dimension spans ("5x8+3", "6x9 + 3\" gusset") and
+    # plus-expressions ("2+2") are sizes/hints, never quantities.
+    cleaned = re.sub(r"\b\d+(?:\.\d+)?\s*\+\s*\d+(?:\.\d+)?\b", " ", cleaned)
     cleaned = re.sub(r"\+\s*\d+(?:\.\d+)?", " ", cleaned)
     # One-way/two-way valve spans ("1 way degasing valve") are a
     # feature, never a quantity.

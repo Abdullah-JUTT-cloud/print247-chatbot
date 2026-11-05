@@ -399,7 +399,7 @@ def chat_history(session_id: str):
     instead of starting from an empty screen. A New chat uses a
     new session_id, so its history starts empty on purpose."""
     try:
-        col = _mongo_client().get_default_database()["chat_logs"]
+        col = _mongo_client()["print247_chatbot"]["chat_logs"]
         docs = list(col.find({"session_id": session_id}).sort("created_at", 1).limit(200))
         return [{"message": d.get("message"), "reply": d.get("reply", ""),
                  "sources": d.get("sources", []),

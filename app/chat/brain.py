@@ -40,7 +40,7 @@ import re
 
 from . import guards
 from .attempts import (MAX_ASKS, apply_ask_outcome, ask_outcome, asks_what_is_usual,
-                       is_indecision_intent, says_they_do_not_know, visitor_is_asking, wants_to_stop)
+                       is_indecision_intent, is_phone_refusal, says_they_do_not_know, visitor_is_asking, wants_to_stop)
 from .complete import get_chat_complete_message, when_the_team_replies
 from .erp_eligibility import quantity_is_per_design, quantity_is_total
 from .composer import fix_reply
@@ -91,6 +91,7 @@ from .size_unit import (OFFERED_UNIT_CHIPS, apply_unit_answer,
                         size_missing_unit, unit_answer, unit_question_text)
 from .slots import (_PRODUCTS, _find, attach_gusset, extract_from_message,
                      fuzzy_product, is_placeholder, merge_slots, missing_fields)
+from .understand import classify_turn
 
 # A decline of a script field ("no", "none", "no preference"): the
 # field is recorded as "none"/"1" and the script moves on, instead
@@ -204,6 +205,12 @@ def _suggestions(slots: dict, missing: list[str], reply: str = "", language: str
     if "extras" in missing:
         return ["Zipper and tear notch", "No extras"]
     if "material" in missing:
+        bullets = [b.strip().capitalize() for b in re.findall(r"[•\*\-]\s+([A-Za-z0-9 -]+?)\s*—", reply or "")]
+        if bullets:
+            return bullets + ["No preference"]
+        opts = options_for("material", slots.get("product"))
+        if opts:
+            return [o.capitalize() for o in opts[:4]] + ["No preference"]
         return ["Kraft", "No preference"]
     return [_tr("chip_moq", language, "What is the minimum order?"),
             _tr("chip_shipping", language, "Is shipping free?"),
@@ -876,7 +883,7 @@ def _same_family(a: str | None, b: str | None) -> bool:
 
 def _suggest_key_product(product: str | None) -> str | None:
     """Suggestion-map key: bag-family products answer the mylar-bag
-    entries (a fresh "which is best for coffee bags" has product
+    entries (a fresh coffee bag recommendation query has product
     "bag", but the KB-grounded answer lives under mylar bag)."""
     if product in _BAG_FAMILY:
         return "mylar bag"
@@ -1518,6 +1525,16 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # never rewrites numbers, dimensions, names, or real words.
     message = correct_query(message)
     low = message.lower().strip()
+    _pending_field = (script_missing(prior, meta) or [None])[0]
+    _clf_slots = dict(prior)
+    _clf_slots["_complete"] = bool(meta.get("complete"))
+    _clf_slots["_awaiting_contact"] = bool(meta.get("awaiting_contact"))
+    _clf = classify_turn(
+        message,
+        pending_field=_pending_field,
+        slots=_clf_slots,
+        history=meta.get("history") or [],
+    )
     # Paused ('later') or ended ('done') chats: a new message picks
     # the paused chat up where it left off, and restarts an ended one.
     if meta.get("paused"):
@@ -1801,7 +1818,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         if _is_depth_no(low) or "no gusset" in low:
             # An explicit decline: a later depth question gets the
             # general answer, not a second gusset offer. Merely
-            # bypassing the question (answering something else)
+            # bypassing the question (answering a different question)
             # does NOT decline it — the offer stays open.
             meta["gusset_declined"] = True
             _gmiss = script_missing(prior, meta)
@@ -1854,7 +1871,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
 
     # Unlisted-offer answer (Oct 30 senior transcript): "we don't
     # make tins, but labels for tins are possible". Yes starts the
-    # labels quote; "something else" (or a no) goes back to the
+    # labels quote; "different product" (or a no) goes back to the
     # product question; anything else pops and flows normally.
     _unl_state = meta.pop("unlisted_offer", None)
     if _unl_state:
@@ -1870,7 +1887,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             return _intent_result(
                 _ureply,
                 suggestions=_suggestions(prior, _umiss, _ureply, language))
-        if _is_short_no(low) or "something else" in low:
+        if _is_short_no(low) or "different product" in low:
             _uq = _next_question_text(prior, script_missing(prior, meta),
                                       language)
             meta["last_bot_question"] = _uq
@@ -1931,7 +1948,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             meta["last_bot_question"] = _ureply
             return _intent_result(
                 _ureply,
-                suggestions=[f"Labels for {_cand}", "Something else"])
+                suggestions=[f"Labels for {_cand}", "Different product"])
 
     if is_looking_for_work(message) or chat_is_a_pitch([message]):
         return _intent_result(JOB_MESSAGE if is_looking_for_work(message) else PITCH_MESSAGE,
@@ -1970,7 +1987,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # 1. Cancellation: one acknowledgement ("I understand") + future
     # follow-up line (quote stays with the team in case they change
     # their mind). Never the saved summary.
-    if is_cancellation(message) and (meta.get("complete") or not wants_to_stop(message)):
+    if (is_cancellation(message) or _clf["intent"] == "cancel") and (meta.get("complete") or not wants_to_stop(message)):
         _cancel_reply = (
             "I understand. No problem at all — your quote stays with our team "
             "in case you change your mind, and we can follow up if you ever need it."
@@ -1994,7 +2011,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "suggestions": [],
         }
     # 2. Delete: clear saved session/meta/contact and confirm once.
-    if is_delete_request(message):
+    if is_delete_request(message) or _clf["intent"] == "delete":
         _save_session(store, session_id, {})
         _save_meta(store, session_id, {})
         _SESSION_FALLBACK.pop(session_id, None)
@@ -2008,7 +2025,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # 3. Stop (after completion; mid-quote / contact stop runs after
     # extraction so a spec word in "stop, make it 500 units" still
     # extracts first).
-    if meta.get("complete") and wants_to_stop(message) and not _is_order:
+    if meta.get("complete") and (wants_to_stop(message) or _clf["intent"] == "stop") and not _is_order:
         _fcontact = meta.get("contact") or {}
         _last_bot = meta.get("last_bot_question", "")
         _sign = _tr("signoff_b", language, SIGN_OFFS[1]) \
@@ -2021,12 +2038,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "handoff": None, "llm_used": False, "suggestions": [],
                 "contact": _fcontact}
     # 4. Bye / soft dismissal ("thanks though", "bye", "goodbye").
-    if not _is_order and (is_dismissal(message) or says_bye(message)):
+    if not _is_order and (is_dismissal(message) or says_bye(message) or _clf["intent"] == "bye"):
         return _intent_result(
             BYE_ANSWER,
             contact=(meta.get("contact") or {}) if meta.get("complete") else None)
     # 5. Thanks / pleasantry.
-    if not _is_order and says_thanks(message):
+    if not _is_order and (says_thanks(message) or _clf["intent"] == "thanks"):
         if meta.get("complete"):
             _last_bot = meta.get("last_bot_question", "")
             _last_sign = _tr("signoff_b", language, SIGN_OFFS[1]) \
@@ -2049,12 +2066,12 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             _tr("signoff_a", language, SIGN_OFFS[0])
         return _intent_result(_last_sign, contact=meta.get("contact") or {})
     # 6. New order / start over.
-    _start_over = (
+    _is_explicit_restart = (
         low in ("start over", "new order", "start again", "reset",
                 "new quote", "start fresh")
         or bool(re.search(r"\b(?:start|place|make|begin)\s+(?:a\s+)?(?:new|another|fresh)\s+(?:order|quote)\b", low))
     )
-    if _start_over:
+    if _is_explicit_restart:
         _save_session(store, session_id, {})
         _save_meta(store, session_id, {})
         return {
@@ -2069,12 +2086,15 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                           "style": "style", "type": "type",
                           "design": "skus", "designs": "skus",
                           "extra": "extras", "extras": "extras"}
+    _clf_change = (_clf["intent"] == "change_field")
+    _cfield_target = _clf.get("target_field") if _clf_change else None
     _early_cm = (re.search(r"\bchange\s+(?:the\s+|my\s+)?(finish|finishes|size|sizes|quantity|material|style|type|design|designs|extra|extras)\b", low)
                  if ("?" not in message and not visitor_is_asking(message)) else None)
+    _target_cfield = _cfield_target or (_CHANGE_FIELDS_MAP.get(_early_cm.group(1)) if _early_cm else None)
     _own = _own_data_answer(message, prior, meta.get("contact") or {},
                             meta.get("design_files"))
-    _told_field = visitor_claims_already_told(message, meta.get("last_asked"))
-    if meta.get("complete") and _is_order and not _early_cm \
+    _told_field = None if _clf["intent"] == "dont_know" else visitor_claims_already_told(message, meta.get("last_asked"))
+    if meta.get("complete") and (_is_order or _clf["intent"] == "new_order") and not _early_cm \
             and _own is None and not _told_field and not is_quote_summary_request(message) \
             and not visitor_is_asking(message) and not meta.get("awaiting_contact"):
         # Reset quote state before extraction so a new order after
@@ -2098,8 +2118,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             meta["early_email_asked"] = True
     # 7. Change-field (after completion; mid-quote change-field runs
     # at line 3179 after full slot extraction).
-    if meta.get("complete") and _early_cm:
-        _cfield = _CHANGE_FIELDS_MAP[_early_cm.group(1)]
+    if meta.get("complete") and _target_cfield:
+        _cfield = _target_cfield
         try:
             _cextra = extract_from_message(without_template_blanks(message))
         except Exception:
@@ -2134,7 +2154,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             if language in ("es", "ur-roman"):
                 _reply = _tr("not_sent", language, NOT_SENT_YET)
             else:
-                _reply = (f"Not yet — the quote has not gone out. "
+                _reply = (f"Still in progress — the quote has not gone out. "
                           f"You will have it {when_the_team_replies()}.")
             return _intent_result(_reply, contact=_fcontact)
         if asks_about_price(message):
@@ -2184,7 +2204,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # complaint ('my order arrived damaged') still hands off.
     if is_already_a_customer(message) and not (
             "?" in message and re.search(r"\bpolic(?:y|ies)\b|what is your|what's your", low)):
-        return _intent_result(ALREADY_CUSTOMER_MESSAGE, handoff="existing_customer")
+        if meta.get("awaiting_contact") and (meta.get("last_asked") == "phone" or is_phone_refusal(message)):
+            pass
+        else:
+            return _intent_result(ALREADY_CUSTOMER_MESSAGE, handoff="existing_customer")
     if is_quote_summary_request(message):
         _spec = _quote_spec_summary(prior, meta, meta.get("gave_up"))
         if not _spec and not prior.get("product"):
@@ -2347,13 +2370,21 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             return _intent_result(_reply,
                                   contact=(meta.get("contact") or {}) if meta.get("complete") else None)
         elif _cmiss and not meta.get("complete"):
-            _q = _next_question_text(prior, _cmiss, language)
             _flabel = {"sizes": "size", "quantity": "quantity", "product": "product",
                        "material": "material", "finishes": "finish", "style": "style",
                        "type": "type", "skus": "designs"}.get(_told_field, _told_field)
-            _reply = f"I don't have your {_flabel} on file yet. {_q}"
+            meta.setdefault("gave_up", [])
+            if _told_field not in meta["gave_up"]:
+                meta["gave_up"].append(_told_field)
+            _missing2 = script_missing(prior, meta)
+            _ack = f"Understood — we'll leave the {_flabel} for the team to confirm."
+            if not _missing2:
+                _reply = _ack + " " + _confirmation_text()
+                meta["last_asked"] = None
+            else:
+                _reply = _ack + " " + _next_question_text(prior, _missing2, language)
+                meta["last_asked"] = _missing2[0]
             meta["last_bot_question"] = _reply
-            meta["last_asked"] = _cmiss[0]
             return _intent_result(_reply)
     _prior_prod = (prior.get("product") or "").lower()
     _restates = ((_prior_prod == "box" and re.search(r"\bboxes?\b", low))
@@ -2436,6 +2467,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                      and _looks_like_bad_email(message, {})) \
             and low not in _CONFIRM_ACCEPT \
             and not meta.get("complete"):
+        if prior.get("product") or script_missing(prior, meta):
+            _gmiss = script_missing(prior, meta)
+            _gq = _next_question_text(prior, _gmiss, language) if _gmiss else ""
+            _greply = "Sorry, I didn't quite catch that." + (f" {_gq}" if _gq else "")
+            meta["last_bot_question"] = _greply
+            return _intent_result(
+                _greply,
+                suggestions=_suggestions(prior, _gmiss, _greply, language))
         return _intent_result(
             "Sorry, I didn't quite catch that — could you say a bit "
             "more about what you need? For example, are you looking "
@@ -2517,6 +2556,9 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             or re.search(r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:feet|foot|ft|inches|inch|in|mm|cm)\b", low))
         if _size_flavored:
             extracted.pop("quantity", None)
+    if _pend_pre == "extras" and not extracted.get("extras"):
+        if low.strip(".,!? ") in ("none", "no", "no need", "neither", "nothing", "skip", "nope", "nah", "ok", "okay"):
+            extracted["extras"] = "none"
     slots = merge_slots(prior, extracted)
     if slots.get("sizes"):
         slots["sizes"] = attach_gusset(slots["sizes"], message,
@@ -2583,20 +2625,25 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # the script: the visitor's next message continues it.
     if wants_to_stop(message) and not _is_order and not extracted:
         if meta.get("awaiting_contact"):
-            meta["awaiting_contact"] = False
-            meta["complete"] = True
-            _save_session(store, session_id, slots)
-            _save_meta(store, session_id, meta)
-            return {
-                "reply": ("No problem at all — I'll stop here. Your request is saved "
-                          "in this chat, and the team will follow up with you here "
-                          f"{when_the_team_replies()}. Just come back anytime."),
-                "language": language, "slots": slots,
-                "missing": missing_fields(slots), "sources": _slot_sources(slots),
-                "handoff": "complete_no_contact", "llm_used": False,
-                "suggestions": [], "contact": contact,
-            }
-        if slots:
+            # At the phone step, phone is optional and email is already collected.
+            # An inability or refusal ("don't want to share", "no", "skip") at the phone
+            # step must be accepted at once and closed with the email follow-up line,
+            # not treated as abandoning contact.
+            if meta.get("last_asked") != "phone":
+                meta["awaiting_contact"] = False
+                meta["complete"] = True
+                _save_session(store, session_id, slots)
+                _save_meta(store, session_id, meta)
+                return {
+                    "reply": ("No problem at all — I'll stop here. Your request is saved "
+                              "in this chat, and the team will follow up with you here "
+                              f"{when_the_team_replies()}. Just come back anytime."),
+                    "language": language, "slots": slots,
+                    "missing": missing_fields(slots), "sources": _slot_sources(slots),
+                    "handoff": "complete_no_contact", "llm_used": False,
+                    "suggestions": [], "contact": contact,
+                }
+        elif slots:
             _save_session(store, session_id, slots)
             _save_meta(store, session_id, meta)
             return {
@@ -2770,6 +2817,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             if _name_is_order:
                 _usable = False
             _outcome = ask_outcome(_field, message, _usable)
+            if _field == "phone" and not _usable and is_phone_refusal(message):
+                _outcome = "declined"
             if _name_is_order:
                 _outcome = "free"
             if _usable:
@@ -2832,11 +2881,15 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 # old "free" fall-through re-showed the confirmation
                 # and the email was never re-asked. Re-ask the field.
                 if not visitor_is_asking(message) and "?" not in message:
+                    _q = _contact_question(_field, language)
+                    if _field == "phone" and language == "en" and repeats_the_question(_q, meta.get("last_bot_question", "")):
+                        _q = _QUESTION_VARIANTS.get(_field, _q)
                     meta["last_asked"] = _field
+                    meta["last_bot_question"] = _q
                     _save_session(store, session_id, slots)
                     _save_meta(store, session_id, meta)
                     return {
-                        "reply": _contact_question(_field, language), "language": language,
+                        "reply": _q, "language": language,
                         "slots": slots, "missing": missing_fields(slots),
                         "sources": _slot_sources(slots), "handoff": None,
                         "llm_used": False, "suggestions": [], "contact": contact,
@@ -2890,6 +2943,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 if _next != _field:
                     meta["last_asked"] = _next
                     _q = _contact_question(_next, language)
+                    if language == "en" and repeats_the_question(_q, meta.get("last_bot_question", "")):
+                        _q = _QUESTION_VARIANTS.get(_next, _q)
                     meta["last_bot_question"] = _q
                     _save_session(store, session_id, slots)
                     _save_meta(store, session_id, meta)
@@ -2898,10 +2953,14 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                         "missing": missing_fields(slots), "sources": _slot_sources(slots),
                         "handoff": None, "llm_used": False, "suggestions": [], "contact": contact,
                     }
+                _q = _contact_question(_field, language)
+                if _field == "phone" and language == "en" and repeats_the_question(_q, meta.get("last_bot_question", "")):
+                    _q = _QUESTION_VARIANTS.get(_field, _q)
+                meta["last_bot_question"] = _q
                 _save_session(store, session_id, slots)
                 _save_meta(store, session_id, meta)
                 return {
-                    "reply": _contact_question(_field, language), "language": language,
+                    "reply": _q, "language": language,
                     "slots": slots, "missing": missing_fields(slots),
                     "sources": _slot_sources(slots), "handoff": None,
                     "llm_used": False, "suggestions": [], "contact": contact,
@@ -3078,7 +3137,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 "missing": script_missing(slots, meta),
                 "sources": _slot_sources(slots), "handoff": None, "llm_used": False,
                 "suggestions": _mt_chips}
-    if _start_over:
+    if _is_explicit_restart:
         _save_session(store, session_id, {})
         _save_meta(store, session_id, {})
         return {
@@ -3141,9 +3200,11 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                       "design": "skus", "designs": "skus",
                       "extra": "extras", "extras": "extras"}
     _cm = re.search(r"\bchange\s+(?:the\s+|my\s+)?(finish|finishes|size|sizes|quantity|material|style|type|design|designs|extra|extras)\b", low)
-    if _cm and "?" not in message and not visitor_is_asking(message):
-        _cfield = _CHANGE_FIELDS[_cm.group(1)]
-        if _cfield not in extracted:
+    _clf_change_mid = (_clf["intent"] == "change_field")
+    _target_cfield_mid = _clf.get("target_field") if _clf_change_mid else None
+    if (_cm or _clf_change_mid) and "?" not in message and not visitor_is_asking(message):
+        _cfield = _target_cfield_mid or (_CHANGE_FIELDS.get(_cm.group(1)) if _cm else None)
+        if _cfield and _cfield in _CHANGE_FIELDS.values() and _cfield not in extracted:
             slots.pop(_cfield, None)
             meta["answered_fields"] = [a for a in (meta.get("answered_fields") or [])
                                        if a != _cfield]
@@ -3250,6 +3311,99 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             "suggestions": _suggestions(slots, script_missing(slots, meta), language=language),
         }
 
+    # Ask-field-info: options, choices, or alternatives for the pending field
+    # Resolves against the pending field first (more options for THIS field, from KB).
+    # The unlisted-product branch NEVER fires while a field is pending and NEVER treats "other" as a product name.
+    _is_ask_other = (_clf["intent"] == "ask_field_info")
+    if _is_ask_other and slots.get("product") and script_missing(slots, meta):
+        _afield = _clf.get("target_field")
+        if not _afield or _afield not in ("sizes", "style", "type", "finishes", "quantity", "skus", "extras", "material"):
+            for _f, _inds in [
+                ("finishes", ["finish", "finishes", "coating", "lamination"]),
+                ("material", ["material", "materials", "stock", "paper"]),
+                ("style", ["style", "styles"]),
+                ("type", ["type", "types"]),
+                ("sizes", ["size", "sizes", "dimension", "dimensions"]),
+                ("extras", ["extra", "extras", "addon", "add-on"]),
+                ("quantity", ["quantity", "qty", "amount"]),
+                ("skus", ["sku", "skus", "design", "designs"]),
+            ]:
+                if any(re.search(rf"\b{re.escape(i)}\b", low) for i in _inds):
+                    _afield = _f
+                    break
+        if not _afield or _afield not in script_missing(slots, meta):
+            _afield = script_missing(slots, meta)[0]
+
+        _aopts = options_for(_afield, slots.get("product"))
+        _DIFFS = {
+            "finishes": {
+                "matte": "smooth, non-reflective finish with low glare that resists fingerprints and keeps text easy to read",
+                "gloss": "vibrant, high-shine finish that reflects light and makes colors bold and eye-catching",
+                "soft touch": "velvety, silky texture that gives a premium luxury feel with zero glare",
+                "spot uv": "targeted glossy coating to highlight specific logos or design details against a matte background",
+                "foil": "metallic foil stamping (gold, silver, copper, or holographic) for a reflective luxury accent",
+            },
+            "style": {
+                "stand-up": "bottom gusset allows the pouch to stand upright independently on retail shelves",
+                "flat": "sealed on three sides with no bottom gusset, ideal for single-use packs, samples, or flat storage",
+                "flat-bottom": "block bottom with side gussets for maximum stability and premium shelf presence",
+                "mailer": "durable self-locking box with dust flaps, ideal for shipping and subscription packaging",
+                "tuck-end": "classic folding box with top and bottom tuck flaps, standard for retail packaging",
+                "rigid": "sturdy setup box that does not fold flat, used for luxury goods and gift presentation",
+                "folding carton": "lightweight paperboard carton that ships flat, cost-effective for retail shelves",
+            },
+            "type": {
+                "corrugated": "fluted structural cardboard providing strong protection for shipping and heavier items",
+                "cardboard": "sleek, lightweight paperboard for retail packaging and folding cartons",
+                "rigid": "thick, rigid board wrapped with printed paper for luxury presentation",
+                "kraft": "natural brown, eco-friendly unbleached board for a rustic, organic look",
+            },
+            "extras": {
+                "zipper": "resealable zip closure to maintain product freshness across multiple uses",
+                "tear notch": "pre-cut notch for easy opening without scissors",
+                "hang hole": "hole punch at the top for hanging on retail display pegs",
+                "valve": "one-way degassing valve allowing gases to escape without letting air in (ideal for coffee)",
+                "window": "transparent clear section allowing customers to see the product inside",
+            },
+            "material": {
+                "vinyl": "durable, waterproof, and tear-resistant material suitable for indoor and outdoor use",
+                "kraft": "natural brown, eco-friendly paperboard or paper for an organic, sustainable look",
+                "cardboard": "classic smooth paperboard for crisp, vibrant retail packaging",
+                "corrugated": "sturdy fluted cardboard engineered for shipping protection",
+                "metallized": "multi-layer barrier film with a metallic layer for maximum moisture and light protection",
+                "foil": "high-barrier foil layer that seals in freshness and blocks light and oxygen",
+                "white": "bright white stock for high-contrast, true-color printing",
+                "clear": "transparent film where the container or surface shows through non-printed areas",
+                "holographic": "iridescent, rainbow-reflecting material that shifts color in the light",
+                "paper": "cost-effective classic paper stock for standard retail packaging and labels",
+            },
+        }
+        _adiffs = _DIFFS.get(_afield, {})
+        _flabel = {"sizes": "size", "style": "style", "type": "type", "finishes": "finish",
+                   "quantity": "quantity", "skus": "number of designs", "extras": "add-ons",
+                   "material": "material"}.get(_afield, _afield)
+        _diff_lines = [f"• {o.capitalize()} — {_adiffs[o.lower()]}." for o in _aopts if o.lower() in _adiffs]
+        _prod_name = slots.get("product") or "your item"
+        if _diff_lines:
+            _areply = f"For {_prod_name}, our {_flabel} options include:\n" + "\n".join(_diff_lines)
+        elif _aopts:
+            _areply = f"For {_prod_name}, our {_flabel} options include {', '.join(_aopts)}."
+        else:
+            _areply = f"We offer standard {_flabel} options for {_prod_name}."
+        _amiss = script_missing(slots, meta)
+        _aq = _next_question_text(slots, _amiss, language) if _amiss else ""
+        if _aq and _aq not in _areply:
+            _areply += f" {_aq}"
+        meta["last_asked"] = _amiss[0] if _amiss else None
+        meta["last_bot_question"] = _areply
+        _save_session(store, session_id, slots)
+        _save_meta(store, session_id, meta)
+        _achips = [o.capitalize() for o in _aopts] if _aopts else _suggestions(slots, _amiss, language=language)
+        return {"reply": _areply, "language": language, "slots": slots,
+                "missing": _amiss, "sources": [],
+                "handoff": None, "llm_used": False,
+                "suggestions": _achips}
+
     # Attribute questions name their product ("box materials?",
     # "which materials do you use in Envelopes??"). Two cases:
     # - Unknown product (envelopes): retrieval would serve another
@@ -3294,7 +3448,8 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                 _tgt_stop = {"what", "which", "who", "where", "when", "why",
                              "how", "do", "you", "your", "our", "any", "all",
                              "the", "a", "an", "this", "that", "it", "offer",
-                             "offers", "available", "best"}
+                             "offers", "available", "best", "other", "another",
+                             "more", "some", "else", "different"}
                 # A use ("coffee", "candles") is grounded, not a
                 # product: "material for coffee" is a mylar answer,
                 # never a team-confirm about coffee (Oct 30).
@@ -3320,7 +3475,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
                             "handoff": None, "llm_used": False,
                             "suggestions": _suggestions(
                                 slots, _amiss, language=language)}
-                if _tgt not in _tgt_stop and _tgt not in _use_words \
+                if not script_missing(slots, meta) and _tgt not in _tgt_stop and _tgt not in _use_words \
                         and _sing not in _use_words \
                         and _tgt not in ("material", "materials",
                                          "style", "styles") \
@@ -3368,7 +3523,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     _asks_contact_fact = any(
         re.search(rf"\b{re.escape(_word)}\b", low)
         for _word in ("contact", "address", "phone", "location", "located",
-                      "headquarters", "office")
+                      "headquarters", "office", "facility", "facilities", "visit")
     ) or any(ph in low for ph in
              ("where are you", "where is print247", "based in", "based out of"))
     if not _asks_contact_fact:
@@ -3651,12 +3806,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         if field == "sizes":
             if not holds_contents(product):
                 if opts:
-                    return (f"No problem — we can leave the size for the team to confirm, "
-                            f"or you can pick a common {prod_word} size from our catalog "
+                    return (f"No problem — you can pick a common {prod_word} size from our catalog "
                             f"such as {', '.join(opts[:4])} (or width x height in inches or mm) to start with.")
                 return _tr("not_sure_sizes_flat", language,
-                           "No problem — we can leave the size for the team "
-                           "to confirm, or pick a common width x height size in inches or mm to start with.")
+                           "No problem — you can pick a common width x height size in inches or mm to start with.")
             if opts:
                 return (f"No problem — tell me what will go inside the pack or your product dimensions, "
                         f"or pick a common size such as {', '.join(opts[:4])} to start with.")
@@ -3690,7 +3843,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
             meta["gave_up"].append(field)
         _missing2 = script_missing(slots, meta)
         _flabel = _FIELD_LABELS.get(field, field)
-        _ack = f"No problem — we'll leave the {_flabel} for the team to confirm."
+        _ack = f"Understood — we'll leave the {_flabel} for the team to confirm."
         if not _missing2:
             meta["last_asked"] = None
             _creply = _ack + " " + _confirmation_text()
@@ -3701,8 +3854,10 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         meta["last_bot_question"] = _nreply
         return _final_return(_nreply)
 
-    if missing and (is_indecision_intent(message) or "not sure" in low or says_they_do_not_know(message)):
-        _target = _target_field_for_indecision(message, missing)
+    if missing and (_clf["intent"] == "dont_know" or is_indecision_intent(message) or "not sure" in low or says_they_do_not_know(message)):
+        _target = _clf.get("target_field") or _target_field_for_indecision(message, missing)
+        if _target not in _SCRIPT_FIELDS and missing:
+            _target = missing[0]
         if _target in _SCRIPT_FIELDS:
             _dk = dict(meta.get("dont_know_counts") or {})
             _n = _dk.get(_target, 0) + 1
@@ -4150,7 +4305,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
     # answer is that it has not gone out yet, and when it will.
     if asks_if_it_arrived(message):
         if meta.get("complete"):
-            _reply = (f"Not yet — the quote has not gone out. "
+            _reply = (f"Still in progress — the quote has not gone out. "
                       f"You will have it {when_the_team_replies()}.")
             return _final_return(_reply, srcs=[])
         _q = _next_question_text(slots, missing, language)
@@ -4520,7 +4675,7 @@ def handle_message(message: str, session_id: str | None = None, store=None,
         # sombrero / Euro types. A variant word in this same message
         # attaches at once; otherwise ask once (the asked flag, not
         # the awaiting flag, prevents re-asks when the visitor
-        # answers something else).
+        # answers a different question).
         _slots_extras = [p.strip() for p in
                          (slots.get("extras") or "").split(",")
                          if p.strip()]

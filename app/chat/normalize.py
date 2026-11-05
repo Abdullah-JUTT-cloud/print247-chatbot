@@ -266,6 +266,9 @@ _COMMON_WORDS = {
     "not", "dont", "know", "idea", "unsure", "dunno", "clue",
     "undecided", "decided", "skip", "none", "nope", "nah", "delete",
     "remove", "erase", "clear", "cancel", "idk",
+    "any", "suggest", "suggestion", "suggestions", "recommend", "recommendation",
+    "choose", "choice", "pick", "best", "other", "decide", "decision",
+    "deciding", "torn",
 }
 _UNIT_WORDS = {"mm", "cm", "inches", "inch", "in", "feet", "ft", "oz",
                "ml", "kg", "g", "lb", "lbs", "pt"}

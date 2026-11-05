@@ -120,6 +120,10 @@ def validate_size(product: str | None, sizes: str | None) -> SizeVerdict:
     dims = count_dimensions(sizes)
     if fam is None or not sizes:
         return SizeVerdict(True, fam.name if fam else None, dims)
+    # Check for zero dimensions ('0x0', '0x4', '0*0', etc.)
+    nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", re.split(r"\+", sizes, maxsplit=1)[0])]
+    if nums and any(n == 0.0 for n in nums):
+        return SizeVerdict(False, fam.name, dims, "zero_dimension")
     gusset = has_gusset(sizes)
     if dims >= 2 and fam.name == "flat" and (dims > fam.max_dims or gusset):
         return SizeVerdict(False, fam.name, dims, "flat_extra")
@@ -148,11 +152,13 @@ def rejection_text(verdict: SizeVerdict, product: str | None,
     """The on-the-spot explanation. The re-ask (the family's own size
     question) is appended by the brain, in the visitor's language."""
     plural = _plural(product)
+    shown = re.sub(r"\s+", " ", (sizes or "").strip())
+    if verdict.reason == "zero_dimension":
+        return f"Dimensions must be greater than zero ({shown})."
     # "+N" on a flat size is a third measurement too.
     total = verdict.dims + (1 if verdict.reason == "flat_extra"
                             and has_gusset(sizes) and verdict.dims == 2 else 0)
     n = _WORDS.get(total, str(total))
-    shown = re.sub(r"\s+", " ", (sizes or "").strip())
     if verdict.reason == "flat_extra":
         return (f"That's {n} measurements ({shown}), but {plural} are flat "
                 f"— they only have a width and a height, no depth.")

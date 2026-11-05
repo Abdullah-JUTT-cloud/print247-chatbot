@@ -159,6 +159,28 @@ def is_supplementary_source(source: str) -> bool:
     return name.startswith(_SUPPLEMENTARY_PREFIXES)
 
 
+def is_contact_source(source: str) -> bool:
+    name = (source or "").split("/")[-1]
+    return name in ("contact.md", "site-contact-us.md")
+
+
+def is_contact_query(text: str) -> bool:
+    low = (text or "").lower()
+    _contact_words = (
+        "contact", "address", "phone", "call", "location", "located",
+        "headquarters", "headquarter", "office", "facility", "facilities", "visit"
+    )
+    if any(re.search(rf"\b{re.escape(w)}\b", low) for w in _contact_words):
+        return True
+    _contact_phrases = (
+        "where are you", "where is print247", "where are print247",
+        "based in", "based out of", "where located", "where based"
+    )
+    if any(ph in low for ph in _contact_phrases):
+        return True
+    return False
+
+
 def curated_first(hits: list[dict]) -> list[dict]:
     """Stable partition: curated hits first (original order kept
     inside each group), supplementary hits after. With 469 extra
@@ -303,6 +325,8 @@ def retrieve(text: str, top_k: int = 3, rerank_fn=None, curated_only: bool = Fal
     rows = _read_kb_files()
     if curated_only:
         rows = [r for r in rows if not is_supplementary_source(r["source"])]
+    if not is_contact_query(low):
+        rows = [r for r in rows if not is_contact_source(r["source"])]
 
     # Step 0: time-intent pre-check. A speed/delivery question about
     # a product ("delivery time for boxes", "how quick can labels
@@ -365,6 +389,8 @@ def retrieve(text: str, top_k: int = 3, rerank_fn=None, curated_only: bool = Fal
                     out.append({"source": p.get("source", "qdrant"), "text": p.get("text", "")[:1500]})
                 out = _order_hybrid(text, out, _keyword_search(text, rows),
                                     rerank_fn)
+                if not is_contact_query(low):
+                    out = [h for h in out if not is_contact_source(h.get("source", ""))]
                 if out:
                     return _dedup_hits(curated_first(out))[:top_k]
         except Exception:

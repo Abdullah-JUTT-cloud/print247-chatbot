@@ -30,7 +30,7 @@ ASKS_IF_IT_ARRIVED = re.compile(
 
 SIGN_OFFS = ["You're welcome — talk soon.", "Great — talk soon."]
 NOTED_AFTER_THE_QUOTE = "Noted — I've added that to your request."
-NOT_SENT_YET = "Not yet — the quote has not gone out. You will have it in the morning."
+NOT_SENT_YET = "Still in progress — the quote has not gone out. You will have it in the morning."
 
 
 def is_pleasantry(text: str) -> bool:

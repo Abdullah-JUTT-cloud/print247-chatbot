@@ -1,7 +1,7 @@
 """Size-unit rules — ported from the old bot (sizeUnit.ts).
 
 A size nobody can read ('50x30' — millimetres for a label, inches for
-a box) is worse than a size not yet given. The guess is written onto
+a box) is worse than a missing size. The guess is written onto
 the size marked '(assumed)', never presented as something they said,
 so anybody who meant the other one can correct it in a word and the
 rep quoting it can see the assumption rather than inheriting it

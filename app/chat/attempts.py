@@ -16,15 +16,15 @@ _IS_A_QUESTION = re.compile(
     r"\?\s*$|^\s*(where|what|who|when|why|how|which|is|are|do|does|did|can|could|would|will|should)\b",
     re.IGNORECASE)
 _DECLINES = re.compile(
-    r"^\s*(no|nope|nah|none|not now|later|skip|maybe later|n/a|na)\b"
-    r"|\b(no|dont|don't|do not|haven't|havent|not|wont|won't) (have |got |a |give |share )?(phone|email|number|e-mail|mail|cell)\b"
+    r"^\s*(no|nope|nah|none|not now|later|skip|maybe later|n/a|na|pass)\b"
+    r"|\b(no|dont|don't|do not|haven't|havent|have no|has no|had no|not|wont|won't|without)\b[^.?!]{0,35}\b(phone|email|number|e-mail|mail|cell|one|any)\b"
     # "i cant share my personal phone number" and "i cannot share my
     # phone number" matched NOTHING above ("cant"/"cannot" were never
     # listed), so a clear refusal was re-asked instead of retiring
     # the field (Oct 29 live transcript). A negation with a contact
-    # noun within 30 chars is a refusal; the bound keeps "i cant
+    # noun within 35 chars is a refusal; the bound keeps "i cant
     # decide, give me options" from falsely declining.
-    r"|\b(cant|can't|cannot|can not|will not|refuse to|not sharing)\b[^.?!]{0,30}\b(phone|email|number|e-mail|mail|cell)\b"
+    r"|\b(cant|can't|cannot|can not|will not|refuse to|not sharing)\b[^.?!]{0,35}\b(phone|email|number|e-mail|mail|cell|one|any)\b"
     r"|\bprefer not\b|\brather not\b"
     r"|\b(?:reach|contact|email|message|write|call)(?:\s+(?:me|out))?\s+(?:on|by|via|through)\s+(?:email|mail|phone|number)\b"
     r"|\b(?:just|only|use)\s+(?:email|mail|phone|number)\b"
@@ -60,12 +60,29 @@ _STOP_ALL = re.compile(
 # to share") — only when no spec word is present, so "I don't want
 # matte" stays a finish answer, not a contact refusal.
 _WONT_SHARE = re.compile(
-    r"\b(dont|don't|do not) want to (share|give|tell)\b"
+    r"\b(dont|don't|do not) want to (share|give|tell|provide)\b"
     r"|\b(cant|can't|cannot|can not) (share|give|tell|provide)\b"
     r"|\bnot interested\b"
-    r"|\bprefer not to (share|give)\b"
-    r"|\brather not (share|give)\b",
+    r"|\bprefer not to (share|give|tell|provide)\b"
+    r"|\brather not (share|give|tell|provide)\b"
+    r"|\b(wont|won't|will not) (share|give|tell|provide)\b",
     re.IGNORECASE)
+
+_PHONE_REFUSAL_OR_INABILITY = re.compile(
+    r"^\s*(no|nope|nah|none|not now|later|skip|maybe later|n/a|na|pass)\b"
+    r"|\b(?:no|dont|don't|do not|haven't|havent|have no|has no|had no|not|wont|won't|without|cant|can't|cannot|can not|will not|refuse to|not sharing)\b[^.?!]{0,35}\b(?:phone|number|cell|one|any)\b"
+    r"|\b(?:dont|don't|do not|cant|can't|cannot|can not|will not|wont|won't|refuse to|prefer not to|rather not)\s+(?:want\s+to\s+)?(?:share|give|tell|provide)\b"
+    r"|\bprefer not\b|\brather not\b|\bnot interested\b"
+    r"|\b(?:just|only|use)\s+(?:email|mail)\b"
+    r"|\b(?:email|mail)\s+(?:only|please|is fine|is enough|instead)\b",
+    re.IGNORECASE)
+
+
+def is_phone_refusal(text: str | None) -> bool:
+    """True if message expresses inability or refusal to provide a phone number."""
+    if not text:
+        return False
+    return bool(_PHONE_REFUSAL_OR_INABILITY.search(text))
 
 
 def wants_to_stop(text: str | None) -> bool:
@@ -91,8 +108,9 @@ _ASKS_WHAT_IS_USUAL = re.compile(
 _NOT_SPEC_RECOMMENDATION = re.compile(
     r"\b(someone|somebody|person|contact|rep|who|who\s+to|manager|call)\b",
     re.IGNORECASE)
+# DEGRADED NO-KEY FALLBACK
 _DOES_NOT_KNOW = re.compile(
-    r"\b(?:no idea|not sure|unsure|no clue|don'?t know|do not know|dunno|idk|not decided|haven'?t decided|undecided|not yet decided|you tell me|up to you|your call|whatever you (?:recommend|suggest|think))\b",
+    r"\b(?:no\s+idea|not\s+sure|unsure|don'?t\s+know|do\s+not\s+know|dunno|idk|undecided|you\s+tell\s+me|up\s+to\s+you|your\s+call)\b",
     re.IGNORECASE)
 
 
@@ -107,6 +125,8 @@ def ask_outcome(last_asked: str, text: str, have_it_now: bool) -> str:
     if is_contact_key(last_asked):
         if _SPEC_WORDS.search(text or ""):
             return "free"
+        if last_asked == "phone" and is_phone_refusal(text):
+            return "declined"
         if _DECLINES.search(text or ""):
             return "declined"
         if _WONT_SHARE.search(text or ""):
@@ -164,9 +184,8 @@ _INDECISION_PATTERN = re.compile(
     r"|(?:any|give\s+me\s+a?|got\s+any)\s+(?:suggestion|recommendation|advice)"
     r"|what\s+do\s+you\s+(?:think|suggest|recommend)"
     r"|what\s+(?:should|can)\s+i\s+(?:pick|choose|go with|get)"
-    r"|which\s+(?:one\s+)?(?:is|are)\s+best"
     r"|what(?:'s|\s+is)\s+the\s+difference|how\s+do\s+(?:they|these)\s+differ"
-    r"|no idea|not sure|unsure|no clue|don'?t know|do not know|dunno|idk|not decided|haven'?t decided|undecided|not yet decided|you tell me|up to you|your call|whatever you (?:recommend|suggest|think)"
+    r"|no\s+idea|not\s+sure|unsure|don'?t\s+know|do\s+not\s+know|dunno|idk|undecided|you\s+tell\s+me|up\s+to\s+you|your\s+call"
     r")\b",
     re.IGNORECASE
 )
